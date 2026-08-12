@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- سمة النافذة الأساسية: داكنة دائمًا، لأن العداد يُقرأ على المقود
+         تحت الشمس وليلًا، والخلفية الفاتحة تُتعب العين وتنعكس على الشاشة -->
+    <style name="Theme.GTSpeedometer" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

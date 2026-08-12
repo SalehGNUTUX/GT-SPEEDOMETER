@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">عداد السرعة</string>
+
+    <!-- ملفات المركبات -->
+    <string name="vehicle_car">سيارة</string>
+    <string name="vehicle_motorcycle">دراجة</string>
+    <string name="vehicle_bicycle">دراجة هوائية</string>
+    <string name="vehicle_walk">مشي</string>
+
+    <!-- التبويبات -->
+    <string name="tab_gauge">عداد</string>
+    <string name="tab_digital">رقمي</string>
+    <string name="tab_camera">كاميرا</string>
+    <string name="tab_media">الوسائط</string>
+
+    <!-- الإحصاءات -->
+    <string name="stat_distance">المسافة</string>
+    <string name="stat_duration">المدة</string>
+    <string name="stat_max_speed">أقصى سرعة</string>
+    <string name="stat_avg_speed">متوسط السرعة</string>
+    <string name="odometer">عداد المسافة</string>
+
+    <!-- التحكم -->
+    <string name="action_start">البداية</string>
+    <string name="action_pause">إيقاف مؤقت</string>
+    <string name="action_resume">متابعة</string>
+    <string name="action_stop">إنهاء</string>
+    <string name="action_record">تسجيل</string>
+    <string name="action_stop_record">إيقاف التسجيل</string>
+
+    <!-- حالة تحديد الموقع -->
+    <string name="gps_none">بدون إشارة</string>
+    <string name="gps_searching">يبحث…</string>
+    <string name="gps_satellites">%1$d/%2$d أقمار</string>
+    <string name="gps_rate">%1$s هرتز</string>
+    <string name="gps_accuracy">±%1$d م</string>
+
+    <!-- الأذونات -->
+    <string name="perm_location_title">يحتاج التطبيق إذن الموقع</string>
+    <string name="perm_location_body">قياس السرعة والمسافة يعتمد على تحديد الموقع بدقة عالية. لا تُرسل بياناتك إلى أي جهة.</string>
+    <string name="perm_camera_body">تسجيل الرحلة يحتاج إذن الكاميرا والميكروفون.</string>
+    <string name="perm_grant">منح الإذن</string>
+    <string name="perm_open_settings">فتح الإعدادات</string>
+
+    <!-- الخدمة -->
+    <string name="notif_channel_trip">تتبع الرحلة</string>
+    <string name="notif_trip_title">رحلة جارية</string>
+    <string name="notif_trip_body">%1$s كم · %2$s كم/س</string>
+
+    <!-- وحدات -->
+    <string name="unit_kmh">كم/س</string>
+    <string name="unit_km">كم</string>
+
+    <!-- تنبيهات -->
+    <string name="camera_unavailable">الكاميرا غير متاحة على هذا الجهاز</string>
+    <string name="recording_saved">حُفظ التسجيل: %1$s</string>
+    <string name="recording_failed">تعذّر حفظ التسجيل (%1$s)</string>
+    <string name="action_screenshot">لقطة</string>
+    <string name="shot_saved">حُفظت اللقطة</string>
+    <string name="shot_failed">تعذّر حفظ اللقطة</string>
+
+    <!-- الوسائط -->
+    <string name="media_empty">لا توجد لقطات ولا تسجيلات بعد</string>
+    <string name="media_hint">اللقطات في Pictures/GT-SPEEDOMETER والتسجيلات في Movies/GT-SPEEDOMETER</string>
+    <string name="media_open">فتح</string>
+    <string name="media_share">مشاركة</string>
+    <string name="media_delete">حذف</string>
+    <string name="media_delete_title">حذف الملف؟</string>
+    <string name="media_delete_body">لا يمكن التراجع عن هذا.</string>
+    <string name="media_refresh">تحديث</string>
+
+    <!-- الخروج -->
+    <string name="exit_title">الخروج من التطبيق؟</string>
+    <string name="exit_body">تُغلق الشاشة ويتوقّف العرض.</string>
+    <string name="exit_body_trip">رحلة جارية — الخروج ينهي تتبّعها.</string>
+    <string name="exit_body_recording">التسجيل جارٍ — الخروج يوقفه ويحفظ ما سُجّل.</string>
+    <string name="exit_confirm">خروج</string>
+    <string name="action_cancel">إلغاء</string>
+
+    <!-- مربع الإعدادات السريعة -->
+    <string name="tile_label">عداد السرعة</string>
+    <string name="tile_running">رحلة جارية</string>
+    <string name="tile_idle">ابدأ رحلة</string>
+</resources>

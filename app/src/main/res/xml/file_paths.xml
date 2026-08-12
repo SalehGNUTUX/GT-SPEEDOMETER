@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- مسارات مجلد التطبيق الخاص، تُستعمل على أندرويد 9 فما دون
+         حيث لا نكتب في مكتبة الوسائط -->
+    <external-files-path name="videos" path="videos/" />
+    <external-files-path name="shots" path="shots/" />
+    <external-files-path name="tracks" path="tracks/" />
+</paths>
