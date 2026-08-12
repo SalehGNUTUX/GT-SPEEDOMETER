@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +86,7 @@ fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val profile by vm.profile.collectAsStateWithLifecycle()
     val isRecording by vm.isRecording.collectAsStateWithLifecycle()
     val cameraMessage by vm.cameraMessage.collectAsStateWithLifecycle()
+    val burnOverlay by vm.burnOverlay.collectAsStateWithLifecycle()
 
     var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
@@ -92,7 +94,13 @@ fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     var hideControls by remember { mutableStateOf(false) }
 
     val previewView = remember {
-        PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
+        PreviewView(context).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            // COMPATIBLE يجعل المعاينة TextureView داخل شجرة العرض. في الوضع
+            // الافتراضي (SurfaceView) كانت لقطة الشاشة تخرج سوداء المشهد: الطبقة
+            // تُلتقط والصورة لا، لأن سطح الكاميرا يُركَّب خارج نافذة التطبيق.
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        }
     }
 
     DisposableEffect(Unit) {
@@ -162,7 +170,17 @@ fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GpsDot(gnss)
-            if (isRecording) RecordingBadge()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                BurnToggle(
+                    enabled = burnOverlay,
+                    locked = isRecording,
+                    onToggle = { vm.setBurnOverlay(!burnOverlay) },
+                )
+                if (isRecording) RecordingBadge()
+            }
         }
 
         toast?.let { message ->
@@ -355,6 +373,35 @@ private fun OverlayStat(label: String, value: String, unit: String) {
             style = MaterialTheme.typography.titleMedium.copy(
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
+            ),
+        )
+    }
+}
+
+/** توگل حرق العدّاد داخل ملفّ الفيديو. يُقفَل أثناء التسجيل لأن تبديله يعيد الربط. */
+@Composable
+private fun BurnToggle(enabled: Boolean, locked: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .background(
+                if (enabled) Danger.copy(alpha = 0.28f) else Color.Black.copy(alpha = 0.45f),
+                CircleShape,
+            )
+            .then(if (locked) Modifier else Modifier.clickable(onClick = onToggle))
+            .padding(horizontal = 11.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Layers,
+            contentDescription = stringResource(R.string.burn_overlay),
+            tint = if (enabled) Color.White else Color.White.copy(alpha = 0.55f),
+            modifier = Modifier.size(17.dp),
+        )
+        Text(
+            text = stringResource(if (enabled) R.string.burn_on else R.string.burn_off),
+            style = MaterialTheme.typography.labelMedium.copy(
+                color = if (enabled) Color.White else Color.White.copy(alpha = 0.55f),
             ),
         )
     }

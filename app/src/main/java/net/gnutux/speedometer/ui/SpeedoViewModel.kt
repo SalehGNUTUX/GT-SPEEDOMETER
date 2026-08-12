@@ -3,6 +3,7 @@ package net.gnutux.speedometer.ui
 import android.app.Application
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,7 +15,9 @@ import kotlinx.coroutines.withContext
 import net.gnutux.speedometer.SpeedoApp
 import net.gnutux.speedometer.core.media.MediaItem
 import net.gnutux.speedometer.core.profile.VehicleProfile
+import net.gnutux.speedometer.core.trip.TripLibrary
 import net.gnutux.speedometer.core.trip.TripStatus
+import net.gnutux.speedometer.core.trip.TripTrack
 import net.gnutux.speedometer.service.TripService
 import java.io.File
 import java.text.SimpleDateFormat
@@ -33,12 +36,19 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     val camera = engine.camera
     val isRecording = engine.camera.isRecording
     val cameraMessage = engine.camera.message
+    val burnOverlay = engine.camera.burnOverlay
+
+    fun setBurnOverlay(enabled: Boolean) = engine.camera.setBurnOverlay(enabled)
 
     private val _lastSavedTrack = MutableStateFlow<File?>(null)
     val lastSavedTrack = _lastSavedTrack.asStateFlow()
 
     private val _mediaItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val mediaItems = _mediaItems.asStateFlow()
+
+    private val library = TripLibrary(engine.tracksDir)
+    private val _trips = MutableStateFlow<List<TripTrack>>(emptyList())
+    val trips = _trips.asStateFlow()
 
     val isTripActive: Boolean
         get() = tripState.value.status == TripStatus.RUNNING ||
@@ -65,7 +75,25 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     fun finishTrip() {
         _lastSavedTrack.value = engine.finishTrip()
         stopService()
+        refreshTrips()
     }
+
+    // ===== الرحلات =====
+
+    fun refreshTrips() {
+        viewModelScope.launch {
+            _trips.value = withContext(Dispatchers.IO) { library.list() }
+        }
+    }
+
+    fun deleteTrip(trip: TripTrack) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { library.delete(trip) }
+            refreshTrips()
+        }
+    }
+
+    fun uriForTrack(file: File): Uri = engine.media.uriFor(file)
 
     fun resetTrip() {
         engine.resetTrip()

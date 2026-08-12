@@ -13,6 +13,23 @@
     <string name="tab_digital">رقمي</string>
     <string name="tab_camera">كاميرا</string>
     <string name="tab_media">الوسائط</string>
+    <string name="tab_trips">الرحلات</string>
+
+    <!-- حرق الطبقة في الفيديو -->
+    <string name="burn_overlay">حرق العداد داخل الفيديو</string>
+    <string name="burn_on">محروق</string>
+    <string name="burn_off">نظيف</string>
+    <string name="burn_unsupported">الجهاز لا يدعم حرق الطبقة — سُجّل الفيديو نظيفًا</string>
+
+    <!-- الرحلات -->
+    <string name="trips_empty">لا رحلات محفوظة بعد</string>
+    <string name="trips_hint">أنهِ رحلةً بزر «إنهاء» لتُحفظ هنا مع مسارها على الخريطة</string>
+    <string name="trip_points">%1$d نقطة</string>
+    <string name="trip_open_osmand">فتح في OsmAnd</string>
+    <string name="trip_share">مشاركة المسار</string>
+    <string name="trip_delete_title">حذف الرحلة؟</string>
+    <string name="trip_no_route">لا نقاط كافية لرسم المسار</string>
+    <string name="action_back">رجوع</string>
 
     <!-- الإحصاءات -->
     <string name="stat_distance">المسافة</string>

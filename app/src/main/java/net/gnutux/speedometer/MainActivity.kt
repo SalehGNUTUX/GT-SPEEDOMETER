@@ -54,13 +54,14 @@ import net.gnutux.speedometer.ui.screens.CameraScreen
 import net.gnutux.speedometer.ui.screens.DigitalScreen
 import net.gnutux.speedometer.ui.screens.MediaScreen
 import net.gnutux.speedometer.ui.screens.SpeedometerScreen
+import net.gnutux.speedometer.ui.screens.TripsScreen
 import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Bg
 import net.gnutux.speedometer.ui.theme.GtSpeedometerTheme
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.TextSecondary
 
-private const val PAGE_COUNT = 4
+private const val PAGE_COUNT = 5
 private const val PAGE_CAMERA = 2
 
 class MainActivity : ComponentActivity() {
@@ -200,6 +201,7 @@ private fun AppRoot(vm: SpeedoViewModel = viewModel()) {
                         )
                     }
 
+                    3 -> TripsScreen(vm, padded)
                     else -> MediaScreen(vm, padded)
                 }
             }
@@ -255,6 +257,7 @@ private fun SegmentedTabs(
         stringResource(R.string.tab_gauge),
         stringResource(R.string.tab_digital),
         stringResource(R.string.tab_camera),
+        stringResource(R.string.tab_trips),
         stringResource(R.string.tab_media),
     )
     Row(
