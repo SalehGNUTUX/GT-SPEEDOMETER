@@ -31,7 +31,12 @@ class SpeedTileService : TileService() {
         when (engine.recorder.state.value.status) {
             TripStatus.RUNNING, TripStatus.PAUSED -> {
                 engine.finishTrip()
-                stopService(Intent(this, TripService::class.java))
+                // إيقافٌ غير مشروط كان يسحب الخدمة ذات نوع «الكاميرا» من تحت تسجيلٍ
+                // جارٍ، ولا سبيل إلى إعادة تشغيلها من نداء مربّعٍ في أندرويد 14.
+                // فالخدمة تبقى ما بقي للتسجيل حاجةٌ إليها.
+                if (!engine.needsForegroundService) {
+                    stopService(Intent(this, TripService::class.java))
+                }
             }
 
             TripStatus.IDLE, TripStatus.FINISHED -> {

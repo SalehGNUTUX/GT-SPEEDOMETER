@@ -45,3 +45,27 @@ Gradle 8.11.1 · AGP 8.9.2 · Kotlin 2.1.0 · compileSdk 35 · minSdk 26.
 - تفويض `animateFloatAsState` بـ `by` يحتاج `import androidx.compose.runtime.getValue`.
 - مرساة الفيديو تُثبَّت في `VideoRecordEvent.Start` لا عند ضغط الزرّ؛ بينهما مئات
   الملّي ثانية.
+
+## مزالق 0.4.0
+
+- **ليس كلّ رمزٍ في `VideoRecordEvent.Finalize` فشلًا.** `SOURCE_INACTIVE` (4) و
+  `FILE_SIZE_LIMIT` (2) و`INSUFFICIENT_STORAGE` (3) و`DURATION_LIMIT` (9) تترك
+  ملفًّا سليمًا يُقرأ. `hasError()` وحده يُظهر الحفظ الناجح فشلًا.
+- **CameraX يتبع دورة حياة من تربطه به.** الربط بالنشاط يعني موت التسجيل عند
+  أوّل مغادرة. الجلسة تملك `LifecycleRegistry` خاصًّا، يُثبَّت عند RESUMED ما دام
+  التسجيل جاريًا. وكلّ تحوّلٍ فيه على الخيط الرئيس، وإلّا سقط.
+- **خدمةٌ أماميّة بنوع «كاميرا» لا تُبدأ من الخلفيّة** في أندرويد 14. تُبدأ دائمًا
+  والتطبيق في المقدّمة، وتبقى ما بقيت رحلةٌ **أو** تسجيل.
+- `Color.value` كلمةٌ من 64 بتًّا؛ `toInt()` عليها تعطي صفرًا (شفّافًا) لا اللون.
+  للحصول على `int` لوني: `toArgb()`.
+- **`LocalContentColor` لا يوفّره إلّا `Surface`/`Scaffold`.** خلفيّةٌ عبر
+  `Modifier.background` لا توفّره، وافتراضه في Material 3 أسودُ صريح. تُوفَّر في
+  `GtSpeedometerTheme`.
+- ألوان اللوحة (`Bg`, `Accent`, …) خصائصُ `@Composable` منذ 0.4.0: لا تُقرأ داخل
+  `remember {}` ولا في لامدا `AndroidView` ولا في `DrawScope`. تُرفع في جسم الدالّة
+  التركيبيّة ثمّ تُمرَّر.
+- `ProcessCameraProvider.getInstance` غير متزامنة: قد يغادر المستعمل قبل أن تصل،
+  فيربط المستمع المتأخّر كاميرا بلا شاشة. لذلك عدّاد الأجيال في `CameraSession`.
+- **PiP:** `onUserLeaveHint` لا يُنادى لإيماءة الصعود على كثيرٍ من الأجهزة، ولذلك
+  `setAutoEnterEnabled` من أندرويد 12 إلى جانبه لا بدلًا منه. و`configChanges`
+  يجب أن يشمل `smallestScreenSize|density` وإلّا أُعيد إنشاء النشاط عند الانكماش.

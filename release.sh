@@ -177,11 +177,40 @@ build_apks() {
   if [[ "$VARIANT" == "debug"   || "$VARIANT" == "both" ]]; then tasks+=(":app:assembleDebug"); fi
   if [[ "$VARIANT" == "release" || "$VARIANT" == "both" ]]; then tasks+=(":app:assembleRelease"); fi
   say "./gradlew ${tasks[*]}"
-  if ! run ./gradlew --console=plain "${tasks[@]}"; then
-    warn "فشل البناء. أُعيدت ملفّات المشروع إلى ما كانت: ${SYNC_FILES[*]:-}"
-    if (( ! DRY_RUN )) && declare -F restore_files >/dev/null; then restore_files; fi
-    die "أُلغي عند البناء."
+  if (( DRY_RUN )); then
+    printf '%s\n' "${C_DIM}[تجربة جافّة] ./gradlew --console=plain ${tasks[*]}${C_RESET}"
+    return
   fi
+  # المخرجات تُبَثّ وتُحفظ معًا: سجلّ Gradle عند الفشل مئاتُ الأسطر، وسطرا العطب
+  # الحقيقيّان يضيعان في وسطها. نلتقطهما ونعيد عرضهما في الآخر.
+  local log; log="$(mktemp)"
+  if ./gradlew --console=plain "${tasks[@]}" 2>&1 | tee "$log"; then
+    rm -f "$log"
+    return
+  fi
+
+  printf '\n'
+  warn "فشل البناء. أُعيدت ملفّات المشروع إلى ما كانت: ${SYNC_FILES[*]:-}"
+  local errs
+  errs="$(grep -E '^e: |^  *> .*[Ee]rror|error:' "$log" \
+          | sed -E 's|file:///[^ ]*/app/src|app/src|' | head -12)"
+  if [[ -n "$errs" ]]; then
+    printf '\n%s\n' "${C_BOLD}أوّل ما اشتكى منه المصرّف:${C_RESET}"
+    printf '%s\n' "$errs"
+  fi
+  # عطبٌ شائع يستحقّ تشخيصًا صريحًا لا سطرَ خطأٍ مبهمًا
+  if grep -q 'Redeclaration' "$log"; then
+    printf '\n'
+    warn "«Redeclaration» تعني تعريفًا مكرّرًا، وسببه في الغالب ملفٌّ قديم بقي بعد"
+    warn "نسخ شجرةٍ جديدة **فوق** القديمة — والنسخ لا يحذف ما استُغني عنه."
+    warn "قارن شجرتك بالحزمة واحذف الزائد، مثلًا:"
+    warn "  unzip -Z1 <الحزمة>.zip | sed -n 's|^[^/]*/||p' | grep '\.kt$' | sort > /tmp/keep.txt"
+    warn "  find app/src/main/java -name '*.kt' | sort > /tmp/have.txt"
+    warn "  comm -13 /tmp/keep.txt /tmp/have.txt"
+  fi
+  rm -f "$log"
+  if declare -F restore_files >/dev/null; then restore_files; fi
+  die "أُلغي عند البناء."
 }
 
 # ينسخ ناتج Gradle إلى dist/ باسمٍ يحمل الإصدار، ويحسب مجاميعه

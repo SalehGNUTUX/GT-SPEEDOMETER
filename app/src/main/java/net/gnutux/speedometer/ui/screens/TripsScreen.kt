@@ -5,15 +5,19 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,17 +32,24 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.delay
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.trip.TripTrack
 import net.gnutux.speedometer.ui.Fmt
@@ -48,63 +59,143 @@ import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
 import net.gnutux.speedometer.ui.theme.TextSecondary
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-/** سجلّ الرحلات المحفوظة، وخريطة مسار كلّ رحلة. */
+// أرشيف الرحلات: قائمة مسطّحة ثمّ تفصيل برحلة واحدة. لا تنقّل Navigation
+// لأنّ الشاشة كلّها تبويب واحد داخل AppRoot؛ الحالة المختارة تكفي، وزرّ
+// الرجوع في النظام يُلغيها عبر BackHandler.
+
+/** ارتفاع شريط التراجع تقريبًا، يُحجز أسفل القائمة كي لا يحجب آخر بطاقة */
+private val UndoBarReserve = 84.dp
+
+/** قسم الرحلات المحفوظة: بطاقة لكلّ رحلة، ولمسةٌ تفتح تفصيلها مع الخريطة. */
 @Composable
 fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val trips by vm.trips.collectAsStateWithLifecycle()
+    val pendingDelete by vm.pendingTripDelete.collectAsStateWithLifecycle()
+    val undoSeconds by vm.settings.undoSeconds.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<TripTrack?>(null) }
 
     LaunchedEffect(Unit) { vm.refreshTrips() }
 
-    val current = selected
-    if (current != null) {
-        BackHandler { selected = null }
-        TripDetail(
-            vm = vm,
-            trip = current,
-            onBack = { selected = null },
-            onDeleted = { selected = null },
-            modifier = modifier,
-        )
-        return
-    }
+    // مهلة صفر تعني حذفًا فوريًّا، فلا شريط أصلًا حينها.
+    val pending = pendingDelete?.takeIf { undoSeconds > 0 }
 
-    if (trips.isEmpty()) {
-        Column(
-            modifier = modifier.padding(32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = stringResource(R.string.trips_empty),
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
+    // الشريط مثبّت أسفل الشاشة فوق المحتوى أيًّا كان: قائمة، أو حالة فراغ بعد حذف
+    // آخر رحلة، أو تفصيلًا. لذلك يعلو الجميع داخل Box واحد.
+    Box(modifier) {
+        val content = Modifier.fillMaxSize()
+        val current = selected
+
+        if (current != null) {
+            BackHandler { selected = null }
+            TripDetail(
+                vm = vm,
+                trip = current,
+                onBack = { selected = null },
+                onDeleted = { selected = null },
+                modifier = content,
             )
-            Text(
-                text = stringResource(R.string.trips_hint),
-                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 12.dp),
-            )
+        } else if (trips.isEmpty()) {
+            Column(
+                modifier = content.padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = stringResource(R.string.trips_empty),
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = stringResource(R.string.trips_hint),
+                    style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = content.padding(horizontal = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(
+                    top = 12.dp,
+                    bottom = if (pending != null) UndoBarReserve else 12.dp,
+                ),
+            ) {
+                // المسار المطلق مفتاح مستقرّ: ملفّ الـ GPX هو هويّة الرحلة الوحيدة على القرص.
+                items(trips, key = { it.file.absolutePath }) { trip ->
+                    TripCard(trip) { selected = trip }
+                }
+            }
         }
-        return
-    }
 
-    LazyColumn(
-        modifier = modifier.padding(horizontal = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(vertical = 12.dp),
-    ) {
-        items(trips, key = { it.file.absolutePath }) { trip ->
-            TripCard(trip = trip, onClick = { selected = trip })
+        if (pending != null) {
+            UndoDeleteBar(
+                pending = pending,
+                totalSeconds = undoSeconds,
+                onUndo = { vm.undoTripDelete() },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 }
 
+/**
+ * شريط التراجع عن الحذف.
+ *
+ * لا يملك مؤقّت الحذف ولا يعرف موعده: نموذج العرض هو من يحذف فعلًا بعد المهلة،
+ * والشريط يعرض ما بقي منها ويعرض الفعل. لذا العدّاد هنا عرضٌ محض، مفتاحه الرحلة
+ * المعلّقة نفسها فيبدأ من جديد مع كلّ حذفٍ جديد.
+ */
+@Composable
+private fun UndoDeleteBar(
+    pending: TripTrack,
+    totalSeconds: Int,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var remaining by remember(pending, totalSeconds) { mutableIntStateOf(totalSeconds) }
+
+    LaunchedEffect(pending, totalSeconds) {
+        remaining = totalSeconds
+        while (remaining > 0) {
+            delay(1_000L)
+            remaining -= 1
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .background(SurfaceHigh, RoundedCornerShape(16.dp))
+            .padding(start = 16.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.trip_deleted),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        // الرقم وحده بلا وحدة: يتبدّل كلّ ثانية، وأيّ لفظٍ للثواني يختلّ عند الواحد والاثنين.
+        Text(
+            text = String.format(Locale.US, "%d", remaining),
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontWeight = FontWeight.Bold,
+                color = Accent,
+            ),
+        )
+        TextButton(
+            onClick = onUndo,
+            modifier = Modifier.heightIn(min = 56.dp),
+        ) {
+            Text(stringResource(R.string.action_undo))
+        }
+    }
+}
+
+/** بطاقة رحلة في القائمة: التاريخ في الأعلى وأربعة أرقام في سطر واحد. */
 @Composable
 private fun TripCard(trip: TripTrack, onClick: () -> Unit) {
     Column(
@@ -138,6 +229,7 @@ private fun TripCard(trip: TripTrack, onClick: () -> Unit) {
     }
 }
 
+/** نسخة مصغّرة من [net.gnutux.speedometer.ui.components.StatTile] بلا أيقونة: أربعة أرقام لا تتّسع لها البطاقة بالحجم الكامل. */
 @Composable
 private fun MiniStat(label: String, value: String, unit: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -152,6 +244,7 @@ private fun MiniStat(label: String, value: String, unit: String) {
     }
 }
 
+/** تفصيل رحلة واحدة: خريطة المسار، الأرقام، ثمّ أفعال المشاركة والفتح والحذف. */
 @Composable
 private fun TripDetail(
     vm: SpeedoViewModel,
@@ -161,6 +254,7 @@ private fun TripDetail(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val invertTiles by vm.settings.invertMapTiles.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
 
     Column(
@@ -174,11 +268,17 @@ private fun TripDetail(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            // الأيقونة 24dp، ومساحة اللمس لا تقلّ عن 56dp (قاعدة 6): الحجم على العقدة
+            // نفسها والحشو داخلها، فتكبر المساحة دون أن تكبر الأيقونة.
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(R.string.action_back),
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onBack)
+                    .padding(16.dp),
                 tint = Accent,
-                modifier = Modifier.clickable(onClick = onBack),
             )
             Text(
                 text = formatDate(trip.startMs),
@@ -186,18 +286,21 @@ private fun TripDetail(
             )
         }
 
+        // نقطة واحدة لا تصنع خطًّا؛ نُظهر رسالةً بدل خريطة فارغة تُوهم بعطل.
         if (trip.points.size < 2) {
             Text(
                 text = stringResource(R.string.trip_no_route),
                 style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
             )
         } else {
+            // الخلفيّة والزوايا صارتا داخل RouteMap نفسه، وإلّا رسمت البلاطات
+            // المربّعة فوق الاستدارة فبدا الإطار متبدّل الشكل مع كلّ تكبير.
             RouteMap(
                 points = trip.points,
+                invertTiles = invertTiles,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(320.dp)
-                    .background(SurfaceHigh, RoundedCornerShape(16.dp)),
+                    .height(320.dp),
             )
         }
 
@@ -228,9 +331,10 @@ private fun TripDetail(
                 label = stringResource(R.string.trip_share),
                 modifier = Modifier.weight(1f),
             ) {
+                // نشارك ملفّ الـ GPX نفسه عبر FileProvider؛ لا نُصدّر نسخةً ثانية.
                 val uri = vm.uriForTrack(trip.file)
                 val send = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/gpx+xml"
+                    type = GPX_MIME
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
@@ -240,16 +344,16 @@ private fun TripDetail(
                     )
                 }
             }
+
             ActionChip(
                 icon = Icons.Filled.Map,
                 label = stringResource(R.string.trip_open_osmand),
                 modifier = Modifier.weight(1f),
             ) {
-                // OsmAnd يستقبل ملفّ GPX كأي تطبيق عرض. إن لم يكن مثبَّتًا يتولّى
-                // النظام عرض بدائله بدل أن يفشل الفعل صامتًا.
+                // ACTION_VIEW على نوع GPX يلتقطه OsmAnd وأمثاله؛ لا نربط أنفسنا بحزمة بعينها.
                 val uri = vm.uriForTrack(trip.file)
                 val view = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "application/gpx+xml")
+                    setDataAndType(uri, GPX_MIME)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 runCatching {
@@ -258,6 +362,7 @@ private fun TripDetail(
                     )
                 }
             }
+
             ActionChip(
                 icon = Icons.Filled.Delete,
                 label = stringResource(R.string.media_delete),
@@ -273,7 +378,9 @@ private fun TripDetail(
             text = { Text(stringResource(R.string.media_delete_body)) },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.deleteTrip(trip)
+                    // حذف مؤجّل: تختفي الرحلة من القائمة فورًا ويبقى الملفّ حتّى تنقضي
+                    // مهلة التراجع. نموذج العرض يملك المؤقّت والمحو.
+                    vm.requestDeleteTrip(trip)
                     confirmDelete = false
                     onDeleted()
                 }) { Text(stringResource(R.string.media_delete)) }
@@ -288,9 +395,10 @@ private fun TripDetail(
     }
 }
 
+/** زرّ فعل مربّع: أيقونة فوق نصّ، يملأ ثلث الصفّ عبر weight من المُستدعي. */
 @Composable
 private fun ActionChip(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -304,9 +412,12 @@ private fun ActionChip(
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Icon(icon, contentDescription = label, tint = Accent)
-        Text(text = label, style = MaterialTheme.typography.labelMedium)
+        Text(label, style = MaterialTheme.typography.labelMedium)
     }
 }
 
+private const val GPX_MIME = "application/gpx+xml"
+
+/** زمن مدنيّ للعرض فقط؛ القياس كلّه على elapsedRealtimeNanos داخل المحرّك. */
 private fun formatDate(ms: Long): String =
     SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(ms))

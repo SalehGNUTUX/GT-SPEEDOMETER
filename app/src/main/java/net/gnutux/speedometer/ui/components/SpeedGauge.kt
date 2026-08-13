@@ -69,8 +69,14 @@ fun SpeedGauge(
     }
 
     val measurer = rememberTextMeasurer()
-    val tickStyle = remember {
-        TextStyle(color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    // ألوان اللوحة صارت تُقرأ من التركيب، و`DrawScope` ليس تركيبًا: تُرفع هنا مرّة
+    // ثمّ تُمرَّر إلى الرسم، فيعمل الوضعان الفاتح والداكن بلا شرطٍ في حلقة الرسم.
+    val tickColor = TextSecondary
+    val tickLineColor = TextPrimary.copy(alpha = 0.55f)
+    val trackColor = TrackDim
+    val redZoneColor = Danger.copy(alpha = 0.30f)
+    val tickStyle = remember(tickColor) {
+        TextStyle(color = tickColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 
     Box(modifier = modifier.aspectRatio(1f), contentAlignment = Alignment.Center) {
@@ -84,7 +90,7 @@ fun SpeedGauge(
 
             // المسار الخلفي كاملًا
             drawArc(
-                color = TrackDim,
+                color = trackColor,
                 startAngle = START_ANGLE,
                 sweepAngle = SWEEP_ANGLE,
                 useCenter = false,
@@ -95,7 +101,7 @@ fun SpeedGauge(
 
             // المنطقة الحمراء: من عتبة التحذير إلى النهاية، باهتة كي لا تزاحم القيمة الحيّة
             drawArc(
-                color = Danger.copy(alpha = 0.30f),
+                color = redZoneColor,
                 startAngle = START_ANGLE + SWEEP_ANGLE * warnFraction,
                 sweepAngle = SWEEP_ANGLE * (1f - warnFraction),
                 useCenter = false,
@@ -124,6 +130,7 @@ fun SpeedGauge(
                 maxKmh = maxKmh,
                 measurer = measurer,
                 style = tickStyle,
+                lineColor = tickLineColor,
             )
         }
 
@@ -155,6 +162,7 @@ private fun DrawScope.drawTicks(
     maxKmh: Int,
     measurer: androidx.compose.ui.text.TextMeasurer,
     style: TextStyle,
+    lineColor: Color,
 ) {
     for (i in 0..TICK_COUNT) {
         val fraction = i.toFloat() / TICK_COUNT
@@ -165,7 +173,7 @@ private fun DrawScope.drawTicks(
         val outer = radius - stroke / 2f - 2.dp.toPx()
         val inner = outer - stroke * 0.45f
         drawLine(
-            color = TextPrimary.copy(alpha = 0.55f),
+            color = lineColor,
             start = Offset(center.x + cosA * inner, center.y + sinA * inner),
             end = Offset(center.x + cosA * outer, center.y + sinA * outer),
             strokeWidth = 2.dp.toPx(),

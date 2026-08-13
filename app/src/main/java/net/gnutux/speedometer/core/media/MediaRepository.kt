@@ -16,6 +16,7 @@ import androidx.camera.video.PendingRecording
 import androidx.camera.video.Recorder
 import androidx.core.content.FileProvider
 import java.io.File
+import android.content.ContentResolver
 
 data class MediaItem(
     val uri: Uri,
@@ -46,7 +47,11 @@ class MediaRepository(private val context: Context) {
      * `prepareRecording` مثقَّل لكل نوع مخرجات ولا يقبل النوع المجرّد `OutputOptions`،
      * فالاختيار بين المكتبة والمجلد الخاص يقع هنا لا في المتصل.
      */
-    fun prepareRecording(recorder: Recorder, name: String): PendingRecording =
+    fun prepareRecording(
+        recorder: Recorder,
+        name: String,
+        durationLimitMs: Long? = null,
+    ): PendingRecording =
         if (useMediaStore) {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
@@ -56,12 +61,36 @@ class MediaRepository(private val context: Context) {
             val options = MediaStoreOutputOptions
                 .Builder(context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
                 .setContentValues(values)
+                .apply { durationLimitMs?.let { setDurationLimitMillis(it) } }
                 .build()
             recorder.prepareRecording(context, options)
         } else {
-            val options = FileOutputOptions.Builder(File(videoDirLegacy, name)).build()
+            val options = FileOutputOptions.Builder(File(videoDirLegacy, name))
+                .apply { durationLimitMs?.let { setDurationLimitMillis(it) } }
+                .build()
             recorder.prepareRecording(context, options)
         }
+
+    /**
+     * الاسم الذي استقرّ عليه الملفّ فعلًا.
+     *
+     * MediaStore يفضّ تصادم الأسماء بإضافة `(1)` من عنده، فالاسم الذي طلبناه ليس
+     * دائمًا الاسم المحفوظ. عرضُ الاسم المطلوب في رسالة النجاح كان يُرسل المستخدم
+     * يبحث في المعرض عن ملفٍّ بهذا الاسم لا وجود له. الاستعلام صفٌّ واحد بمفتاحه،
+     * فكلفتُه لحظةَ إنهاء التسجيل مهملة.
+     */
+    fun displayName(uri: Uri): String? = runCatching {
+        if (uri.scheme == ContentResolver.SCHEME_FILE) return@runCatching uri.lastPathSegment
+        context.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 
     fun saveImage(bitmap: Bitmap, name: String): Uri? =
         if (useMediaStore) {

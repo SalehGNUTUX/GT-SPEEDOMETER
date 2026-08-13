@@ -31,10 +31,17 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.GTSpeedometer">
 
+        <!--
+            صورة في صورة: المغادرة أثناء رحلةٍ أو تسجيل تُبقي السرعة ظاهرة.
+            و`configChanges` تزيد `smallestScreenSize|density` على ما كان، لأنّ
+            الانكماش إلى النافذة يبدّلهما أيضًا؛ ولولاهما أُعيد بناء النشاط عند كلّ
+            دخولٍ وخروج فيومض التسجيل ويعود التبويب إلى أوّله.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboardHidden|uiMode"
             android:theme="@style/Theme.GTSpeedometer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

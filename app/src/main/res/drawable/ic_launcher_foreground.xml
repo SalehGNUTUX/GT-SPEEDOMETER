@@ -1,0 +1,38 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- قوس العداد -->
+    <path
+        android:pathData="M 32 74 A 24 24 0 1 1 76 74"
+        android:strokeColor="#22303A"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+
+    <!-- المنطقة النشطة من القوس -->
+    <path
+        android:pathData="M 32 74 A 24 24 0 0 1 36 41"
+        android:strokeColor="#00E5C7"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+
+    <!-- المنطقة الحمراء -->
+    <path
+        android:pathData="M 72 41 A 24 24 0 0 1 76 74"
+        android:strokeColor="#FF5A45"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+
+    <!-- المؤشر -->
+    <path
+        android:pathData="M 54 62 L 66 44"
+        android:strokeColor="#F2F7F9"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+
+    <path
+        android:pathData="M 54 62 m -4 0 a 4 4 0 1 0 8 0 a 4 4 0 1 0 -8 0"
+        android:fillColor="#F2F7F9" />
+</vector>

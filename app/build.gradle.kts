@@ -21,8 +21,8 @@ android {
         applicationId = "net.gnutux.speedometer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0-beta"
+        versionCode = 4
+        versionName = "0.4.0-beta"
     }
 
     androidResources {
@@ -61,6 +61,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // شاشة «عن التطبيق» تعرض رقم الإصدار من مصدرٍ واحد لا من نصٍّ مكرّر
+        buildConfig = true
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"

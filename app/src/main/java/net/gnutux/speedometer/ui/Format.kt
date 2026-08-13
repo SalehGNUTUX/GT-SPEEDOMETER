@@ -24,4 +24,10 @@ object Fmt {
     }
 
     fun odometer(km: Double): String = String.format(Locale.US, "%06d", km.toInt())
+
+    /** عددٌ صحيح عامّ (طول مقطع، ثوانٍ، عدد نقاط) — يمرّ من هنا كي لا تُكتب أرقامٌ هنديّة */
+    fun count(value: Int): String = String.format(Locale.US, "%d", value)
+
+    /** ساعة الجدار بخانتين: 06 لا 6، كي تستوي أعمدة الاختيار */
+    fun hour(value: Int): String = String.format(Locale.US, "%02d", value)
 }

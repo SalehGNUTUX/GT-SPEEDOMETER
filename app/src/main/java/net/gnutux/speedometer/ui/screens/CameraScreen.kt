@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -43,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -58,21 +60,37 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.camera.CameraSession
+import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.components.CompactGauge
 import net.gnutux.speedometer.ui.components.GpsDot
 import net.gnutux.speedometer.ui.theme.Danger
+import java.util.Locale
 
 /**
- * الكاميرا الحيّة وفوقها طبقة العداد.
+ * الكاميرا الحيّة وفوقها طبقة العدّاد.
  *
- * الفيديو المسجَّل **نظيف**: الطبقة تظهر على الشاشة ولا تُحرق داخل الملف. المسار
- * يُحفظ منفصلًا بـ GPX، ولحظة بدء الترميز تُثبَّت على محور elapsedRealtime، فتُعاد
- * محاذاة الطبقة على الفيديو لاحقًا بلا تخمين. حرق الطبقة يأتي في v0.2.
+ * الفيديو نظيف بطبيعته: ما تراه هنا طبقةُ شاشةٍ بـ Compose، والمسار يُحفَظ منفصلًا
+ * بـ GPX، ولحظة بدء الترميز تُثبَّت على محور elapsedRealtime فتُعاد محاذاة الطبقة
+ * على الفيديو لاحقًا بلا تخمين.
+ *
+ * توگل «محروق / نظيف» في الشريط العلويّ. الحرق الفعليّ يجري في `CameraSession` عبر
+ * `OverlayEffect`، لا هنا؛ هذه الشاشة تعرض الحالة وتبدّلها فقط. والتوگل يُقفَل أثناء
+ * التسجيل لأنّ تغييره يستلزم إعادة ربط الكاميرا.
  *
  * زرّ اللقطة يلتقط الشاشة كما هي — الكاميرا والطبقة معًا — فيعطي صورةً محروقة
- * الآن، ريثما يجيء الحرق في الفيديو.
+ * مهما كانت حالة التوگل.
+ *
+ * جديد في 0.4.0: رسالة مصير التسجيل صارت خمس حالات لا اثنتين، لأنّ «حُفظ» و«حُفظ
+ * ناقصًا» و«لا شيء» مصائر مختلفة لا يجوز جمعها تحت «تعذّر الحفظ». ومعها مؤشّرُ
+ * تقسيمٍ صغير بجوار شارة التسجيل يُنذر بأنّ الملفّ سيُلَفّ.
+ *
+ * ودورة حياة الكاميرا لم تعد دورة حياة هذا النشاط: نُمرّر [LocalLifecycleOwner]
+ * إلى الجلسة لتتبعه في الأحوال العاديّة لا لتربط به حالات الاستعمال. الفرق أنّ
+ * الجلسة تستطيع أن تعصي المضيف حين يجب — وهو ما يُبقي التصوير حيًّا بعد ضغطة زرّ
+ * الشاشة الرئيسة أو انطفاء الشاشة — بينما كان الربط المباشر يُنهي التسجيل بـ
+ * `SOURCE_INACTIVE` قبل أن تصل أيّ شفرةٍ منّا.
  */
 @Composable
 fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
@@ -87,29 +105,37 @@ fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val isRecording by vm.isRecording.collectAsStateWithLifecycle()
     val cameraMessage by vm.cameraMessage.collectAsStateWithLifecycle()
     val burnOverlay by vm.burnOverlay.collectAsStateWithLifecycle()
+    val segmentMinutes by vm.camera.segmentMinutes.collectAsStateWithLifecycle()
 
     var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var captureTick by remember { mutableIntStateOf(0) }
     var hideControls by remember { mutableStateOf(false) }
 
+    // COMPATIBLE يفرض TextureView: SurfaceView لا يظهر في PixelCopy لنافذة التطبيق،
+    // فكانت اللقطة تخرج بمستطيل أسود مكان المعاينة.
     val previewView = remember {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
-            // COMPATIBLE يجعل المعاينة TextureView داخل شجرة العرض. في الوضع
-            // الافتراضي (SurfaceView) كانت لقطة الشاشة تخرج سوداء المشهد: الطبقة
-            // تُلتقط والصورة لا، لأن سطح الكاميرا يُركَّب خارج نافذة التطبيق.
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
         }
     }
 
-    DisposableEffect(Unit) {
+    // المفتاح هو حالة الحرق لا Unit: إضافة `OverlayEffect` أو نزعه تستلزم إعادة بناء
+    // `UseCaseGroup`، ولا سبيل إلى ذلك إلّا بربطٍ جديد. بدونه كان التوگل يقلب الشارة
+    // ويترك الملفّ المسجَّل على حاله — يَعِد بالحرق ويسلّم نظيفًا، أو العكس.
+    //
+    // ولا تُضاف حالة المضيف إلى المفاتيح: الأثر يجب ألّا يُعاد تشغيله عند كلّ
+    // ذهابٍ إلى الخلفيّة وعودة، فإعادة الربط في منتصف التسجيل تقتله. الجلسة تتابع
+    // المضيف بنفسها، وهذا الأثر يقول لها «ثمّة شاشة» و«زالت الشاشة» لا أكثر.
+    DisposableEffect(burnOverlay) {
         vm.camera.bind(lifecycleOwner, previewView) { failed = true }
         onDispose { vm.camera.detach() }
     }
 
     // رسالة صريحة عن مصير التسجيل. الصمت هنا هو ما جعل المستخدم يظنّ أن
-    // شيئًا لم يُحفظ بينما كان الملف يُكتب في مجلد لا يراه.
+    // شيئًا لم يُحفظ بينما كان الملف يُكتب في مجلد لا يراه. ولأنّ ثلاثًا من الحالات
+    // تُنتج ملفًّا على القرص، تُحدَّث مكتبة الوسائط فيها جميعًا لا عند النجاح وحده.
     LaunchedEffect(cameraMessage) {
         when (val m = cameraMessage) {
             is CameraSession.Message.Saved -> {
@@ -117,14 +143,31 @@ fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                 vm.refreshMedia()
             }
 
+            is CameraSession.Message.Truncated -> {
+                toast = context.getString(R.string.recording_truncated, m.name)
+                vm.refreshMedia()
+            }
+
+            is CameraSession.Message.Segment -> {
+                toast = context.getString(R.string.recording_segment, m.name)
+                vm.refreshMedia()
+            }
+
             is CameraSession.Message.Failed ->
-                toast = context.getString(R.string.recording_failed, m.reason)
+                toast = context.getString(R.string.recording_failed, context.getString(m.reason))
+
+            CameraSession.Message.BurnUnsupported ->
+                toast = context.getString(R.string.burn_unsupported)
 
             null -> return@LaunchedEffect
         }
-        vm.consumeCameraMessage()
         delay(3500)
         toast = null
+        // الاستهلاك بعد الانتظار لا قبله: هو يُصفّر `cameraMessage` وهو مفتاح هذا
+        // الأثر، فاستهلاكُه في البداية كان يُلغي الأثر عند `delay` فتبقى الشارة
+        // معلّقة على الشاشة إلى الأبد. ووصولُ رسالةٍ جديدة أثناء الانتظار يُعيد
+        // تشغيل الأثر قبل الاستهلاك، فلا تضيع رسالة.
+        vm.consumeCameraMessage()
     }
 
     LaunchedEffect(captureTick) {
@@ -179,6 +222,7 @@ fun CameraScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                     locked = isRecording,
                     onToggle = { vm.setBurnOverlay(!burnOverlay) },
                 )
+                if (segmentMinutes > AppSettings.SEGMENT_CONTINUOUS) SegmentBadge(segmentMinutes)
                 if (isRecording) RecordingBadge()
             }
         }
@@ -378,33 +422,71 @@ private fun OverlayStat(label: String, value: String, unit: String) {
     }
 }
 
-/** توگل حرق العدّاد داخل ملفّ الفيديو. يُقفَل أثناء التسجيل لأن تبديله يعيد الربط. */
+/**
+ * شارة «محروق / نظيف».
+ *
+ * @param locked يُعطَّل اللمس أثناء التسجيل: تبديل الحرق يعيد بناء `UseCaseGroup`،
+ *   وإعادة الربط تقتل التسجيل الجاري. نُسقط النقر بدل إظهار خطأ.
+ *
+ * الحبّة المرئيّة نحيلة عمدًا كي لا تحجب المشهد، لكنّ ارتفاعها كان نحو 29dp — دون
+ * حدّ القاعدة السادسة (56dp) بكثير، والإصبع على طريقٍ مهتزّ لا يصيبها. الحلّ توسيع
+ * منطقة اللمس وحدها: صندوقٌ خارجيّ يحمل النقر ويبلغ 56dp، والطلاء يبقى كما هو.
+ */
 @Composable
 private fun BurnToggle(enabled: Boolean, locked: Boolean, onToggle: () -> Unit) {
-    Row(
+    Box(
         modifier = Modifier
-            .background(
-                if (enabled) Danger.copy(alpha = 0.28f) else Color.Black.copy(alpha = 0.45f),
-                CircleShape,
-            )
-            .then(if (locked) Modifier else Modifier.clickable(onClick = onToggle))
-            .padding(horizontal = 11.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .defaultMinSize(minWidth = 56.dp, minHeight = 56.dp)
+            // القصّ قبل النقر ليبقى أثر اللمس داخل شكلٍ بيضويّ لا مستطيلٍ فجّ
+            .clip(CircleShape)
+            .then(if (locked) Modifier else Modifier.clickable(onClick = onToggle)),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = Icons.Filled.Layers,
-            contentDescription = stringResource(R.string.burn_overlay),
-            tint = if (enabled) Color.White else Color.White.copy(alpha = 0.55f),
-            modifier = Modifier.size(17.dp),
-        )
-        Text(
-            text = stringResource(if (enabled) R.string.burn_on else R.string.burn_off),
-            style = MaterialTheme.typography.labelMedium.copy(
-                color = if (enabled) Color.White else Color.White.copy(alpha = 0.55f),
-            ),
-        )
+        Row(
+            modifier = Modifier
+                .background(
+                    if (enabled) Danger.copy(alpha = 0.28f) else Color.Black.copy(alpha = 0.45f),
+                    CircleShape,
+                )
+                .padding(horizontal = 11.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Layers,
+                contentDescription = stringResource(R.string.burn_overlay),
+                tint = if (enabled) Color.White else Color.White.copy(alpha = 0.55f),
+                modifier = Modifier.size(17.dp),
+            )
+            Text(
+                text = stringResource(if (enabled) R.string.burn_on else R.string.burn_off),
+                style = MaterialTheme.typography.labelMedium.copy(
+                    color = if (enabled) Color.White else Color.White.copy(alpha = 0.55f),
+                ),
+            )
+        }
     }
+}
+
+/**
+ * مؤشّر التقسيم بجوار شارة التسجيل.
+ *
+ * غرضه أن يعلم الراكب أنّ الملفّ سيُلَفّ إلى ملفٍّ تالٍ عند بلوغ هذا الطول، فلا
+ * يظنّ انقطاعَ التصوير عطبًا. عرضٌ للحالة فقط، لا لمس فيه، فلا تسري عليه قاعدة
+ * مساحة اللمس.
+ */
+@Composable
+private fun SegmentBadge(minutes: Int) {
+    Text(
+        // القاعدة 4: الأرقام بـ Locale.US كي تخرج 0-9 لا ١-٩
+        text = stringResource(R.string.segment_minutes, String.format(Locale.US, "%d", minutes)),
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        style = MaterialTheme.typography.labelMedium.copy(
+            color = Color.White.copy(alpha = 0.82f),
+        ),
+    )
 }
 
 @Composable

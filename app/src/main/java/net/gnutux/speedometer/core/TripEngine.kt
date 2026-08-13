@@ -15,8 +15,10 @@ import net.gnutux.speedometer.core.location.LocationEngine
 import net.gnutux.speedometer.core.location.SpeedFilter
 import net.gnutux.speedometer.core.media.MediaRepository
 import net.gnutux.speedometer.core.profile.VehicleProfile
+import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.trip.GpxWriter
 import net.gnutux.speedometer.core.trip.TripRecorder
+import net.gnutux.speedometer.core.trip.TripStatus
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -28,13 +30,17 @@ import java.util.Locale
  */
 class TripEngine(private val context: Context) {
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** التفضيلات تُنشأ أوّلًا: جلسة الكاميرا تقرأ منها لحظة إنشائها */
+    val settings = AppSettings(context, scope)
+
     val location = LocationEngine(context)
     val recorder = TripRecorder()
     val media = MediaRepository(context)
-    val camera = CameraSession(context, media)
+    val camera = CameraSession(context, media, settings)
     private val filter = SpeedFilter()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var collectJob: Job? = null
 
     private val _profile = MutableStateFlow(VehicleProfile.DEFAULT)
@@ -45,13 +51,22 @@ class TripEngine(private val context: Context) {
     val liveSpeedMps = _liveSpeedMps.asStateFlow()
 
     fun setProfile(p: VehicleProfile) {
+        // الاختيار يُحفظ: ملفّ المركبة يضبط مدى القرص وعتبة التوقّف وشدّة التنعيم،
+        // أي القياس نفسه، فعودته إلى الافتراضيّ عند كلّ إقلاع تغيّر الأرقام صامتةً
+        settings.setVehicleName(p.name)
         _profile.value = p
         filter.setProfile(p)
         recorder.setProfile(p)
+        // مدى القرص وعتبة التحذير تغيّرا، فتُدفَع لقطة فورًا كي لا تبقى الطبقة
+        // المحروقة على مدى المركبة السابقة حتّى وصول العيّنة التالية
         pushHud(_liveSpeedMps.value)
     }
 
-    /** يُغذّي الطبقة المحروقة في الفيديو بالقيم الحيّة بعد تحديث المسجّل */
+    /**
+     * الطبقة المحروقة في الفيديو تُرسم في خيط الكاميرا، فلا تقرأ الحالة بنفسها:
+     * نناولها لقطةً جاهزة عند كلّ تغيّر، فيبقى الرسم بلا قفلٍ ولا تبعيّةٍ عكسيّة
+     * على المحرّك، وتبقى قاعدة «الفيديو نظيف والمسار منفصل» قائمةً بالفصل ذاته.
+     */
     private fun pushHud(smoothedMps: Float) {
         val trip = recorder.state.value
         val p = _profile.value
@@ -67,6 +82,30 @@ class TripEngine(private val context: Context) {
         )
     }
 
+    init {
+        // استعادة المركبة المحفوظة. تُقرأ عبر التدفّق لأنّ القرص لا يُجيب فورًا،
+        // والقيمة الأولى هي الافتراضيّ ريثما يصل المحفوظ.
+        scope.launch {
+            settings.vehicleName.collect { name ->
+                if (name.isEmpty()) return@collect
+                val saved = VehicleProfile.entries.firstOrNull { it.name == name } ?: return@collect
+                if (saved != _profile.value) {
+                    _profile.value = saved
+                    filter.setProfile(saved)
+                    recorder.setProfile(saved)
+                    pushHud(_liveSpeedMps.value)
+                }
+            }
+        }
+    }
+
+    /**
+     * تشغيل مصدر الموقع. الاستدعاء مُتكرَّرٌ بلا ضرر عمدًا: تناديه الواجهة عند منح
+     * الإذن، ومربّع الإعدادات السريعة، والخدمة الأماميّة عند إقلاعها — وكلٌّ منها
+     * قد يكون الأوّل. [collectJob] يعيش على نطاق التطبيق لا على نطاق شاشة، فزوالُ
+     * الواجهة لا يقطع الجمع، وهو شرط أن يبقى المسار يُكتب والعدّاد يتحدّث والطبقة
+     * المحروقة صادقة بينما التطبيق في الخلفيّة.
+     */
     fun startLocation(): Boolean {
         if (collectJob == null) {
             collectJob = scope.launch {
@@ -82,6 +121,10 @@ class TripEngine(private val context: Context) {
         return location.start()
     }
 
+    /**
+     * لا يناديها اليوم أحد، وهذا مقصود: إطفاء الموقع عند مغادرة الواجهة كان يعني
+     * رحلةً بلا نقاط وفيديو بلا سرعة. الإطفاء الوحيد المشروع هو موت العمليّة.
+     */
     fun stopLocation() {
         location.stop()
         collectJob?.cancel()
@@ -97,8 +140,13 @@ class TripEngine(private val context: Context) {
     fun pauseTrip() = recorder.pause()
     fun resumeTrip() = recorder.resume()
 
-    /** يُنهي الرحلة ويكتب ملف GPX. يعيد null إن لم تُسجَّل نقاط. */
-    fun finishTrip(videoFile: File? = null): File? {
+    /**
+     * يُنهي الرحلة ويكتب ملف GPX. يعيد null إن لم تُسجَّل نقاط.
+     *
+     * @param videoName اسم أوّل ملفّ فيديو رافق الرحلة. اسمٌ لا ملفّ، لأنّ التسجيل
+     *   يذهب إلى MediaStore على أندرويد 10 فما فوق فلا `File` له أصلًا.
+     */
+    fun finishTrip(videoName: String? = null): File? {
         recorder.finish()
         val points = recorder.points
         if (points.isEmpty()) return null
@@ -115,13 +163,31 @@ class TripEngine(private val context: Context) {
             points = points,
             trackStartUtcMillis = recorder.trackStartUtcMillis,
             trackStartNanos = start,
-            videoFileName = videoFile?.name,
+            videoFileName = videoName,
             videoOffsetMs = offsetMs,
         )
         return gpx
     }
 
     fun resetTrip() = recorder.reset()
+
+    // ===== ما يوجب بقاء الخدمة الأماميّة =====
+
+    /** رحلةٌ قائمة: جاريةً كانت أو موقوفةً مؤقّتًا — كلتاهما تنتظر نقاطًا */
+    val isTripActive: Boolean
+        get() = recorder.state.value.status == TripStatus.RUNNING ||
+            recorder.state.value.status == TripStatus.PAUSED
+
+    /**
+     * الخدمة الأماميّة تحيا لأحد سببين لا واحد: رحلةٌ تُقاس، أو جلسة تصويرٍ تمسك
+     * العدسة. كان الشرط الأوّل وحده، فمن أطفأ «بدء رحلة مع التسجيل» ثمّ صوّر ثمّ
+     * غادر التطبيق وجد أندرويد قد أغلق عليه الكاميرا — لا خدمةَ تحميها.
+     *
+     * قراءة تزامنيّة لا تدفّق: القرار يُتَّخذ في اللحظة نفسها التي يلمس فيها
+     * المستخدم الزرّ، وتدفّقٌ يتأخّر دورةً كان سيُطلق خدمةً ثمّ يقتلها في الحال.
+     */
+    val needsForegroundService: Boolean
+        get() = isTripActive || camera.isSessionActive.value
 
     /** تُنادى لحظة بدء التسجيل فعليًا، على نفس محور زمن عيّنات الموقع */
     fun markVideoStart() = recorder.markVideoStart(SystemClock.elapsedRealtimeNanos())
