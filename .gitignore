@@ -13,3 +13,6 @@ captures/
 *.jks
 keystore.properties
 !debug.keystore
+
+# إعدادات أداة claude المحلّية وملفّاتها المؤقّتة
+.claude/

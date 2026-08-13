@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import net.gnutux.speedometer.core.camera.CameraSession
+import net.gnutux.speedometer.core.camera.HudSnapshot
 import net.gnutux.speedometer.core.location.LocationEngine
 import net.gnutux.speedometer.core.location.SpeedFilter
 import net.gnutux.speedometer.core.media.MediaRepository
@@ -47,6 +48,23 @@ class TripEngine(private val context: Context) {
         _profile.value = p
         filter.setProfile(p)
         recorder.setProfile(p)
+        pushHud(_liveSpeedMps.value)
+    }
+
+    /** يُغذّي الطبقة المحروقة في الفيديو بالقيم الحيّة بعد تحديث المسجّل */
+    private fun pushHud(smoothedMps: Float) {
+        val trip = recorder.state.value
+        val p = _profile.value
+        camera.updateHud(
+            HudSnapshot(
+                speedKmh = smoothedMps * 3.6f,
+                distanceKm = trip.distanceKm,
+                maxSpeedKmh = trip.maxSpeedKmh,
+                durationMs = trip.elapsedMs,
+                gaugeMaxKmh = p.gaugeMaxKmh,
+                warnKmh = p.defaultWarnKmh,
+            )
+        )
     }
 
     fun startLocation(): Boolean {
@@ -57,6 +75,7 @@ class TripEngine(private val context: Context) {
                     val smoothed = filter.update(sample.speedMps)
                     _liveSpeedMps.value = smoothed
                     recorder.onSample(sample, smoothed)
+                    pushHud(smoothed)
                 }
             }
         }
