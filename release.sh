@@ -15,11 +15,18 @@
 #    --name S        اسم الإصدار (versionName) مثل 0.4.0-beta
 #    --type beta|final     تجريبيّ أم نهائيّ
 #    --variant debug|release|both   سمة البناء
+#    --repackage     أعِد تحزيم الإصدار الحاليّ نفسه بلا رفع رقمه
+#    (وفي الوضع التفاعليّ خيارٌ ثالث: إدخالٌ يدويّ يُعتمد كما هو)
+#    --replace       استبدل وسمًا وإصدارًا موجودَين بلا سؤال
+#    --branch B      الفرع الهدف (الافتراضيّ: الفرع الافتراضيّ للمستودع)
 #    --yes           لا تسأل تأكيدًا (للتشغيل الآليّ)
 #    --no-push       ابنِ واعتمد محلّيًّا بلا دفع
 #    --no-release    ادفع بلا إنشاء إصدارٍ على GitHub
 #    --dry-run       تجربةٌ جافّة
 #    --help          هذه الرسالة
+#
+#  الدفع دائمًا إلى الفرع الافتراضيّ مباشرةً (git push origin HEAD:main)، فلا يُفتح
+#  طلب مساهمة ولو كنتَ على فرعٍ آخر.
 #
 #  المتطلَّبات: JDK 17 · git · (اختياريّ) gh أو GITHUB_TOKEN لإنشاء الإصدار
 # ============================================================================
@@ -41,8 +48,8 @@ die()  { printf '%s\n' "${C_ERR}✗${C_RESET} $*" >&2; exit 1; }
 step() { printf '\n%s\n' "${C_BOLD}▸ $*${C_RESET}"; }
 
 # ---------- الوسائط ----------
-ARG_CODE=""; ARG_NAME=""; ARG_TYPE=""; ARG_VARIANT=""
-ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0
+ARG_CODE=""; ARG_NAME=""; ARG_TYPE=""; ARG_VARIANT=""; ARG_BRANCH=""
+ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0; REPACKAGE=0; REPLACE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,11 +57,14 @@ while [[ $# -gt 0 ]]; do
     --name)    ARG_NAME="${2:-}"; shift 2 ;;
     --type)    ARG_TYPE="${2:-}"; shift 2 ;;
     --variant) ARG_VARIANT="${2:-}"; shift 2 ;;
+    --branch)  ARG_BRANCH="${2:-}"; shift 2 ;;
+    --repackage) REPACKAGE=1; shift ;;
+    --replace) REPLACE=1; shift ;;
     --yes|-y)  ASSUME_YES=1; shift ;;
     --no-push) DO_PUSH=0; DO_RELEASE=0; shift ;;
     --no-release) DO_RELEASE=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
-    --help|-h) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "خيار غير معروف: $1  (جرّب --help)" ;;
   esac
 done
@@ -67,12 +77,21 @@ run() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+#  الإدخال في طرفيّةٍ ثنائيّة الاتّجاه
+#
+#  خلط العربيّة بالأرقام والأقواس في سطرٍ واحد يجعل الطرفيّة تُعيد ترتيبه، فتظهر
+#  الخيارات متداخلةً وتنعكس الأقواس. القاعدة هنا: نصٌّ عربيّ في سطره، وخيارٌ واحد
+#  في كلّ سطر، ومحثّ الإدخال بمحارف لاتينيّة خالصة — فاتّجاهه لا يلتبس.
+# ---------------------------------------------------------------------------
+
 confirm() {
   local prompt="$1"
   # لا تكتبها `(( X )) && return 0`: تحت `set -e` تُنهي السكريبت حين تكون X صفرًا
   if (( ASSUME_YES )); then return 0; fi
+  printf '\n  %s\n' "$prompt"
   local reply
-  read -r -p "${prompt} [n/y] " reply
+  read -r -p "  > y/n [n]: " reply
   [[ "$reply" =~ ^([yY]|نعم)$ ]]
 }
 
@@ -81,13 +100,32 @@ ask() {                       # ask <النصّ> <الافتراضيّ> <اسم 
   if (( ASSUME_YES )) && [[ -n "$default" ]]; then
     printf -v "$__var" '%s' "$default"; return
   fi
+  printf '\n  %s\n' "$prompt"
   if [[ -n "$default" ]]; then
-    read -r -p "${prompt} [${default}]: " reply
+    read -r -p "  > [${default}]: " reply
     reply="${reply:-$default}"
   else
-    read -r -p "${prompt}: " reply
+    read -r -p "  > " reply
   fi
   printf -v "$__var" '%s' "$reply"
+}
+
+menu() {                      # menu <العنوان> <الافتراضيّ> <اسم المتغيّر> <خيار…>
+  local title="$1" default="$2" __var="$3"; shift 3
+  printf '\n  %s\n' "$title"
+  local i=1 opt
+  for opt in "$@"; do
+    printf '    %d) %s\n' "$i" "$opt"
+    i=$((i + 1))
+  done
+  if (( ASSUME_YES )); then
+    printf -v "$__var" '%s' "$default"
+    printf '  > [%s]\n' "$default"
+    return
+  fi
+  local reply
+  read -r -p "  > [${default}]: " reply
+  printf -v "$__var" '%s' "${reply:-$default}"
 }
 
 # ---------- جذر المستودع ----------
@@ -138,15 +176,54 @@ printf '  versionCode = %s\n  versionName = %s\n' "$CUR_CODE" "$CUR_NAME"
 # ---------- الأسئلة ----------
 step "الإصدار الجديد"
 
-NEW_CODE="$ARG_CODE"
-[[ -n "$NEW_CODE" ]] || ask "رقم الإصدار (versionCode)" "$((CUR_CODE + 1))" NEW_CODE
+# إعادة تحزيم الإصدار نفسه حاجةٌ مشروعة: حزمةٌ ضاعت، أو إصلاحٌ في البناء لا في
+# الشفرة، أو إصدارٌ رُفع رقمه سهوًا. فالوضع خيارٌ لا استثناء.
+MANUAL=0
+if (( ! REPACKAGE )) && [[ -z "$ARG_CODE" && -z "$ARG_NAME" ]]; then
+  menu "الوضع:" "1" _m \
+    "إصدارٌ جديد — يقترح الرقم التالي" \
+    "إعادة تحزيم الحاليّ — ${CUR_NAME}" \
+    "إدخالٌ يدويّ — أُدخل الرقم والاسم كما أشاء"
+  case "$_m" in
+    1|new|جديد) REPACKAGE=0 ;;
+    2|repackage|إعادة) REPACKAGE=1 ;;
+    3|manual|يدوي|يدويّ) MANUAL=1 ;;
+    *) die "اختيارٌ غير مفهوم: $_m" ;;
+  esac
+fi
+
+if (( REPACKAGE )); then
+  NEW_CODE="${ARG_CODE:-$CUR_CODE}"
+  NEW_NAME="${ARG_NAME:-$CUR_NAME}"
+  say "إعادة تحزيم ${NEW_NAME} (${NEW_CODE})"
+elif (( MANUAL )); then
+  # الوضع اليدويّ: ما يُدخَل يُعتمد. `build.gradle.kts` قد يحمل رقمًا رُفع سهوًا،
+  # فلا يصحّ أن يصير سقفًا يمنع تصحيحه. نحذّر ولا نمنع.
+  ask "رقم الإصدار (versionCode) — الحاليّ ${CUR_CODE}" "$CUR_CODE" NEW_CODE
+  ask "اسم الإصدار (versionName) — الحاليّ ${CUR_NAME}" "$CUR_NAME" NEW_NAME
+else
+  NEW_CODE="$ARG_CODE"
+  [[ -n "$NEW_CODE" ]] || ask "رقم الإصدار (versionCode)" "$((CUR_CODE + 1))" NEW_CODE
+fi
 [[ "$NEW_CODE" =~ ^[0-9]+$ ]] || die "رقم الإصدار يجب أن يكون عددًا صحيحًا: '$NEW_CODE'"
-(( NEW_CODE > CUR_CODE )) || die "رقم الإصدار ($NEW_CODE) يجب أن يفوق الحاليّ ($CUR_CODE)."
+if (( NEW_CODE < CUR_CODE )); then
+  warn "رقم الإصدار (${NEW_CODE}) دون الحاليّ (${CUR_CODE})."
+  warn "أندرويد يرفض تثبيت حزمةٍ رقمُها أدنى ممّا على الجهاز إلّا بإلغاء التثبيت أوّلًا."
+  if (( ! MANUAL )); then
+    confirm "أأمضي؟" || die "أُلغي."
+  fi
+fi
 
 REL_TYPE="$ARG_TYPE"
+if [[ -z "$REL_TYPE" ]] && (( REPACKAGE || MANUAL )); then
+  # الاسم يحمل لاحقةً ⇒ تجريبيّ. لا معنى لسؤالٍ جوابه في الاسم؛ و--type يَجُبّه.
+  if [[ "$NEW_NAME" == *-* ]]; then REL_TYPE="beta"; else REL_TYPE="final"; fi
+  say "النوع مشتقٌّ من الاسم '${NEW_NAME}': ${REL_TYPE}"
+fi
 if [[ -z "$REL_TYPE" ]]; then
-  echo "  نوع الإصدار:  1) تجريبيّ (beta)   2) نهائيّ (final)"
-  ask "اختر" "1" _t
+  menu "نوع الإصدار:" "1" _t \
+    "تجريبيّ — beta" \
+    "نهائيّ — final"
   case "$_t" in
     1|beta|تجريبي|تجريبيّ)  REL_TYPE="beta" ;;
     2|final|نهائي|نهائيّ)   REL_TYPE="final" ;;
@@ -161,23 +238,45 @@ IFS='.' read -r _MA _MI _PA <<< "$BASE_VER"
 SUGGEST="${_MA}.$((_MI + 1)).0"
 if [[ "$REL_TYPE" == "beta" ]]; then SUGGEST="${SUGGEST}-beta"; fi
 
-NEW_NAME="$ARG_NAME"
-[[ -n "$NEW_NAME" ]] || ask "اسم الإصدار (versionName)" "$SUGGEST" NEW_NAME
-[[ "$NEW_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] \
-  || die "اسم الإصدار يجب أن يكون على نسق 1.2.3 أو 1.2.3-beta: '$NEW_NAME'"
+if (( ! REPACKAGE && ! MANUAL )); then
+  NEW_NAME="$ARG_NAME"
+  [[ -n "$NEW_NAME" ]] || ask "اسم الإصدار (versionName)" "$SUGGEST" NEW_NAME
+fi
+[[ -n "$NEW_NAME" ]] || die "اسم الإصدار فارغ."
+
+if (( MANUAL )); then
+  # يصير وسم git، فالممنوع ما يمنعه git وحده
+  if [[ "$NEW_NAME" =~ [[:space:]~^:?*\\\[] ]]; then
+    die "اسم الإصدار يحمل محرفًا لا يقبله وسم git: '$NEW_NAME'"
+  fi
+  if [[ ! "$NEW_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+    warn "الاسم '$NEW_NAME' خارج نسق المشروع (1.2.3 أو 1.2.3-beta) — سيُعتمد كما هو."
+  fi
+else
+  [[ "$NEW_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] \
+    || die "اسم الإصدار يجب أن يكون على نسق 1.2.3 أو 1.2.3-beta: '$NEW_NAME'"
+fi
 
 if [[ "$REL_TYPE" == "final" && "$NEW_NAME" == *-* ]]; then
   warn "إصدارٌ نهائيّ باسمٍ يحمل لاحقة ('$NEW_NAME')."
-  confirm "أأمضي؟" || die "أُلغي."
+  if (( ! MANUAL )); then confirm "أأمضي؟" || die "أُلغي."; fi
 fi
 if [[ "$REL_TYPE" == "beta" && "$NEW_NAME" != *-* ]]; then
   warn "إصدارٌ تجريبيّ باسمٍ بلا لاحقة ('$NEW_NAME')."
-  confirm "أأمضي؟" || die "أُلغي."
+  if (( ! MANUAL )); then confirm "أأمضي؟" || die "أُلغي."; fi
 fi
 
 TAG="v${NEW_NAME}"
-if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-  die "الوسم ${TAG} موجودٌ سلفًا."
+TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0
+if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then TAG_EXISTS_LOCAL=1; fi
+if git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | grep -q .; then TAG_EXISTS_REMOTE=1; fi
+
+if (( TAG_EXISTS_LOCAL || TAG_EXISTS_REMOTE )); then
+  warn "الوسم ${TAG} موجودٌ سلفًا$( (( TAG_EXISTS_REMOTE )) && printf ' (وعلى origin)' )."
+  if (( ! REPLACE )); then
+    confirm "أأستبدله هو وإصداره على GitHub؟" || die "أُلغي. اختر اسمًا آخر أو مرّر --replace."
+  fi
+  REPLACE=1
 fi
 
 # ---------- سمة البناء ----------
@@ -185,8 +284,10 @@ VARIANT="$ARG_VARIANT"
 if [[ -z "$VARIANT" ]]; then
   DEFAULT_VARIANT="debug"
   if [[ "$REL_TYPE" == "final" ]]; then DEFAULT_VARIANT="release"; fi
-  echo "  سمة البناء:  1) debug   2) release   3) كلتاهما"
-  ask "اختر" "$([[ $DEFAULT_VARIANT == debug ]] && echo 1 || echo 2)" _v
+  menu "سمة البناء:" "$([[ $DEFAULT_VARIANT == debug ]] && echo 1 || echo 2)" _v \
+    "debug — موقّعة بمفتاح التطوير، تُثبَّت مباشرةً" \
+    "release — تحتاج keystore.properties للتوقيع" \
+    "كلتاهما"
   case "$_v" in
     1|debug)   VARIANT="debug" ;;
     2|release) VARIANT="release" ;;
@@ -199,6 +300,25 @@ fi
 if [[ "$VARIANT" != "debug" && ! -f keystore.properties ]]; then
   warn "لا ملفّ keystore.properties: حزمة release ستخرج **بلا توقيع** ولن تُثبَّت مباشرةً."
   confirm "أأمضي؟" || die "أُلغي."
+fi
+
+# ---------- الفرع الهدف ----------
+default_branch() {
+  local b=""
+  b="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  if [[ -z "$b" ]]; then
+    b="$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -1 || true)"
+  fi
+  if [[ -z "$b" ]]; then b="main"; fi
+  printf '%s' "$b"
+}
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+TARGET_BRANCH="${ARG_BRANCH:-$(default_branch)}"
+if [[ "$BRANCH" != "$TARGET_BRANCH" ]]; then
+  # الدفع إلى فرعٍ غير الافتراضيّ هو ما يجعل GitHub يعرض «افتح طلب مساهمة».
+  # هنا ندفع HEAD إلى الفرع الافتراضيّ مباشرةً: تحديثٌ للمستودع لا اقتراحٌ عليه.
+  warn "أنت على '${BRANCH}' والهدف '${TARGET_BRANCH}': سيُدفع HEAD:${TARGET_BRANCH} مباشرةً."
 fi
 
 # ---------- سجلّ التغييرات ----------
@@ -217,14 +337,13 @@ else
 fi
 
 # ---------- ملخّص ----------
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 step "الملخّص"
 cat <<EOF
-  الإصدار      : ${CUR_NAME} (${CUR_CODE})  ←  ${NEW_NAME} (${NEW_CODE})
+  الإصدار      : من ${CUR_NAME} (${CUR_CODE}) إلى ${NEW_NAME} (${NEW_CODE})
   النوع        : $([[ "$REL_TYPE" == beta ]] && echo 'تجريبيّ — prerelease' || echo 'نهائيّ — latest')
   سمة البناء   : ${VARIANT}
-  الوسم        : ${TAG}
-  الفرع        : ${BRANCH}
+  الوسم        : ${TAG}$( (( REPLACE )) && printf ' (استبدال)' )
+  الفرع        : ${BRANCH} إلى origin/${TARGET_BRANCH} — دفعٌ مباشر
   الدفع        : $([[ $DO_PUSH == 1 ]] && echo 'نعم' || echo 'لا')
   إنشاء الإصدار: $([[ $DO_RELEASE == 1 ]] && echo 'نعم' || echo 'لا')
 EOF
@@ -233,21 +352,73 @@ confirm "أأمضي؟" || die "أُلغي."
 
 # ---------- كتابة الإصدار ----------
 step "تحديث $GRADLE_FILE"
-# النسخة الاحتياطيّة خارج المستودع عمدًا: `git add -A` كان سيعتمدها لو جاورت الأصل،
-# والاستعادة منها أدقّ من `git checkout --` الذي يمحو أيّ تعديلٍ سابقٍ غير معتمد
-GRADLE_BAK="$(mktemp)"
-trap 'rm -f "$NOTES_FILE" "$GRADLE_BAK"' EXIT
+# النسخ الاحتياطيّة خارج المستودع عمدًا: `git add -A` كان سيعتمدها لو جاورت الأصل،
+# والاستعادة منها أدقّ من `git checkout --` الذي يمحو أيّ تعديلٍ سابقٍ غير معتمد.
+# وتشمل كلّ ملفٍّ نمسّه: فشلُ البناء يجب أن يُرجع الشجرة كما كانت، لا ملفًّا واحدًا.
+BAK_DIR="$(mktemp -d)"
+trap 'rm -f "$NOTES_FILE"; rm -rf "$BAK_DIR"' EXIT
+SYNC_FILES=("$GRADLE_FILE")
+for f in README.md CHANGELOG.md; do
+  if [[ -f "$f" ]]; then SYNC_FILES+=("$f"); fi
+done
+backup_files() {
+  local f
+  for f in "${SYNC_FILES[@]}"; do
+    mkdir -p "${BAK_DIR}/$(dirname "$f")"
+    cp "$f" "${BAK_DIR}/${f}"
+  done
+}
+restore_files() {
+  local f
+  for f in "${SYNC_FILES[@]}"; do
+    if [[ -f "${BAK_DIR}/${f}" ]]; then cp "${BAK_DIR}/${f}" "$f"; fi
+  done
+}
+if (( ! DRY_RUN )); then backup_files; fi
 if (( ! DRY_RUN )); then
-  cp "$GRADLE_FILE" "$GRADLE_BAK"
   sed -i -E "s/(versionCode\s*=\s*)[0-9]+/\1${NEW_CODE}/" "$GRADLE_FILE"
   sed -i -E "s/(versionName\s*=\s*\")[^\"]+(\")/\1${NEW_NAME}\2/" "$GRADLE_FILE"
   if ! grep -qE "versionCode\s*=\s*${NEW_CODE}\b" "$GRADLE_FILE" \
      || ! grep -qF "versionName = \"${NEW_NAME}\"" "$GRADLE_FILE"; then
-    cp "$GRADLE_BAK" "$GRADLE_FILE"
+    restore_files
     die "فشل تحديث الإصدار في $GRADLE_FILE."
   fi
 fi
 ok "versionCode=${NEW_CODE} · versionName=${NEW_NAME}"
+
+# رفعُ الإصدار في ملفّ البناء وحده يترك README و CHANGELOG يكذبان على القارئ —
+# وهو ما وقع في 0.4.0. تُزامَن هنا كلّها، ثمّ يُعتمد كلّ ما في الشجرة.
+step "مزامنة ملفّات المشروع"
+if [[ -f README.md ]] && grep -qE 'الحالة: \*\*v?[0-9]' README.md; then
+  if (( ! DRY_RUN )); then
+    sed -i -E "s/(الحالة: \*\*)v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?(\*\*)/\1v${NEW_NAME}\3/" README.md
+  fi
+  ok "README.md صار v${NEW_NAME}"
+else
+  warn "لم أجد سطر «الحالة: **v…**» في README.md — راجعه بنفسك."
+fi
+
+if [[ -f CHANGELOG.md ]] && ! grep -q "^## v\?${NEW_NAME}\b" CHANGELOG.md; then
+  warn "لا قسم لـ ${NEW_NAME} في CHANGELOG.md."
+  if confirm "أأضيف قسمًا فارغًا أكتبه أنت لاحقًا؟"; then
+    if (( ! DRY_RUN )); then
+      STUB="$(mktemp)"
+      {
+        head -3 CHANGELOG.md
+        printf '\n## v%s\n\n### أُضيف\n\n-\n\n### أُصلح\n\n-\n' "$NEW_NAME"
+        tail -n +4 CHANGELOG.md
+      } > "$STUB"
+      mv "$STUB" CHANGELOG.md
+      # الملاحظات تُعاد قراءتها من القسم الجديد
+      awk -v v="${NEW_NAME}" '
+        $0 ~ "^## v?" v "([^0-9.]|$)" { inside = 1; next }
+        inside && /^## / { exit }
+        inside { print }
+      ' CHANGELOG.md > "$NOTES_FILE"
+    fi
+    ok "أُضيف قسم ${NEW_NAME} إلى CHANGELOG.md"
+  fi
+fi
 
 # ---------- البناء ----------
 step "البناء"
@@ -256,8 +427,8 @@ if [[ "$VARIANT" == "debug"   || "$VARIANT" == "both" ]]; then TASKS+=(":app:ass
 if [[ "$VARIANT" == "release" || "$VARIANT" == "both" ]]; then TASKS+=(":app:assembleRelease"); fi
 say "./gradlew ${TASKS[*]}"
 if ! run ./gradlew --console=plain "${TASKS[@]}"; then
-  warn "فشل البناء. أُعيد $GRADLE_FILE إلى ما كان."
-  if (( ! DRY_RUN )); then cp "$GRADLE_BAK" "$GRADLE_FILE"; fi
+  warn "فشل البناء. أُعيدت ملفّات المشروع إلى ما كانت: ${SYNC_FILES[*]}"
+  if (( ! DRY_RUN )); then restore_files; fi
   die "أُلغي عند البناء."
 fi
 
@@ -303,8 +474,13 @@ if [[ -z "$(git status --porcelain)" ]]; then
   warn "لا تغييرات لاعتمادها."
 else
   git status --short
-  DEFAULT_MSG="رفع الإصدار التجريبيّ إلى ${NEW_NAME}"
-  if [[ "$REL_TYPE" == "final" ]]; then DEFAULT_MSG="إصدار ${NEW_NAME}"; fi
+  if (( REPACKAGE )); then
+    DEFAULT_MSG="إعادة تحزيم ${NEW_NAME}"
+  elif [[ "$REL_TYPE" == "final" ]]; then
+    DEFAULT_MSG="إصدار ${NEW_NAME}"
+  else
+    DEFAULT_MSG="رفع الإصدار التجريبيّ إلى ${NEW_NAME}"
+  fi
   ask "رسالة الاعتماد" "$DEFAULT_MSG" COMMIT_MSG
   run git add -A
   # قاعدة المستودع: الرسائل بالعربيّة، وباسم SalehGNUTUX وحده بلا Co-Authored-By
@@ -313,6 +489,13 @@ else
 fi
 
 step "الوسم"
+if (( REPLACE )); then
+  if (( TAG_EXISTS_LOCAL )); then run git tag -d "$TAG"; fi
+  if (( TAG_EXISTS_REMOTE && DO_PUSH )); then
+    run git push origin ":refs/tags/${TAG}"
+    ok "حُذف الوسم البعيد ${TAG}"
+  fi
+fi
 TAG_MSG="${NEW_NAME}"
 if [[ -s "$NOTES_FILE" ]]; then
   TAG_MSG="$(printf '%s\n\n%s' "${NEW_NAME}" "$(head -20 "$NOTES_FILE")")"
@@ -321,24 +504,25 @@ run git tag -a "$TAG" -m "$TAG_MSG"
 ok "$TAG"
 
 if (( ! DO_PUSH )); then
-  warn "--no-push: توقّفنا هنا. للدفع لاحقًا:  git push origin ${BRANCH} && git push origin ${TAG}"
+  warn "--no-push: توقّفنا هنا. للدفع لاحقًا:"
+  warn "  git push origin HEAD:${TARGET_BRANCH} && git push origin ${TAG}"
   exit 0
 fi
 
 step "الدفع"
-# الفرع المتأخّر عن البعيد يُرفض دفعُه، ومعرفة ذلك قبل الوسم أهون من بعده
-if git rev-parse --abbrev-ref "@{upstream}" >/dev/null 2>&1; then
-  git fetch --quiet origin "$BRANCH" 2>/dev/null || true
-  BEHIND="$(git rev-list --count "HEAD..origin/${BRANCH}" 2>/dev/null || echo 0)"
-  if [[ "$BEHIND" != "0" ]]; then
-    warn "فرعك متأخّر عن origin/${BRANCH} بـ ${BEHIND} اعتمادًا — سيُرفض الدفع."
-    warn "ادمج أوّلًا:  git pull --rebase origin ${BRANCH}"
-    confirm "أأحاول الدفع رغم ذلك؟" || die "أُلغي قبل الدفع. الوسم ${TAG} موجودٌ محلّيًّا."
-  fi
+# الفرع المتأخّر عن البعيد يُرفض دفعُه، ومعرفة ذلك مقدَّمًا أهون من رسالة git
+git fetch --quiet origin "$TARGET_BRANCH" 2>/dev/null || true
+BEHIND="$(git rev-list --count "HEAD..origin/${TARGET_BRANCH}" 2>/dev/null || echo 0)"
+if [[ "$BEHIND" != "0" ]]; then
+  warn "شجرتك متأخّرة عن origin/${TARGET_BRANCH} بـ ${BEHIND} اعتمادًا — سيُرفض الدفع."
+  warn "ادمج أوّلًا:  git pull --rebase origin ${TARGET_BRANCH}"
+  confirm "أأحاول الدفع رغم ذلك؟" || die "أُلغي قبل الدفع. الوسم ${TAG} موجودٌ محلّيًّا."
 fi
-run git push origin "$BRANCH"
+
+# HEAD:الهدف — تحديثٌ مباشر للفرع الافتراضيّ، فلا يُقترح طلب مساهمة
+run git push origin "HEAD:${TARGET_BRANCH}"
 run git push origin "$TAG"
-ok "دُفع ${BRANCH} و ${TAG}"
+ok "دُفع HEAD إلى origin/${TARGET_BRANCH}، والوسم ${TAG}"
 
 # ---------- إصدار GitHub ----------
 if (( ! DO_RELEASE )); then
@@ -351,6 +535,10 @@ TITLE="${TAG}"
 if [[ "$REL_TYPE" == "beta" ]]; then PRERELEASE_FLAG="--prerelease"; else PRERELEASE_FLAG="--latest"; fi
 
 if (( HAS_GH )); then
+  if (( REPLACE )) && gh release view "$TAG" >/dev/null 2>&1; then
+    say "حذف الإصدار السابق ${TAG}"
+    run gh release delete "$TAG" --yes
+  fi
   say "gh release create ${TAG} ${PRERELEASE_FLAG}"
   run gh release create "$TAG" \
       --title "$TITLE" \
@@ -363,6 +551,16 @@ else
   PRE=false
   if [[ "$REL_TYPE" == "beta" ]]; then PRE=true; fi
   say "إنشاء الإصدار عبر واجهة GitHub لـ ${SLUG}"
+  if (( REPLACE )) && (( ! DRY_RUN )); then
+    OLD_ID="$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      "https://api.github.com/repos/${SLUG}/releases/tags/${TAG}" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+    if [[ -n "$OLD_ID" ]]; then
+      curl -sS -X DELETE -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        "https://api.github.com/repos/${SLUG}/releases/${OLD_ID}" >/dev/null
+      say "حُذف الإصدار السابق ${TAG}"
+    fi
+  fi
   if (( ! DRY_RUN )); then
     BODY="$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' < "$NOTES_FILE")"
     RESP="$(curl -sS -X POST \
