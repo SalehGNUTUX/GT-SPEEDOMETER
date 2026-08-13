@@ -16,7 +16,8 @@
 #    --type beta|final     تجريبيّ أم نهائيّ
 #    --variant debug|release|both   سمة البناء
 #    --repackage     أعِد تحزيم الإصدار الحاليّ نفسه بلا رفع رقمه
-#    (وفي الوضع التفاعليّ خيارٌ ثالث: إدخالٌ يدويّ يُعتمد كما هو)
+#    --push-only     ادفع الحالة الراهنة بلا بناءٍ ولا وسمٍ ولا إصدار
+#    (وفي الوضع التفاعليّ خياران آخران: إدخالٌ يدويّ، ودفعٌ فقط)
 #    --replace       استبدل وسمًا وإصدارًا موجودَين بلا سؤال
 #    --branch B      الفرع الهدف (الافتراضيّ: الفرع الافتراضيّ للمستودع)
 #    --yes           لا تسأل تأكيدًا (للتشغيل الآليّ)
@@ -49,7 +50,7 @@ step() { printf '\n%s\n' "${C_BOLD}▸ $*${C_RESET}"; }
 
 # ---------- الوسائط ----------
 ARG_CODE=""; ARG_NAME=""; ARG_TYPE=""; ARG_VARIANT=""; ARG_BRANCH=""
-ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0; REPACKAGE=0; REPLACE=0
+ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0; REPACKAGE=0; REPLACE=0; PUSH_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --variant) ARG_VARIANT="${2:-}"; shift 2 ;;
     --branch)  ARG_BRANCH="${2:-}"; shift 2 ;;
     --repackage) REPACKAGE=1; shift ;;
+    --push-only) PUSH_ONLY=1; shift ;;
     --replace) REPLACE=1; shift ;;
     --yes|-y)  ASSUME_YES=1; shift ;;
     --no-push) DO_PUSH=0; DO_RELEASE=0; shift ;;
@@ -128,6 +130,51 @@ menu() {                      # menu <العنوان> <الافتراضيّ> <ا
   printf -v "$__var" '%s' "${reply:-$default}"
 }
 
+# ---------------------------------------------------------------------------
+#  الدفع
+#
+#  الفرع المتأخّر عن البعيد يُرفض دفعُه. الأفضل أن نكتشف ذلك ونعالجه هنا، لا أن
+#  نترك المستعمل أمام رسالة git بعد أن صار في يده وسمٌ معلَّق.
+# ---------------------------------------------------------------------------
+push_branch() {
+  git fetch --quiet origin "$TARGET_BRANCH" 2>/dev/null || true
+  local behind
+  behind="$(git rev-list --count "HEAD..origin/${TARGET_BRANCH}" 2>/dev/null || echo 0)"
+  if [[ "$behind" != "0" ]]; then
+    warn "شجرتك متأخّرة عن origin/${TARGET_BRANCH} بـ ${behind} اعتمادًا، فسيُرفض الدفع."
+    local choice
+    menu "ماذا أفعل؟" "1" choice \
+      "ادمج أوّلًا — git pull --rebase origin ${TARGET_BRANCH}" \
+      "ادفع رغم ذلك — سيفشل غالبًا" \
+      "ألغِ"
+    case "$choice" in
+      1)
+        if ! run git pull --rebase origin "$TARGET_BRANCH"; then
+          die "تعثّر الدمج. حُلّ التعارض ثمّ: ./release.sh --push-only"
+        fi
+        ok "دُمج origin/${TARGET_BRANCH}"
+        ;;
+      2) warn "متابعةٌ بلا دمج." ;;
+      *) die "أُلغي قبل الدفع." ;;
+    esac
+  fi
+  # HEAD:الهدف — تحديثٌ مباشر للفرع الافتراضيّ، فلا يُقترح طلب مساهمة
+  run git push origin "HEAD:${TARGET_BRANCH}"
+  ok "دُفع HEAD إلى origin/${TARGET_BRANCH}"
+}
+
+make_tag() {
+  if (( REPLACE )); then
+    if (( TAG_EXISTS_LOCAL )); then run git tag -d "$TAG"; fi
+    if (( TAG_EXISTS_REMOTE && DO_PUSH )); then
+      run git push origin ":refs/tags/${TAG}"
+      ok "حُذف الوسم البعيد ${TAG}"
+    fi
+  fi
+  run git tag -a "$TAG" -m "$TAG_MSG"
+  ok "$TAG"
+}
+
 # ---------- جذر المستودع ----------
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -n "$REPO_ROOT" ]] || die "لست داخل مستودع git."
@@ -165,6 +212,25 @@ else
   DO_RELEASE=0
 fi
 
+# ---------- الفرع الهدف ----------
+default_branch() {
+  local b=""
+  b="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  if [[ -z "$b" ]]; then
+    b="$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -1 || true)"
+  fi
+  if [[ -z "$b" ]]; then b="main"; fi
+  printf '%s' "$b"
+}
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+TARGET_BRANCH="${ARG_BRANCH:-$(default_branch)}"
+if [[ "$BRANCH" != "$TARGET_BRANCH" ]]; then
+  # الدفع إلى فرعٍ غير الافتراضيّ هو ما يجعل GitHub يعرض «افتح طلب مساهمة».
+  # هنا ندفع HEAD إلى الفرع الافتراضيّ مباشرةً: تحديثٌ للمستودع لا اقتراحٌ عليه.
+  warn "أنت على '${BRANCH}' والهدف '${TARGET_BRANCH}': سيُدفع HEAD:${TARGET_BRANCH} مباشرةً."
+fi
+
 # ---------- الإصدار الحاليّ ----------
 CUR_CODE="$(grep -oP 'versionCode\s*=\s*\K[0-9]+' "$GRADLE_FILE" | head -1)"
 CUR_NAME="$(grep -oP 'versionName\s*=\s*"\K[^"]+' "$GRADLE_FILE" | head -1)"
@@ -183,13 +249,45 @@ if (( ! REPACKAGE )) && [[ -z "$ARG_CODE" && -z "$ARG_NAME" ]]; then
   menu "الوضع:" "1" _m \
     "إصدارٌ جديد — يقترح الرقم التالي" \
     "إعادة تحزيم الحاليّ — ${CUR_NAME}" \
-    "إدخالٌ يدويّ — أُدخل الرقم والاسم كما أشاء"
+    "إدخالٌ يدويّ — أُدخل الرقم والاسم كما أشاء" \
+    "دفعٌ فقط — اعتمد الحالة الراهنة وادفعها بلا بناءٍ ولا إصدار"
   case "$_m" in
     1|new|جديد) REPACKAGE=0 ;;
     2|repackage|إعادة) REPACKAGE=1 ;;
     3|manual|يدوي|يدويّ) MANUAL=1 ;;
+    4|push|دفع) PUSH_ONLY=1 ;;
     *) die "اختيارٌ غير مفهوم: $_m" ;;
   esac
+fi
+
+# ---------------------------------------------------------------------------
+#  مسار «دفعٌ فقط»
+#
+#  مستقلٌّ ومبكّر عمدًا: لا يمسّ رقم إصدارٍ ولا يبني ولا يَسِم ولا يُنشئ إصدارًا.
+#  حاجته تظهر كثيرًا — تعديلٌ في التوثيق، أو دفعٌ تعثّر فبقيت الشجرة معتمَدةً بلا رفع.
+# ---------------------------------------------------------------------------
+if (( PUSH_ONLY )); then
+  step "دفعٌ فقط"
+  printf '  %s\n' "الفرع: ${BRANCH} إلى origin/${TARGET_BRANCH}"
+  if [[ -n "$(git status --porcelain)" ]]; then
+    git status --short
+    ask "رسالة الاعتماد" "تحديث ملفّات المشروع" PUSH_MSG
+    run git add -A
+    run git commit -m "$PUSH_MSG"
+    ok "اعتُمد"
+  else
+    say "لا تغييرات غير معتمدة."
+  fi
+
+  AHEAD="$(git rev-list --count "origin/${TARGET_BRANCH}..HEAD" 2>/dev/null || echo 0)"
+  if [[ "$AHEAD" == "0" ]] && [[ -z "$(git status --porcelain)" ]]; then
+    ok "لا جديد يُدفع."
+    exit 0
+  fi
+  confirm "أأدفع الآن إلى origin/${TARGET_BRANCH}؟" || die "أُلغي."
+  push_branch
+  ok "تمّ."
+  exit 0
 fi
 
 if (( REPACKAGE )); then
@@ -300,25 +398,6 @@ fi
 if [[ "$VARIANT" != "debug" && ! -f keystore.properties ]]; then
   warn "لا ملفّ keystore.properties: حزمة release ستخرج **بلا توقيع** ولن تُثبَّت مباشرةً."
   confirm "أأمضي؟" || die "أُلغي."
-fi
-
-# ---------- الفرع الهدف ----------
-default_branch() {
-  local b=""
-  b="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
-  if [[ -z "$b" ]]; then
-    b="$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -1 || true)"
-  fi
-  if [[ -z "$b" ]]; then b="main"; fi
-  printf '%s' "$b"
-}
-
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-TARGET_BRANCH="${ARG_BRANCH:-$(default_branch)}"
-if [[ "$BRANCH" != "$TARGET_BRANCH" ]]; then
-  # الدفع إلى فرعٍ غير الافتراضيّ هو ما يجعل GitHub يعرض «افتح طلب مساهمة».
-  # هنا ندفع HEAD إلى الفرع الافتراضيّ مباشرةً: تحديثٌ للمستودع لا اقتراحٌ عليه.
-  warn "أنت على '${BRANCH}' والهدف '${TARGET_BRANCH}': سيُدفع HEAD:${TARGET_BRANCH} مباشرةً."
 fi
 
 # ---------- سجلّ التغييرات ----------
@@ -488,41 +567,29 @@ else
   ok "اعتُمد"
 fi
 
-step "الوسم"
-if (( REPLACE )); then
-  if (( TAG_EXISTS_LOCAL )); then run git tag -d "$TAG"; fi
-  if (( TAG_EXISTS_REMOTE && DO_PUSH )); then
-    run git push origin ":refs/tags/${TAG}"
-    ok "حُذف الوسم البعيد ${TAG}"
-  fi
-fi
 TAG_MSG="${NEW_NAME}"
 if [[ -s "$NOTES_FILE" ]]; then
   TAG_MSG="$(printf '%s\n\n%s' "${NEW_NAME}" "$(head -20 "$NOTES_FILE")")"
 fi
-run git tag -a "$TAG" -m "$TAG_MSG"
-ok "$TAG"
 
 if (( ! DO_PUSH )); then
+  step "الوسم"
+  make_tag
   warn "--no-push: توقّفنا هنا. للدفع لاحقًا:"
   warn "  git push origin HEAD:${TARGET_BRANCH} && git push origin ${TAG}"
   exit 0
 fi
 
+# الدفع أوّلًا ثمّ الوسم. كان الترتيب معكوسًا، فإذا تعثّر الدفع — لتأخّر الفرع مثلًا —
+# بقي في اليد وسمٌ يشير إلى اعتمادٍ لم يصل، ولو دُمج بعدها انتقل الاعتماد وبقي
+# الوسم يشير إلى يتيم. الوسم الآن لا يُخلق إلّا على شيءٍ صار على origin.
 step "الدفع"
-# الفرع المتأخّر عن البعيد يُرفض دفعُه، ومعرفة ذلك مقدَّمًا أهون من رسالة git
-git fetch --quiet origin "$TARGET_BRANCH" 2>/dev/null || true
-BEHIND="$(git rev-list --count "HEAD..origin/${TARGET_BRANCH}" 2>/dev/null || echo 0)"
-if [[ "$BEHIND" != "0" ]]; then
-  warn "شجرتك متأخّرة عن origin/${TARGET_BRANCH} بـ ${BEHIND} اعتمادًا — سيُرفض الدفع."
-  warn "ادمج أوّلًا:  git pull --rebase origin ${TARGET_BRANCH}"
-  confirm "أأحاول الدفع رغم ذلك؟" || die "أُلغي قبل الدفع. الوسم ${TAG} موجودٌ محلّيًّا."
-fi
+push_branch
 
-# HEAD:الهدف — تحديثٌ مباشر للفرع الافتراضيّ، فلا يُقترح طلب مساهمة
-run git push origin "HEAD:${TARGET_BRANCH}"
+step "الوسم"
+make_tag
 run git push origin "$TAG"
-ok "دُفع HEAD إلى origin/${TARGET_BRANCH}، والوسم ${TAG}"
+ok "دُفع الوسم ${TAG}"
 
 # ---------- إصدار GitHub ----------
 if (( ! DO_RELEASE )); then
