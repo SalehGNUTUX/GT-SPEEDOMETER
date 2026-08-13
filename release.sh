@@ -51,6 +51,8 @@ step() { printf '\n%s\n' "${C_BOLD}▸ $*${C_RESET}"; }
 # ---------- الوسائط ----------
 ARG_CODE=""; ARG_NAME=""; ARG_TYPE=""; ARG_VARIANT=""; ARG_BRANCH=""
 ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0; REPACKAGE=0; REPLACE=0; PUSH_ONLY=0
+REL_TYPE=""; VARIANT=""; TAG=""; TAG_MSG=""; DIST=""; PUB_BUILD=0
+TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0; ARTIFACTS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,6 +72,9 @@ while [[ $# -gt 0 ]]; do
     *) die "خيار غير معروف: $1  (جرّب --help)" ;;
   esac
 done
+
+NOTES_FILE="$(mktemp)"
+trap 'rm -f "$NOTES_FILE"' EXIT
 
 run() {
   if (( DRY_RUN )); then
@@ -163,16 +168,174 @@ push_branch() {
   ok "دُفع HEAD إلى origin/${TARGET_BRANCH}"
 }
 
-make_tag() {
-  if (( REPLACE )); then
-    if (( TAG_EXISTS_LOCAL )); then run git tag -d "$TAG"; fi
-    if (( TAG_EXISTS_REMOTE && DO_PUSH )); then
-      run git push origin ":refs/tags/${TAG}"
-      ok "حُذف الوسم البعيد ${TAG}"
-    fi
+# ---------------------------------------------------------------------------
+#  البناء وجمع الحزم والنشر — دوالّ مشتركة بين مسار الإصدار الكامل ومسار الدفع
+# ---------------------------------------------------------------------------
+
+build_apks() {
+  local tasks=()
+  if [[ "$VARIANT" == "debug"   || "$VARIANT" == "both" ]]; then tasks+=(":app:assembleDebug"); fi
+  if [[ "$VARIANT" == "release" || "$VARIANT" == "both" ]]; then tasks+=(":app:assembleRelease"); fi
+  say "./gradlew ${tasks[*]}"
+  if ! run ./gradlew --console=plain "${tasks[@]}"; then
+    warn "فشل البناء. أُعيدت ملفّات المشروع إلى ما كانت: ${SYNC_FILES[*]:-}"
+    if (( ! DRY_RUN )) && declare -F restore_files >/dev/null; then restore_files; fi
+    die "أُلغي عند البناء."
   fi
-  run git tag -a "$TAG" -m "$TAG_MSG"
+}
+
+# ينسخ ناتج Gradle إلى dist/ باسمٍ يحمل الإصدار، ويحسب مجاميعه
+collect_artifacts() {
+  DIST="dist/${NEW_NAME}"
+  run mkdir -p "$DIST"
+  # `*.apk` متجاهَلة في .gitignore، أمّا ملفّات sha256 فلا — ولولا هذا لدخلت الاعتماد
+  if [[ -f .gitignore ]] && ! grep -qxF 'dist/' .gitignore; then
+    if (( ! DRY_RUN )); then printf '\n# حزم الإصدار المبنيّة محلّيًّا\ndist/\n' >> .gitignore; fi
+    say "أُضيف dist/ إلى .gitignore"
+  fi
+  ARTIFACTS=()
+  local v src out
+  for v in debug release; do
+    [[ "$VARIANT" == "$v" || "$VARIANT" == "both" ]] || continue
+    src="app/build/outputs/apk/${v}/app-${v}.apk"
+    [[ -f "$src" ]] || src="app/build/outputs/apk/${v}/app-${v}-unsigned.apk"
+    if (( DRY_RUN )); then
+      ARTIFACTS+=("${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${v}.apk"); continue
+    fi
+    [[ -f "$src" ]] || die "لم أجد حزمة ${v} في app/build/outputs/apk/${v}/"
+    out="${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${v}.apk"
+    cp "$src" "$out"
+    ( cd "$DIST" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
+    ARTIFACTS+=("$out" "${out}.sha256")
+    ok "$(basename "$out")  —  $(du -h "$out" | cut -f1)"
+  done
+}
+
+# يلتقط حزمًا بُنيت في تشغيلٍ سابق، فلا يُعاد بناء ما هو جاهز
+find_built_apks() {
+  ARTIFACTS=()
+  local d="dist/${NEW_NAME}" f
+  [[ -d "$d" ]] || return 1
+  for f in "$d"/*.apk; do
+    [[ -f "$f" ]] || continue
+    ARTIFACTS+=("$f")
+    [[ -f "${f}.sha256" ]] && ARTIFACTS+=("${f}.sha256")
+  done
+  (( ${#ARTIFACTS[@]} > 0 ))
+}
+
+# ملاحظات الإصدار من قسم CHANGELOG الموافق للاسم
+load_notes() {
+  : "${NOTES_FILE:=$(mktemp)}"
+  if [[ -f CHANGELOG.md ]] && grep -q "^## v\?${NEW_NAME}\b" CHANGELOG.md; then
+    awk -v v="${NEW_NAME}" '
+      $0 ~ "^## v?" v "([^0-9.]|$)" { inside = 1; next }
+      inside && /^## / { exit }
+      inside { print }
+    ' CHANGELOG.md > "$NOTES_FILE"
+    ok "مُلاحظات الإصدار من CHANGELOG.md ($(wc -l < "$NOTES_FILE") سطرًا)"
+  else
+    warn "لا قسم لـ ${NEW_NAME} في CHANGELOG.md — ستكون ملاحظات الإصدار مقتضبة."
+    printf '%s\n' "الإصدار ${NEW_NAME}." > "$NOTES_FILE"
+  fi
+}
+
+# يملأ TAG و TAG_EXISTS_LOCAL/REMOTE من الاسم الحاليّ
+detect_tag() {
+  TAG="v${NEW_NAME}"
+  TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0
+  if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then TAG_EXISTS_LOCAL=1; fi
+  if git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | grep -q .; then TAG_EXISTS_REMOTE=1; fi
+}
+
+make_tag() {
+  # `-f` لا حذفٌ ثمّ إنشاء: الوسم يُنقل إلى الاعتماد الحاليّ في خطوةٍ واحدة
+  if (( TAG_EXISTS_LOCAL )); then
+    run git tag -f -a "$TAG" -m "$TAG_MSG"
+  else
+    run git tag -a "$TAG" -m "$TAG_MSG"
+  fi
   ok "$TAG"
+}
+
+push_tag() {
+  if (( TAG_EXISTS_REMOTE )); then
+    run git push -f origin "refs/tags/${TAG}"
+  else
+    run git push origin "refs/tags/${TAG}"
+  fi
+  ok "دُفع الوسم ${TAG}"
+}
+
+# ينشئ الإصدار أو **يُحدّثه في مكانه** إن كان موجودًا: الحذف والإنشاء من جديد
+# يُضيّع رابط الإصدار وعدّاد تنزيلاته وتعليقاته، والمطلوب مطابقةٌ لا استبدال.
+publish_release() {
+  local title="$TAG" pre_flag exists=0
+  if [[ "$REL_TYPE" == "beta" ]]; then pre_flag="--prerelease"; else pre_flag="--latest"; fi
+
+  if (( HAS_GH )); then
+    if gh release view "$TAG" >/dev/null 2>&1; then exists=1; fi
+    if (( exists )); then
+      say "تحديث الإصدار ${TAG} في مكانه"
+      run gh release edit "$TAG" --title "$title" --notes-file "$NOTES_FILE" $pre_flag
+      if (( ${#ARTIFACTS[@]} > 0 )); then
+        run gh release upload "$TAG" "${ARTIFACTS[@]}" --clobber
+      fi
+    else
+      say "gh release create ${TAG} ${pre_flag}"
+      run gh release create "$TAG" --title "$title" --notes-file "$NOTES_FILE" $pre_flag \
+        "${ARTIFACTS[@]+"${ARTIFACTS[@]}"}"
+    fi
+    ok "الإصدار ${TAG} جاهز"
+    return
+  fi
+
+  # مسارٌ بديل بلا gh: واجهة GitHub مباشرةً
+  local slug pre body resp rid upload f
+  slug="$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
+  pre=false; [[ "$REL_TYPE" == "beta" ]] && pre=true
+  (( DRY_RUN )) && { say "إنشاء/تحديث الإصدار ${TAG} على ${slug}"; return; }
+
+  body="$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' < "$NOTES_FILE")"
+  resp="$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    "https://api.github.com/repos/${slug}/releases/tags/${TAG}")"
+  rid="$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+
+  if [[ -n "$rid" ]]; then
+    resp="$(curl -sS -X PATCH -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${slug}/releases/${rid}" \
+      -d "{\"name\":\"${title}\",\"body\":${body},\"prerelease\":${pre}}")"
+    say "حُدّث الإصدار ${TAG}"
+  else
+    resp="$(curl -sS -X POST -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${slug}/releases" \
+      -d "{\"tag_name\":\"${TAG}\",\"name\":\"${title}\",\"body\":${body},\"prerelease\":${pre}}")"
+    rid="$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+    [[ -n "$rid" ]] || { printf '%s\n' "$resp" >&2; die "تعذّر إنشاء الإصدار."; }
+  fi
+
+  upload="$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("upload_url","").split("{")[0])')"
+  for f in "${ARTIFACTS[@]+"${ARTIFACTS[@]}"}"; do
+    # حذف مرفقٍ بالاسم نفسه أوّلًا، وإلّا رفضت GitHub الرفع المكرّر
+    curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      "https://api.github.com/repos/${slug}/releases/${rid}/assets" \
+      | python3 -c "
+import json,sys
+name='$(basename "$f")'
+for a in json.load(sys.stdin):
+    if a['name']==name: print(a['id'])
+" | while read -r aid; do
+      curl -sS -X DELETE -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        "https://api.github.com/repos/${slug}/releases/assets/${aid}" >/dev/null
+    done
+    say "رفع $(basename "$f")"
+    curl -sS -X POST -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "Content-Type: application/octet-stream" \
+      --data-binary @"$f" "${upload}?name=$(basename "$f")" >/dev/null
+  done
+  ok "الإصدار ${TAG} جاهز"
 }
 
 # ---------- جذر المستودع ----------
@@ -286,6 +449,69 @@ if (( PUSH_ONLY )); then
   fi
   confirm "أأدفع الآن إلى origin/${TARGET_BRANCH}؟" || die "أُلغي."
   push_branch
+
+  # الحزمة لا تدخل المستودع: `dist/` و`*.apk` متجاهَلتان عمدًا — موضع الحزمة هو
+  # الإصدار لا شجرة الشفرة. فالنشر خطوةٌ مستقلّة تُختار هنا.
+  menu "ماذا بعد الدفع؟" "1" _p \
+    "اكتفِ بالدفع" \
+    "انشر الإصدار ${CUR_NAME} من حزمةٍ مبنيّة سابقًا" \
+    "ابنِ الحزمة ثمّ انشر الإصدار ${CUR_NAME}"
+  case "$_p" in
+    1|no|لا) ok "تمّ."; exit 0 ;;
+    2) PUB_BUILD=0 ;;
+    3) PUB_BUILD=1 ;;
+    *) die "اختيارٌ غير مفهوم: $_p" ;;
+  esac
+
+  NEW_NAME="$CUR_NAME"; NEW_CODE="$CUR_CODE"
+  REL_TYPE="${ARG_TYPE:-}"
+  if [[ -z "$REL_TYPE" ]]; then
+    if [[ "$NEW_NAME" == *-* ]]; then REL_TYPE="beta"; else REL_TYPE="final"; fi
+  fi
+  detect_tag
+
+  if (( PUB_BUILD )); then
+    VARIANT="$ARG_VARIANT"
+    if [[ -z "$VARIANT" ]]; then
+      menu "سمة البناء:" "1" _v2 \
+        "debug — موقّعة بمفتاح التطوير، تُثبَّت مباشرةً" \
+        "release — تحتاج keystore.properties للتوقيع" \
+        "كلتاهما"
+      case "$_v2" in
+        1|debug) VARIANT="debug" ;;
+        2|release) VARIANT="release" ;;
+        3|both) VARIANT="both" ;;
+        *) die "اختيارٌ غير مفهوم: $_v2" ;;
+      esac
+    fi
+    step "البناء"
+    build_apks
+    collect_artifacts
+  else
+    step "الحزم"
+    if find_built_apks; then
+      for _a in "${ARTIFACTS[@]}"; do
+        case "$_a" in *.apk) ok "$(basename "$_a")  —  $(du -h "$_a" 2>/dev/null | cut -f1)" ;; esac
+      done
+    else
+      warn "لا حزمة في dist/${NEW_NAME}/ — أعد التشغيل واختر «ابنِ الحزمة ثمّ انشر»."
+      confirm "أأنشر الإصدار بلا حزمة؟" || die "أُلغي."
+      ARTIFACTS=()
+    fi
+  fi
+
+  load_notes
+  TAG_MSG="${NEW_NAME}"
+  if [[ -s "$NOTES_FILE" ]]; then
+    TAG_MSG="$(printf '%s\n\n%s' "${NEW_NAME}" "$(head -20 "$NOTES_FILE")")"
+  fi
+
+  step "الوسم"
+  make_tag
+  push_tag
+
+  step "إصدار GitHub"
+  publish_release
   ok "تمّ."
   exit 0
 fi
@@ -312,7 +538,7 @@ if (( NEW_CODE < CUR_CODE )); then
   fi
 fi
 
-REL_TYPE="$ARG_TYPE"
+REL_TYPE="${ARG_TYPE:-$REL_TYPE}"
 if [[ -z "$REL_TYPE" ]] && (( REPACKAGE || MANUAL )); then
   # الاسم يحمل لاحقةً ⇒ تجريبيّ. لا معنى لسؤالٍ جوابه في الاسم؛ و--type يَجُبّه.
   if [[ "$NEW_NAME" == *-* ]]; then REL_TYPE="beta"; else REL_TYPE="final"; fi
@@ -364,10 +590,7 @@ if [[ "$REL_TYPE" == "beta" && "$NEW_NAME" != *-* ]]; then
   if (( ! MANUAL )); then confirm "أأمضي؟" || die "أُلغي."; fi
 fi
 
-TAG="v${NEW_NAME}"
-TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0
-if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then TAG_EXISTS_LOCAL=1; fi
-if git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | grep -q .; then TAG_EXISTS_REMOTE=1; fi
+detect_tag
 
 if (( TAG_EXISTS_LOCAL || TAG_EXISTS_REMOTE )); then
   warn "الوسم ${TAG} موجودٌ سلفًا$( (( TAG_EXISTS_REMOTE )) && printf ' (وعلى origin)' )."
@@ -401,19 +624,7 @@ if [[ "$VARIANT" != "debug" && ! -f keystore.properties ]]; then
 fi
 
 # ---------- سجلّ التغييرات ----------
-NOTES_FILE="$(mktemp)"
-trap 'rm -f "$NOTES_FILE"' EXIT
-if [[ -f CHANGELOG.md ]] && grep -q "^## v\?${NEW_NAME}\b" CHANGELOG.md; then
-  awk -v v="${NEW_NAME}" '
-    $0 ~ "^## v?" v "([^0-9.]|$)" { inside = 1; next }
-    inside && /^## / { exit }
-    inside { print }
-  ' CHANGELOG.md > "$NOTES_FILE"
-  ok "مُلاحظات الإصدار من CHANGELOG.md ($(wc -l < "$NOTES_FILE") سطرًا)"
-else
-  warn "لا قسم لـ ${NEW_NAME} في CHANGELOG.md — ستكون ملاحظات الإصدار مقتضبة."
-  printf '%s\n' "الإصدار ${NEW_NAME}." > "$NOTES_FILE"
-fi
+load_notes
 
 # ---------- ملخّص ----------
 step "الملخّص"
@@ -501,38 +712,8 @@ fi
 
 # ---------- البناء ----------
 step "البناء"
-TASKS=()
-if [[ "$VARIANT" == "debug"   || "$VARIANT" == "both" ]]; then TASKS+=(":app:assembleDebug"); fi
-if [[ "$VARIANT" == "release" || "$VARIANT" == "both" ]]; then TASKS+=(":app:assembleRelease"); fi
-say "./gradlew ${TASKS[*]}"
-if ! run ./gradlew --console=plain "${TASKS[@]}"; then
-  warn "فشل البناء. أُعيدت ملفّات المشروع إلى ما كانت: ${SYNC_FILES[*]}"
-  if (( ! DRY_RUN )); then restore_files; fi
-  die "أُلغي عند البناء."
-fi
-
-DIST="dist/${NEW_NAME}"
-run mkdir -p "$DIST"
-# `*.apk` متجاهَلة في .gitignore، أمّا ملفّات sha256 فلا — ولولا هذا لدخلت الاعتماد
-if [[ -f .gitignore ]] && ! grep -qxF 'dist/' .gitignore; then
-  if (( ! DRY_RUN )); then printf '\n# حزم الإصدار المبنيّة محلّيًّا\ndist/\n' >> .gitignore; fi
-  say "أُضيف dist/ إلى .gitignore"
-fi
-ARTIFACTS=()
-for v in debug release; do
-  [[ "$VARIANT" == "$v" || "$VARIANT" == "both" ]] || continue
-  SRC="app/build/outputs/apk/${v}/app-${v}.apk"
-  [[ -f "$SRC" ]] || SRC="app/build/outputs/apk/${v}/app-${v}-unsigned.apk"
-  if (( DRY_RUN )); then
-    ARTIFACTS+=("${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${v}.apk"); continue
-  fi
-  [[ -f "$SRC" ]] || die "لم أجد حزمة ${v} في app/build/outputs/apk/${v}/"
-  OUT="${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${v}.apk"
-  cp "$SRC" "$OUT"
-  ( cd "$DIST" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256" )
-  ARTIFACTS+=("$OUT" "${OUT}.sha256")
-  ok "$(basename "$OUT")  —  $(du -h "$OUT" | cut -f1)"
-done
+build_apks
+collect_artifacts
 
 # ---------- بوّابة الاختبار الميدانيّ ----------
 # قاعدة المستودع: لا رفع ولا نشر قبل أن يختبر المستخدم محلّيًّا ويُقرّ.
@@ -588,65 +769,15 @@ push_branch
 
 step "الوسم"
 make_tag
-run git push origin "$TAG"
-ok "دُفع الوسم ${TAG}"
+push_tag
 
-# ---------- إصدار GitHub ----------
 if (( ! DO_RELEASE )); then
   warn "لم يُنشأ إصدارٌ على GitHub (بطلبك أو لغياب الاعتماد)."
   exit 0
 fi
 
 step "إصدار GitHub"
-TITLE="${TAG}"
-if [[ "$REL_TYPE" == "beta" ]]; then PRERELEASE_FLAG="--prerelease"; else PRERELEASE_FLAG="--latest"; fi
-
-if (( HAS_GH )); then
-  if (( REPLACE )) && gh release view "$TAG" >/dev/null 2>&1; then
-    say "حذف الإصدار السابق ${TAG}"
-    run gh release delete "$TAG" --yes
-  fi
-  say "gh release create ${TAG} ${PRERELEASE_FLAG}"
-  run gh release create "$TAG" \
-      --title "$TITLE" \
-      --notes-file "$NOTES_FILE" \
-      $PRERELEASE_FLAG \
-      "${ARTIFACTS[@]+"${ARTIFACTS[@]}"}"
-else
-  # مسارٌ بديل بلا gh: واجهة GitHub مباشرةً
-  SLUG="$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
-  PRE=false
-  if [[ "$REL_TYPE" == "beta" ]]; then PRE=true; fi
-  say "إنشاء الإصدار عبر واجهة GitHub لـ ${SLUG}"
-  if (( REPLACE )) && (( ! DRY_RUN )); then
-    OLD_ID="$(curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-      "https://api.github.com/repos/${SLUG}/releases/tags/${TAG}" \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
-    if [[ -n "$OLD_ID" ]]; then
-      curl -sS -X DELETE -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        "https://api.github.com/repos/${SLUG}/releases/${OLD_ID}" >/dev/null
-      say "حُذف الإصدار السابق ${TAG}"
-    fi
-  fi
-  if (( ! DRY_RUN )); then
-    BODY="$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' < "$NOTES_FILE")"
-    RESP="$(curl -sS -X POST \
-      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-      -H "Accept: application/vnd.github+json" \
-      "https://api.github.com/repos/${SLUG}/releases" \
-      -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TITLE}\",\"body\":${BODY},\"prerelease\":${PRE},\"make_latest\":\"$([[ $PRE == true ]] && echo false || echo true)\"}")"
-    UPLOAD_URL="$(printf '%s' "$RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("upload_url","").split("{")[0])')"
-    [[ -n "$UPLOAD_URL" ]] || { printf '%s\n' "$RESP" >&2; die "تعذّر إنشاء الإصدار."; }
-    for f in "${ARTIFACTS[@]+"${ARTIFACTS[@]}"}"; do
-      say "رفع $(basename "$f")"
-      curl -sS -X POST \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "Content-Type: application/octet-stream" \
-        --data-binary @"$f" \
-        "${UPLOAD_URL}?name=$(basename "$f")" >/dev/null
-    done
-  fi
-fi
+publish_release
 
 ok "تمّ."
 printf '\n%s\n' "${C_BOLD}${TAG}${C_RESET} — $([[ "$REL_TYPE" == beta ]] && echo 'تجريبيّ' || echo 'نهائيّ')"
