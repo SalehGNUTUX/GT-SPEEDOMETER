@@ -1,21 +1,974 @@
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
-@@ -0,0 +1,43 @@
-+# GT-SPEEDOMETER 0.4.0-beta — بناءٌ ونشر
++++ b/v0.5.0-beta
+@@ -0,0 +1 @@
++ref: refs/heads/master
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,5 @@
++[core]
++	repositoryformatversion = 0
++	filemode = true
++	bare = false
++	logallrefupdates = true
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1 @@
++Unnamed repository; edit this file 'description' to name the repository.
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,15 @@
++#!/bin/sh
++#
++# An example hook script to check the commit log message taken by
++# applypatch from an e-mail message.
++#
++# The hook should exit with non-zero status after issuing an
++# appropriate message if it wants to stop the commit.  The hook is
++# allowed to edit the commit message file.
++#
++# To enable this hook, rename this file to "applypatch-msg".
 +
-+هذه الشجرة = شفرة **0.3.0 الحقيقيّة من المستودع** + تغييرات 0.4.0. لا إعادة بناءٍ
-+من الحزمة هذه المرّة: أُخذ الأساس من `main`، ورُقعة `0.4.0.patch` مقابله مباشرةً.
++. git-sh-setup
++commitmsg="$(git rev-parse --git-path hooks/commit-msg)"
++test -x "$commitmsg" && exec "$commitmsg" ${1+"$@"}
++:
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,24 @@
++#!/bin/sh
++#
++# An example hook script to check the commit log message.
++# Called by "git commit" with one argument, the name of the file
++# that has the commit message.  The hook should exit with non-zero
++# status after issuing an appropriate message if it wants to stop the
++# commit.  The hook is allowed to edit the commit message file.
++#
++# To enable this hook, rename this file to "commit-msg".
++
++# Uncomment the below to add a Signed-off-by line to the message.
++# Doing this in a hook is a bad idea in general, but the prepare-commit-msg
++# hook is more suited to it.
++#
++# SOB=$(git var GIT_AUTHOR_IDENT | sed -n 's/^\(.*>\).*$/Signed-off-by: \1/p')
++# grep -qs "^$SOB" "$1" || echo "$SOB" >> "$1"
++
++# This example catches duplicate Signed-off-by lines.
++
++test "" = "$(grep '^Signed-off-by: ' "$1" |
++	 sort | uniq -c | sed -e '/^[ 	]*1[ 	]/d')" || {
++	echo >&2 Duplicate Signed-off-by lines.
++	exit 1
++}
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,174 @@
++#!/usr/bin/perl
++
++use strict;
++use warnings;
++use IPC::Open2;
++
++# An example hook script to integrate Watchman
++# (https://facebook.github.io/watchman/) with git to speed up detecting
++# new and modified files.
++#
++# The hook is passed a version (currently 2) and last update token
++# formatted as a string and outputs to stdout a new update token and
++# all files that have been modified since the update token. Paths must
++# be relative to the root of the working tree and separated by a single NUL.
++#
++# To enable this hook, rename this file to "query-watchman" and set
++# 'git config core.fsmonitor .git/hooks/query-watchman'
++#
++my ($version, $last_update_token) = @ARGV;
++
++# Uncomment for debugging
++# print STDERR "$0 $version $last_update_token\n";
++
++# Check the hook interface version
++if ($version ne 2) {
++	die "Unsupported query-fsmonitor hook version '$version'.\n" .
++	    "Falling back to scanning...\n";
++}
++
++my $git_work_tree = get_working_dir();
++
++my $retry = 1;
++
++my $json_pkg;
++eval {
++	require JSON::XS;
++	$json_pkg = "JSON::XS";
++	1;
++} or do {
++	require JSON::PP;
++	$json_pkg = "JSON::PP";
++};
++
++launch_watchman();
++
++sub launch_watchman {
++	my $o = watchman_query();
++	if (is_work_tree_watched($o)) {
++		output_result($o->{clock}, @{$o->{files}});
++	}
++}
++
++sub output_result {
++	my ($clockid, @files) = @_;
++
++	# Uncomment for debugging watchman output
++	# open (my $fh, ">", ".git/watchman-output.out");
++	# binmode $fh, ":utf8";
++	# print $fh "$clockid\n@files\n";
++	# close $fh;
++
++	binmode STDOUT, ":utf8";
++	print $clockid;
++	print "\0";
++	local $, = "\0";
++	print @files;
++}
++
++sub watchman_clock {
++	my $response = qx/watchman clock "$git_work_tree"/;
++	die "Failed to get clock id on '$git_work_tree'.\n" .
++		"Falling back to scanning...\n" if $? != 0;
++
++	return $json_pkg->new->utf8->decode($response);
++}
++
++sub watchman_query {
++	my $pid = open2(\*CHLD_OUT, \*CHLD_IN, 'watchman -j --no-pretty')
++	or die "open2() failed: $!\n" .
++	"Falling back to scanning...\n";
++
++	# In the query expression below we're asking for names of files that
++	# changed since $last_update_token but not from the .git folder.
++	#
++	# To accomplish this, we're using the "since" generator to use the
++	# recency index to select candidate nodes and "fields" to limit the
++	# output to file names only. Then we're using the "expression" term to
++	# further constrain the results.
++	my $last_update_line = "";
++	if (substr($last_update_token, 0, 1) eq "c") {
++		$last_update_token = "\"$last_update_token\"";
++		$last_update_line = qq[\n"since": $last_update_token,];
++	}
++	my $query = <<"	END";
++		["query", "$git_work_tree", {$last_update_line
++			"fields": ["name"],
++			"expression": ["not", ["dirname", ".git"]]
++		}]
++	END
++
++	# Uncomment for debugging the watchman query
++	# open (my $fh, ">", ".git/watchman-query.json");
++	# print $fh $query;
++	# close $fh;
++
++	print CHLD_IN $query;
++	close CHLD_IN;
++	my $response = do {local $/; <CHLD_OUT>};
++
++	# Uncomment for debugging the watch response
++	# open ($fh, ">", ".git/watchman-response.json");
++	# print $fh $response;
++	# close $fh;
++
++	die "Watchman: command returned no output.\n" .
++	"Falling back to scanning...\n" if $response eq "";
++	die "Watchman: command returned invalid output: $response\n" .
++	"Falling back to scanning...\n" unless $response =~ /^\{/;
++
++	return $json_pkg->new->utf8->decode($response);
++}
++
++sub is_work_tree_watched {
++	my ($output) = @_;
++	my $error = $output->{error};
++	if ($retry > 0 and $error and $error =~ m/unable to resolve root .* directory (.*) is not watched/) {
++		$retry--;
++		my $response = qx/watchman watch "$git_work_tree"/;
++		die "Failed to make watchman watch '$git_work_tree'.\n" .
++		    "Falling back to scanning...\n" if $? != 0;
++		$output = $json_pkg->new->utf8->decode($response);
++		$error = $output->{error};
++		die "Watchman: $error.\n" .
++		"Falling back to scanning...\n" if $error;
++
++		# Uncomment for debugging watchman output
++		# open (my $fh, ">", ".git/watchman-output.out");
++		# close $fh;
++
++		# Watchman will always return all files on the first query so
++		# return the fast "everything is dirty" flag to git and do the
++		# Watchman query just to get it over with now so we won't pay
++		# the cost in git to look up each individual file.
++		my $o = watchman_clock();
++		$error = $output->{error};
++
++		die "Watchman: $error.\n" .
++		"Falling back to scanning...\n" if $error;
++
++		output_result($o->{clock}, ("/"));
++		$last_update_token = $o->{clock};
++
++		eval { launch_watchman() };
++		return 0;
++	}
++
++	die "Watchman: $error.\n" .
++	"Falling back to scanning...\n" if $error;
++
++	return 1;
++}
++
++sub get_working_dir {
++	my $working_dir;
++	if ($^O =~ 'msys' || $^O =~ 'cygwin') {
++		$working_dir = Win32::GetCwd();
++		$working_dir =~ tr/\\/\//;
++	} else {
++		require Cwd;
++		$working_dir = Cwd::cwd();
++	}
++
++	return $working_dir;
++}
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,8 @@
++#!/bin/sh
++#
++# An example hook script to prepare a packed repository for use over
++# dumb transports.
++#
++# To enable this hook, rename this file to "post-update".
++
++exec git update-server-info
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,14 @@
++#!/bin/sh
++#
++# An example hook script to verify what is about to be committed
++# by applypatch from an e-mail message.
++#
++# The hook should exit with non-zero status after issuing an
++# appropriate message if it wants to stop the commit.
++#
++# To enable this hook, rename this file to "pre-applypatch".
++
++. git-sh-setup
++precommit="$(git rev-parse --git-path hooks/pre-commit)"
++test -x "$precommit" && exec "$precommit" ${1+"$@"}
++:
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,49 @@
++#!/bin/sh
++#
++# An example hook script to verify what is about to be committed.
++# Called by "git commit" with no arguments.  The hook should
++# exit with non-zero status after issuing an appropriate message if
++# it wants to stop the commit.
++#
++# To enable this hook, rename this file to "pre-commit".
++
++if git rev-parse --verify HEAD >/dev/null 2>&1
++then
++	against=HEAD
++else
++	# Initial commit: diff against an empty tree object
++	against=$(git hash-object -t tree /dev/null)
++fi
++
++# If you want to allow non-ASCII filenames set this variable to true.
++allownonascii=$(git config --type=bool hooks.allownonascii)
++
++# Redirect output to stderr.
++exec 1>&2
++
++# Cross platform projects tend to avoid non-ASCII filenames; prevent
++# them from being added to the repository. We exploit the fact that the
++# printable range starts at the space character and ends with tilde.
++if [ "$allownonascii" != "true" ] &&
++	# Note that the use of brackets around a tr range is ok here, (it's
++	# even required, for portability to Solaris 10's /usr/bin/tr), since
++	# the square bracket bytes happen to fall in the designated range.
++	test $(git diff --cached --name-only --diff-filter=A -z $against |
++	  LC_ALL=C tr -d '[ -~]\0' | wc -c) != 0
++then
++	cat <<\EOF
++Error: Attempt to add a non-ASCII file name.
++
++This can cause problems if you want to work with people on other platforms.
++
++To be portable it is advisable to rename the file.
++
++If you know what you are doing you can disable this check using:
++
++  git config hooks.allownonascii true
++EOF
++	exit 1
++fi
++
++# If there are whitespace errors, print the offending file names and fail.
++exec git diff-index --check --cached $against --
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,13 @@
++#!/bin/sh
++#
++# An example hook script to verify what is about to be committed.
++# Called by "git merge" with no arguments.  The hook should
++# exit with non-zero status after issuing an appropriate message to
++# stderr if it wants to stop the merge commit.
++#
++# To enable this hook, rename this file to "pre-merge-commit".
++
++. git-sh-setup
++test -x "$GIT_DIR/hooks/pre-commit" &&
++        exec "$GIT_DIR/hooks/pre-commit"
++:
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,53 @@
++#!/bin/sh
++
++# An example hook script to verify what is about to be pushed.  Called by "git
++# push" after it has checked the remote status, but before anything has been
++# pushed.  If this script exits with a non-zero status nothing will be pushed.
++#
++# This hook is called with the following parameters:
++#
++# $1 -- Name of the remote to which the push is being done
++# $2 -- URL to which the push is being done
++#
++# If pushing without using a named remote those arguments will be equal.
++#
++# Information about the commits which are being pushed is supplied as lines to
++# the standard input in the form:
++#
++#   <local ref> <local oid> <remote ref> <remote oid>
++#
++# This sample shows how to prevent push of commits where the log message starts
++# with "WIP" (work in progress).
++
++remote="$1"
++url="$2"
++
++zero=$(git hash-object --stdin </dev/null | tr '[0-9a-f]' '0')
++
++while read local_ref local_oid remote_ref remote_oid
++do
++	if test "$local_oid" = "$zero"
++	then
++		# Handle delete
++		:
++	else
++		if test "$remote_oid" = "$zero"
++		then
++			# New branch, examine all commits
++			range="$local_oid"
++		else
++			# Update to existing branch, examine new commits
++			range="$remote_oid..$local_oid"
++		fi
++
++		# Check for WIP commit
++		commit=$(git rev-list -n 1 --grep '^WIP' "$range")
++		if test -n "$commit"
++		then
++			echo >&2 "Found WIP commit in $local_ref, not pushing"
++			exit 1
++		fi
++	fi
++done
++
++exit 0
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,169 @@
++#!/bin/sh
++#
++# Copyright (c) 2006, 2008 Junio C Hamano
++#
++# The "pre-rebase" hook is run just before "git rebase" starts doing
++# its job, and can prevent the command from running by exiting with
++# non-zero status.
++#
++# The hook is called with the following parameters:
++#
++# $1 -- the upstream the series was forked from.
++# $2 -- the branch being rebased (or empty when rebasing the current branch).
++#
++# This sample shows how to prevent topic branches that are already
++# merged to 'next' branch from getting rebased, because allowing it
++# would result in rebasing already published history.
++
++publish=next
++basebranch="$1"
++if test "$#" = 2
++then
++	topic="refs/heads/$2"
++else
++	topic=`git symbolic-ref HEAD` ||
++	exit 0 ;# we do not interrupt rebasing detached HEAD
++fi
++
++case "$topic" in
++refs/heads/??/*)
++	;;
++*)
++	exit 0 ;# we do not interrupt others.
++	;;
++esac
++
++# Now we are dealing with a topic branch being rebased
++# on top of master.  Is it OK to rebase it?
++
++# Does the topic really exist?
++git show-ref -q "$topic" || {
++	echo >&2 "No such branch $topic"
++	exit 1
++}
++
++# Is topic fully merged to master?
++not_in_master=`git rev-list --pretty=oneline ^master "$topic"`
++if test -z "$not_in_master"
++then
++	echo >&2 "$topic is fully merged to master; better remove it."
++	exit 1 ;# we could allow it, but there is no point.
++fi
++
++# Is topic ever merged to next?  If so you should not be rebasing it.
++only_next_1=`git rev-list ^master "^$topic" ${publish} | sort`
++only_next_2=`git rev-list ^master           ${publish} | sort`
++if test "$only_next_1" = "$only_next_2"
++then
++	not_in_topic=`git rev-list "^$topic" master`
++	if test -z "$not_in_topic"
++	then
++		echo >&2 "$topic is already up to date with master"
++		exit 1 ;# we could allow it, but there is no point.
++	else
++		exit 0
++	fi
++else
++	not_in_next=`git rev-list --pretty=oneline ^${publish} "$topic"`
++	/usr/bin/perl -e '
++		my $topic = $ARGV[0];
++		my $msg = "* $topic has commits already merged to public branch:\n";
++		my (%not_in_next) = map {
++			/^([0-9a-f]+) /;
++			($1 => 1);
++		} split(/\n/, $ARGV[1]);
++		for my $elem (map {
++				/^([0-9a-f]+) (.*)$/;
++				[$1 => $2];
++			} split(/\n/, $ARGV[2])) {
++			if (!exists $not_in_next{$elem->[0]}) {
++				if ($msg) {
++					print STDERR $msg;
++					undef $msg;
++				}
++				print STDERR " $elem->[1]\n";
++			}
++		}
++	' "$topic" "$not_in_next" "$not_in_master"
++	exit 1
++fi
++
++<<\DOC_END
++
++This sample hook safeguards topic branches that have been
++published from being rewound.
++
++The workflow assumed here is:
++
++ * Once a topic branch forks from "master", "master" is never
++   merged into it again (either directly or indirectly).
++
++ * Once a topic branch is fully cooked and merged into "master",
++   it is deleted.  If you need to build on top of it to correct
++   earlier mistakes, a new topic branch is created by forking at
++   the tip of the "master".  This is not strictly necessary, but
++   it makes it easier to keep your history simple.
++
++ * Whenever you need to test or publish your changes to topic
++   branches, merge them into "next" branch.
++
++The script, being an example, hardcodes the publish branch name
++to be "next", but it is trivial to make it configurable via
++$GIT_DIR/config mechanism.
++
++With this workflow, you would want to know:
++
++(1) ... if a topic branch has ever been merged to "next".  Young
++    topic branches can have stupid mistakes you would rather
++    clean up before publishing, and things that have not been
++    merged into other branches can be easily rebased without
++    affecting other people.  But once it is published, you would
++    not want to rewind it.
++
++(2) ... if a topic branch has been fully merged to "master".
++    Then you can delete it.  More importantly, you should not
++    build on top of it -- other people may already want to
++    change things related to the topic as patches against your
++    "master", so if you need further changes, it is better to
++    fork the topic (perhaps with the same name) afresh from the
++    tip of "master".
++
++Let's look at this example:
++
++		   o---o---o---o---o---o---o---o---o---o "next"
++		  /       /           /           /
++		 /   a---a---b A     /           /
++		/   /               /           /
++	       /   /   c---c---c---c B         /
++	      /   /   /             \         /
++	     /   /   /   b---b C     \       /
++	    /   /   /   /             \     /
++    ---o---o---o---o---o---o---o---o---o---o---o "master"
++
++
++A, B and C are topic branches.
++
++ * A has one fix since it was merged up to "next".
++
++ * B has finished.  It has been fully merged up to "master" and "next",
++   and is ready to be deleted.
++
++ * C has not merged to "next" at all.
++
++We would want to allow C to be rebased, refuse A, and encourage
++B to be deleted.
++
++To compute (1):
++
++	git rev-list ^master ^topic next
++	git rev-list ^master        next
++
++	if these match, topic has not merged in next at all.
++
++To compute (2):
++
++	git rev-list master..topic
++
++	if this is empty, it is fully merged to "master".
++
++DOC_END
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,24 @@
++#!/bin/sh
++#
++# An example hook script to make use of push options.
++# The example simply echoes all push options that start with 'echoback='
++# and rejects all pushes when the "reject" push option is used.
++#
++# To enable this hook, rename this file to "pre-receive".
++
++if test -n "$GIT_PUSH_OPTION_COUNT"
++then
++	i=0
++	while test "$i" -lt "$GIT_PUSH_OPTION_COUNT"
++	do
++		eval "value=\$GIT_PUSH_OPTION_$i"
++		case "$value" in
++		echoback=*)
++			echo "echo from the pre-receive-hook: ${value#*=}" >&2
++			;;
++		reject)
++			exit 1
++		esac
++		i=$((i + 1))
++	done
++fi
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,42 @@
++#!/bin/sh
++#
++# An example hook script to prepare the commit log message.
++# Called by "git commit" with the name of the file that has the
++# commit message, followed by the description of the commit
++# message's source.  The hook's purpose is to edit the commit
++# message file.  If the hook fails with a non-zero status,
++# the commit is aborted.
++#
++# To enable this hook, rename this file to "prepare-commit-msg".
++
++# This hook includes three examples. The first one removes the
++# "# Please enter the commit message..." help message.
++#
++# The second includes the output of "git diff --name-status -r"
++# into the message, just before the "git status" output.  It is
++# commented because it doesn't cope with --amend or with squashed
++# commits.
++#
++# The third example adds a Signed-off-by line to the message, that can
++# still be edited.  This is rarely a good idea.
++
++COMMIT_MSG_FILE=$1
++COMMIT_SOURCE=$2
++SHA1=$3
++
++/usr/bin/perl -i.bak -ne 'print unless(m/^. Please enter the commit message/..m/^#$/)' "$COMMIT_MSG_FILE"
++
++# case "$COMMIT_SOURCE,$SHA1" in
++#  ,|template,)
++#    /usr/bin/perl -i.bak -pe '
++#       print "\n" . `git diff --cached --name-status -r`
++# 	 if /^#/ && $first++ == 0' "$COMMIT_MSG_FILE" ;;
++#  *) ;;
++# esac
++
++# SOB=$(git var GIT_COMMITTER_IDENT | sed -n 's/^\(.*>\).*$/Signed-off-by: \1/p')
++# git interpret-trailers --in-place --trailer "$SOB" "$COMMIT_MSG_FILE"
++# if test -z "$COMMIT_SOURCE"
++# then
++#   /usr/bin/perl -i.bak -pe 'print "\n" if !$first_line++' "$COMMIT_MSG_FILE"
++# fi
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,78 @@
++#!/bin/sh
++
++# An example hook script to update a checked-out tree on a git push.
++#
++# This hook is invoked by git-receive-pack(1) when it reacts to git
++# push and updates reference(s) in its repository, and when the push
++# tries to update the branch that is currently checked out and the
++# receive.denyCurrentBranch configuration variable is set to
++# updateInstead.
++#
++# By default, such a push is refused if the working tree and the index
++# of the remote repository has any difference from the currently
++# checked out commit; when both the working tree and the index match
++# the current commit, they are updated to match the newly pushed tip
++# of the branch. This hook is to be used to override the default
++# behaviour; however the code below reimplements the default behaviour
++# as a starting point for convenient modification.
++#
++# The hook receives the commit with which the tip of the current
++# branch is going to be updated:
++commit=$1
++
++# It can exit with a non-zero status to refuse the push (when it does
++# so, it must not modify the index or the working tree).
++die () {
++	echo >&2 "$*"
++	exit 1
++}
++
++# Or it can make any necessary changes to the working tree and to the
++# index to bring them to the desired state when the tip of the current
++# branch is updated to the new commit, and exit with a zero status.
++#
++# For example, the hook can simply run git read-tree -u -m HEAD "$1"
++# in order to emulate git fetch that is run in the reverse direction
++# with git push, as the two-tree form of git read-tree -u -m is
++# essentially the same as git switch or git checkout that switches
++# branches while keeping the local changes in the working tree that do
++# not interfere with the difference between the branches.
++
++# The below is a more-or-less exact translation to shell of the C code
++# for the default behaviour for git's push-to-checkout hook defined in
++# the push_to_deploy() function in builtin/receive-pack.c.
++#
++# Note that the hook will be executed from the repository directory,
++# not from the working tree, so if you want to perform operations on
++# the working tree, you will have to adapt your code accordingly, e.g.
++# by adding "cd .." or using relative paths.
++
++if ! git update-index -q --ignore-submodules --refresh
++then
++	die "Up-to-date check failed"
++fi
++
++if ! git diff-files --quiet --ignore-submodules --
++then
++	die "Working directory has unstaged changes"
++fi
++
++# This is a rough translation of:
++#
++#   head_has_history() ? "HEAD" : EMPTY_TREE_SHA1_HEX
++if git cat-file -e HEAD 2>/dev/null
++then
++	head=HEAD
++else
++	head=$(git hash-object -t tree --stdin </dev/null)
++fi
++
++if ! git diff-index --quiet --cached --ignore-submodules $head --
++then
++	die "Working directory has staged changes"
++fi
++
++if ! git read-tree -u -m "$commit"
++then
++	die "Could not update working tree to new HEAD"
++fi
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,77 @@
++#!/bin/sh
++
++# An example hook script to validate a patch (and/or patch series) before
++# sending it via email.
++#
++# The hook should exit with non-zero status after issuing an appropriate
++# message if it wants to prevent the email(s) from being sent.
++#
++# To enable this hook, rename this file to "sendemail-validate".
++#
++# By default, it will only check that the patch(es) can be applied on top of
++# the default upstream branch without conflicts in a secondary worktree. After
++# validation (successful or not) of the last patch of a series, the worktree
++# will be deleted.
++#
++# The following config variables can be set to change the default remote and
++# remote ref that are used to apply the patches against:
++#
++#   sendemail.validateRemote (default: origin)
++#   sendemail.validateRemoteRef (default: HEAD)
++#
++# Replace the TODO placeholders with appropriate checks according to your
++# needs.
++
++validate_cover_letter () {
++	file="$1"
++	# TODO: Replace with appropriate checks (e.g. spell checking).
++	true
++}
++
++validate_patch () {
++	file="$1"
++	# Ensure that the patch applies without conflicts.
++	git am -3 "$file" || return
++	# TODO: Replace with appropriate checks for this patch
++	# (e.g. checkpatch.pl).
++	true
++}
++
++validate_series () {
++	# TODO: Replace with appropriate checks for the whole series
++	# (e.g. quick build, coding style checks, etc.).
++	true
++}
++
++# main -------------------------------------------------------------------------
++
++if test "$GIT_SENDEMAIL_FILE_COUNTER" = 1
++then
++	remote=$(git config --default origin --get sendemail.validateRemote) &&
++	ref=$(git config --default HEAD --get sendemail.validateRemoteRef) &&
++	worktree=$(mktemp --tmpdir -d sendemail-validate.XXXXXXX) &&
++	git worktree add -fd --checkout "$worktree" "refs/remotes/$remote/$ref" &&
++	git config --replace-all sendemail.validateWorktree "$worktree"
++else
++	worktree=$(git config --get sendemail.validateWorktree)
++fi || {
++	echo "sendemail-validate: error: failed to prepare worktree" >&2
++	exit 1
++}
++
++unset GIT_DIR GIT_WORK_TREE
++cd "$worktree" &&
++
++if grep -q "^diff --git " "$1"
++then
++	validate_patch "$1"
++else
++	validate_cover_letter "$1"
++fi &&
++
++if test "$GIT_SENDEMAIL_FILE_COUNTER" = "$GIT_SENDEMAIL_FILE_TOTAL"
++then
++	git config --unset-all sendemail.validateWorktree &&
++	trap 'git worktree remove -ff "$worktree"' EXIT &&
++	validate_series
++fi
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,128 @@
++#!/bin/sh
++#
++# An example hook script to block unannotated tags from entering.
++# Called by "git receive-pack" with arguments: refname sha1-old sha1-new
++#
++# To enable this hook, rename this file to "update".
++#
++# Config
++# ------
++# hooks.allowunannotated
++#   This boolean sets whether unannotated tags will be allowed into the
++#   repository.  By default they won't be.
++# hooks.allowdeletetag
++#   This boolean sets whether deleting tags will be allowed in the
++#   repository.  By default they won't be.
++# hooks.allowmodifytag
++#   This boolean sets whether a tag may be modified after creation. By default
++#   it won't be.
++# hooks.allowdeletebranch
++#   This boolean sets whether deleting branches will be allowed in the
++#   repository.  By default they won't be.
++# hooks.denycreatebranch
++#   This boolean sets whether remotely creating branches will be denied
++#   in the repository.  By default this is allowed.
++#
++
++# --- Command line
++refname="$1"
++oldrev="$2"
++newrev="$3"
++
++# --- Safety check
++if [ -z "$GIT_DIR" ]; then
++	echo "Don't run this script from the command line." >&2
++	echo " (if you want, you could supply GIT_DIR then run" >&2
++	echo "  $0 <ref> <oldrev> <newrev>)" >&2
++	exit 1
++fi
++
++if [ -z "$refname" -o -z "$oldrev" -o -z "$newrev" ]; then
++	echo "usage: $0 <ref> <oldrev> <newrev>" >&2
++	exit 1
++fi
++
++# --- Config
++allowunannotated=$(git config --type=bool hooks.allowunannotated)
++allowdeletebranch=$(git config --type=bool hooks.allowdeletebranch)
++denycreatebranch=$(git config --type=bool hooks.denycreatebranch)
++allowdeletetag=$(git config --type=bool hooks.allowdeletetag)
++allowmodifytag=$(git config --type=bool hooks.allowmodifytag)
++
++# check for no description
++projectdesc=$(sed -e '1q' "$GIT_DIR/description")
++case "$projectdesc" in
++"Unnamed repository"* | "")
++	echo "*** Project description file hasn't been set" >&2
++	exit 1
++	;;
++esac
++
++# --- Check types
++# if $newrev is 0000...0000, it's a commit to delete a ref.
++zero=$(git hash-object --stdin </dev/null | tr '[0-9a-f]' '0')
++if [ "$newrev" = "$zero" ]; then
++	newrev_type=delete
++else
++	newrev_type=$(git cat-file -t $newrev)
++fi
++
++case "$refname","$newrev_type" in
++	refs/tags/*,commit)
++		# un-annotated tag
++		short_refname=${refname##refs/tags/}
++		if [ "$allowunannotated" != "true" ]; then
++			echo "*** The un-annotated tag, $short_refname, is not allowed in this repository" >&2
++			echo "*** Use 'git tag [ -a | -s ]' for tags you want to propagate." >&2
++			exit 1
++		fi
++		;;
++	refs/tags/*,delete)
++		# delete tag
++		if [ "$allowdeletetag" != "true" ]; then
++			echo "*** Deleting a tag is not allowed in this repository" >&2
++			exit 1
++		fi
++		;;
++	refs/tags/*,tag)
++		# annotated tag
++		if [ "$allowmodifytag" != "true" ] && git rev-parse $refname > /dev/null 2>&1
++		then
++			echo "*** Tag '$refname' already exists." >&2
++			echo "*** Modifying a tag is not allowed in this repository." >&2
++			exit 1
++		fi
++		;;
++	refs/heads/*,commit)
++		# branch
++		if [ "$oldrev" = "$zero" -a "$denycreatebranch" = "true" ]; then
++			echo "*** Creating a branch is not allowed in this repository" >&2
++			exit 1
++		fi
++		;;
++	refs/heads/*,delete)
++		# delete branch
++		if [ "$allowdeletebranch" != "true" ]; then
++			echo "*** Deleting a branch is not allowed in this repository" >&2
++			exit 1
++		fi
++		;;
++	refs/remotes/*,commit)
++		# tracking branch
++		;;
++	refs/remotes/*,delete)
++		# delete tracking branch
++		if [ "$allowdeletebranch" != "true" ]; then
++			echo "*** Deleting a tracking branch is not allowed in this repository" >&2
++			exit 1
++		fi
++		;;
++	*)
++		# Anything else (is there anything else?)
++		echo "*** Update hook: unknown type of update to ref $refname of type $newrev_type" >&2
++		exit 1
++		;;
++esac
++
++# --- Finished
++exit 0
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,6 @@
++# git ls-files --others --exclude-from=.git/info/exclude
++# Lines that start with '#' are comments.
++# For a project mostly in C, the following would be a good set of
++# exclude patterns (uncomment them if you want to use them):
++# *.[oa]
++# *~
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,43 @@
++# GT-SPEEDOMETER 0.5.0-beta — بناءٌ ونشر
++
++هذه الشجرة = شفرة **0.3.0 الحقيقيّة من المستودع** + تغييرات 0.5.0. لا إعادة بناءٍ
++من الحزمة هذه المرّة: أُخذ الأساس من `main`، ورُقعة `0.5.0.patch` مقابله مباشرةً.
 +
 +## البناء والنشر
 +
 +```bash
 +./gradlew :app:assembleDebug            # أو استعمل السكريبت:
-+./release.sh                            # 1) إصدارٌ جديد ← 4 ← 0.4.0-beta
++./release.sh                            # 1) إصدارٌ جديد ← 4 ← 0.5.0-beta
 +```
 +
-+`build.gradle.kts` مضبوطٌ سلفًا على `versionCode = 4` و`versionName = "0.4.0-beta"`،
-+وقسم `## v0.4.0-beta` مكتوبٌ في `CHANGELOG.md` فتُؤخذ منه ملاحظات الإصدار آليًّا.
++`build.gradle.kts` مضبوطٌ سلفًا على `versionCode = 5` و`versionName = "0.5.0-beta"`،
++وقسم `## v0.5.0-beta` مكتوبٌ في `CHANGELOG.md` فتُؤخذ منه ملاحظات الإصدار آليًّا.
 +
 +## ما فُحص وما لم يُفحص
 +
@@ -45,13 +998,35 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +عند الدخول إلى النافذة المصغّرة **وأنت على تبويب الكاميرا بلا تسجيل**، تُحرَّر
 +الكاميرا وتُعاد تهيئتها عند العودة — نحو نصف ثانية من معاينةٍ سوداء. أثناء التسجيل
 +لا يقع ذلك (الجلسة تُمسك الربط)، ولا يقع في التبويبات الأخرى.
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
-@@ -2,6 +2,101 @@
++++ b/v0.5.0-beta
+@@ -2,6 +2,123 @@
  
  كل الإصدارات حتى إشعارٍ آخر **تجريبيّة** (beta).
  
++## v0.5.0-beta
++
++### أُضيف
++
++- **الخريطة المحلّيّة أوّلًا.** إن وُجد أرشيف بلاطاتٍ على الجهاز يغطّي المسار، رُسمت
++  الخريطة منه ولم تُطلب بلاطةٌ واحدة من الإنترنت — لا بايت ولا انتظار ولا حاجة
++  إلى تغطية. والإنترنت احتياطٌ لا أصل. تُقبل صيغ `.mbtiles` و`.sqlite` و`.gemf`
++  وأشجار البلاطات المضغوطة، وتُوضع في مجلّد التطبيق (يعرضه قسمٌ جديد في الإعدادات).
++  ولا يكفي وجود الأرشيف: تُفحص تغطيته لبداية المسار ومنتصفه ونهايته قبل اعتماده،
++  فأرشيفُ إقليمٍ آخر لا يُخرج خريطةً رماديّة صامتة. وشارةٌ على الخريطة تقول
++  «محلّيّة» أو «إنترنت» فلا يبقى المصدر لغزًا. وخيارٌ لتفضيل الإنترنت لمن أرادها.
++- **طول المقطع يُضبط من شاشة الكاميرا** — لمسةٌ على شارة المدّة تفتح الاختيار
++  (متّصل · 3 · 5 · 7 · 10 دقائق) بلا العودة إلى الإعدادات. والتبديل أثناء التسجيل
++  يسري على المقطع التالي، فالمقطع الجاري لا يُبتر.
++
++### تغييرات داخليّة
++
++- `OfflineMaps`: مسحٌ للأرشيفات على خيط الإدخال/الإخراج يبدأ مع إقلاع التطبيق،
++  ويفتح كلّ مرشَّحٍ ويغلقه ليستبعد الملفّات المبتورة قبل أن يَعِد بها.
++- إعداد osmdroid (المسار ووكيل المستخدم) انتقل خارج التركيب: كان يقرأ التفضيلات
++  من القرص في `remember` قبل أوّل إطار.
++
 +## v0.4.0-beta
 +
 +دورةُ إصلاحٍ وضبطٍ بعد الاختبار الميدانيّ لـ 0.3.0، ومعها ثلاثُ ميزاتٍ كبيرة.
@@ -150,9 +1125,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
  ## v0.3.0-beta
  
  ### أُضيف
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -45,3 +45,27 @@
  - تفويض `animateFloatAsState` بـ `by` يحتاج `import androidx.compose.runtime.getValue`.
  - مرساة الفيديو تُثبَّت في `VideoRecordEvent.Start` لا عند ضغط الزرّ؛ بينهما مئات
@@ -181,22 +1156,335 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +- **PiP:** `onUserLeaveHint` لا يُنادى لإيماءة الصعود على كثيرٍ من الأجهزة، ولذلك
 +  `setAutoEnterEnabled` من أندرويد 12 إلى جانبه لا بدلًا منه. و`configChanges`
 +  يجب أن يشمل `smallestScreenSize|density` وإلّا أُعيد إنشاء النشاط عند الانكماش.
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,303 @@
++#!/usr/bin/env bash
++# ============================================================================
++#  GT-SPEEDOMETER — فاحص الشجرة
++#
++#  يُشغَّل من جذر المشروع بلا وسائط. يفحص الشجرة عن الشذوذ الذي يكسر البناء أو
++#  يُلوّث المستودع، ويعرض تقريرًا. و`--fix` يحذف ما يأمن حذفه بعد تأكيدك.
++#
++#      ./CLEANUP.sh            فحصٌ فقط
++#      ./CLEANUP.sh --fix      يحذف الزائد بعد تأكيد
++#      ./CLEANUP.sh --fix -y   بلا تأكيد
++#
++#  الفحوص السبعة:
++#    1. تعريفاتٌ مكرّرة  — صنفٌ واحد في ملفّين، وهو عطب «Redeclaration» الذي يوقف
++#                          المصرّف. يُكتشف بلا Gradle وفي ثانية.
++#    2. ملفّات Kotlin زائدة أو ناقصة مقابل بيان الإصدار المضمَّن أدناه.
++#    3. موارد نصّية مفقودة — كلّ `R.string.x` مستعمَل له مقابلٌ في strings.xml.
++#    4. أسرارٌ غير متجاهَلة — مخزن التوقيع وكلماته يجب ألّا تدخل git أبدًا.
++#    5. مخرجات بناءٍ متتبَّعة — حزم أو مجلّدات build دخلت الاعتماد.
++#    6. ملفّات دخيلة في الجذر — رقعات وملاحظات ومخلّفات فكّ ضغط.
++#    7. موارد ميّتة — صور وأيقونات لا يشير إليها شيء.
++# ============================================================================
++
++set -uo pipefail
++
++if [[ -t 1 ]]; then
++  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
++  C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'
++else
++  C_RESET=''; C_BOLD=''; C_DIM=''; C_OK=''; C_WARN=''; C_ERR=''
++fi
++ok()    { printf '%s\n' "  ${C_OK}✓${C_RESET} $*"; }
++bad()   { printf '%s\n' "  ${C_ERR}✗${C_RESET} $*"; }
++warn()  { printf '%s\n' "  ${C_WARN}!${C_RESET} $*"; }
++head2() { printf '\n%s\n' "${C_BOLD}▸ $*${C_RESET}"; }
++
++FIX=0; YES=0
++for a in "$@"; do
++  case "$a" in
++    --fix) FIX=1 ;;
++    -y|--yes) YES=1 ;;
++    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
++    *) echo "خيار غير معروف: $a" >&2; exit 1 ;;
++  esac
++done
++
++SRC="app/src/main/java"
++[[ -d "$SRC" ]] || { echo "شغّله من جذر المشروع (لم أجد $SRC)" >&2; exit 1; }
++
++PKG_ROOT="$SRC/net/gnutux/speedometer"
++PROBLEMS=0
++DELETABLE=()
++
++# ---------------------------------------------------------------------------
++#  بيان الإصدار 0.5.0-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
++# ---------------------------------------------------------------------------
++MANIFEST="MainActivity.kt
++SpeedoApp.kt
++core/TripEngine.kt
++core/camera/CameraSession.kt
++core/camera/HudMetrics.kt
++core/camera/VideoOverlayPainter.kt
++core/location/GnssInfo.kt
++core/location/LocationEngine.kt
++core/location/SpeedFilter.kt
++core/location/SpeedSample.kt
++core/map/OfflineMaps.kt
++core/media/MediaRepository.kt
++core/profile/VehicleProfile.kt
++core/settings/AppSettings.kt
++core/settings/ThemeMode.kt
++core/trip/GpxReader.kt
++core/trip/GpxWriter.kt
++core/trip/TripRecorder.kt
++core/trip/TripState.kt
++service/SpeedIcon.kt
++service/SpeedTileService.kt
++service/TripService.kt
++ui/Format.kt
++ui/SpeedoViewModel.kt
++ui/components/GpsStatusBar.kt
++ui/components/RouteMap.kt
++ui/components/SpeedGauge.kt
++ui/components/StatTile.kt
++ui/components/TripControls.kt
++ui/components/VehicleSelector.kt
++ui/screens/CameraScreen.kt
++ui/screens/DigitalScreen.kt
++ui/screens/MediaScreen.kt
++ui/screens/PipScreen.kt
++ui/screens/SettingsScreen.kt
++ui/screens/SpeedometerScreen.kt
++ui/screens/TripsScreen.kt
++ui/theme/Theme.kt"
++printf '%s\n' "${C_BOLD}GT-SPEEDOMETER — فحص الشجرة${C_RESET}"
++printf '%s\n' "${C_DIM}$(pwd)${C_RESET}"
++
++# ===========================================================================
++# 1. تعريفاتٌ مكرّرة
++#
++#    هذا هو الفحص الذي يستحقّ السكريبت كلّه. لا يعتمد على بيانٍ ولا على حزمة:
++#    يقرأ التعريفات العليا من كلّ ملفّ ويبحث عن اسمٍ كاملٍ في ملفّين. وهو نفس
++#    ما يشتكي منه المصرّف بـ «Redeclaration»، لكنّه يظهر هنا في ثانيةٍ لا بعد
++#    دقيقتين من الترجمة، وبسببه ظاهرًا لا بأخطاءٍ متتالية في ملفّاتٍ بريئة.
++# ===========================================================================
++head2 "تعريفات مكرّرة"
++DUPES="$(
++  find "$SRC" -name '*.kt' -print0 | while IFS= read -r -d '' f; do
++    awk -v file="$f" '
++      /^package /            { pkg = $2; sub(/;$/, "", pkg); next }
++      /^[a-z ]*(class|interface|object)[ \t]/ {
++        for (i = 1; i <= NF; i++) {
++          if ($i == "class" || $i == "interface" || $i == "object") {
++            name = $(i + 1)
++            gsub(/[<(:{].*$/, "", name)
++            if (name != "" && name ~ /^[A-Za-z_]/) print pkg "." name "\t" file
++            break
++          }
++        }
++      }
++    ' "$f"
++  done | sort | awk -F'\t' '{ if ($1 == prev) { print prevline; print $0 } prev = $1; prevline = $0 }' | sort -u
++)"
++if [[ -z "$DUPES" ]]; then
++  ok "لا تعريف مكرّرًا"
++else
++  PROBLEMS=$((PROBLEMS + 1))
++  bad "أسماءٌ معرَّفة في أكثر من ملفّ — المصرّف سيقف عندها:"
++  printf '%s\n' "$DUPES" | awk -F'\t' '{ printf "      %-44s %s\n", $1, $2 }'
++fi
++
++# ===========================================================================
++# 2. ملفّات Kotlin زائدة أو ناقصة
++# ===========================================================================
++head2 "مطابقة بيان الإصدار"
++if [[ -d "$PKG_ROOT" ]]; then
++  printf '%s\n' "$MANIFEST" | grep -v '^$' | sort > /tmp/.gt_keep
++  (cd "$PKG_ROOT" && find . -name '*.kt' | sed 's|^\./||' | sort) > /tmp/.gt_have
++  EXTRA="$(comm -13 /tmp/.gt_keep /tmp/.gt_have)"
++  MISSING="$(comm -23 /tmp/.gt_keep /tmp/.gt_have)"
++  if [[ -n "$EXTRA" ]]; then
++    PROBLEMS=$((PROBLEMS + 1))
++    bad "ملفّاتٌ عندك ليست من الإصدار (بقايا نسخةٍ أقدم):"
++    while IFS= read -r r; do
++      [[ -z "$r" ]] && continue
++      printf '      %s\n' "$r"
++      DELETABLE+=("$PKG_ROOT/$r")
++    done <<< "$EXTRA"
++  fi
++  if [[ -n "$MISSING" ]]; then
++    PROBLEMS=$((PROBLEMS + 1))
++    bad "ملفّاتٌ ناقصة — انسخها من الحزمة:"
++    printf '      %s\n' $MISSING
++  fi
++  if [[ -z "$EXTRA" && -z "$MISSING" ]]; then
++    ok "$(printf '%s\n' "$MANIFEST" | grep -c .) ملفًّا كما ينبغي"
++  fi
++else
++  warn "لم أجد $PKG_ROOT"
++fi
++
++# ===========================================================================
++# 3. موارد نصّية مفقودة
++# ===========================================================================
++head2 "موارد النصوص"
++STRINGS="app/src/main/res/values/strings.xml"
++if [[ -f "$STRINGS" ]]; then
++  grep -oE '<string name="[^"]+"' "$STRINGS" | sed 's/.*name="//; s/"//' | sort -u > /tmp/.gt_str
++  grep -rhoE 'R\.string\.[A-Za-z0-9_]+' "$SRC" | sed 's/R\.string\.//' | sort -u > /tmp/.gt_used
++  LOST="$(comm -13 /tmp/.gt_str /tmp/.gt_used)"
++  DUPS="$(grep -oE '<string name="[^"]+"' "$STRINGS" | sort | uniq -d)"
++  if [[ -n "$LOST" ]]; then
++    PROBLEMS=$((PROBLEMS + 1))
++    bad "مستعمَلة في الشفرة وغير معرَّفة:"; printf '      R.string.%s\n' $LOST
++  fi
++  if [[ -n "$DUPS" ]]; then
++    PROBLEMS=$((PROBLEMS + 1))
++    bad "معرَّفة مرّتين في strings.xml:"; printf '      %s\n' "$DUPS"
++  fi
++  if [[ -z "$LOST" && -z "$DUPS" ]]; then
++    ok "$(wc -l < /tmp/.gt_str) نصًّا، وكلّ مستعمَلٍ له مقابل"
++  fi
++else
++  warn "لم أجد $STRINGS"
++fi
++
++# ===========================================================================
++# 4. أسرارٌ غير متجاهَلة
++#
++#    فقدُ مخزن التوقيع يعني عجزًا أبديًّا عن تحديث ما نُشر؛ وتسريبه أسوأ.
++# ===========================================================================
++head2 "أسرار التوقيع"
++if git rev-parse --git-dir >/dev/null 2>&1; then
++  LEAKED="$(git ls-files | grep -E 'keystore\.properties$|\.jks$|\.keystore$|^local\.properties$' | grep -v 'debug\.keystore' || true)"
++  if [[ -n "$LEAKED" ]]; then
++    PROBLEMS=$((PROBLEMS + 1))
++    bad "متتبَّعة في git — أخرِجها فورًا بـ git rm --cached:"
++    printf '      %s\n' $LEAKED
++  else
++    ok "لا سرّ متتبَّعًا"
++  fi
++  # لا تقل «متجاهَل» عن ملفٍّ أثبتنا للتوّ أنّه متتبَّع
++  for f in keystore.properties *.jks; do
++    [[ -e "$f" ]] || continue
++    git ls-files --error-unmatch "$f" >/dev/null 2>&1 && continue
++    printf '%s\n' "      ${C_DIM}موجودٌ محلّيًّا ومتجاهَل — احتفظ بنسخةٍ خارج الجهاز: $f${C_RESET}"
++  done
++else
++  warn "ليس مستودع git — تخطّيتُ فحص التتبّع"
++fi
++
++# ===========================================================================
++# 5. مخرجات بناءٍ متتبَّعة
++# ===========================================================================
++head2 "مخرجات البناء"
++if git rev-parse --git-dir >/dev/null 2>&1; then
++  BUILT="$(git ls-files | grep -E '\.apk$|\.aab$|^dist/|/build/|^\.gradle/' || true)"
++  if [[ -n "$BUILT" ]]; then
++    PROBLEMS=$((PROBLEMS + 1))
++    bad "مخرجاتٌ دخلت الاعتماد:"; printf '      %s\n' $BUILT
++  else
++    ok "لا مخرج بناءٍ متتبَّعًا"
++  fi
++else
++  warn "ليس مستودع git"
++fi
++
++# ===========================================================================
++# 6. ملفّات دخيلة في الجذر
++# ===========================================================================
++NOTES=0
++head2 "جذر المشروع"
++KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude "
++STRAY=()
++while IFS= read -r n; do
++  case "$n" in *.jks|*.keystore) continue ;; esac
++  [[ "$KNOWN_ROOT" == *" $n "* ]] || STRAY+=("$n")
++done < <(find . -maxdepth 1 -mindepth 1 -printf '%f\n' | sort)
++if (( ${#STRAY[@]} )); then
++  NOTES=$((NOTES + 1))
++  warn "دخيلٌ على الجذر (راجِعها بنفسك؛ لا تُحذف آليًّا):"
++  printf '      %s\n' "${STRAY[@]}"
++else
++  ok "الجذر نظيف"
++fi
++
++# ===========================================================================
++# 7. موارد ميّتة
++# ===========================================================================
++head2 "موارد لا يشير إليها شيء"
++DEAD=()
++RES="app/src/main/res"
++if [[ -d "$RES" ]]; then
++  while IFS= read -r f; do
++    [[ -z "$f" ]] && continue
++    n="$(basename "$f")"; n="${n%.*}"
++    kind="$(basename "$(dirname "$f")")"; kind="${kind%%-*}"
++    case "$n" in ic_launcher*) [[ "$kind" == mipmap ]] && continue ;; esac
++    if ! grep -rqF "$kind/$n" "$RES" "app/src/main/AndroidManifest.xml" 2>/dev/null \
++       && ! grep -rqE "R\.$kind\.$n\b" "$SRC" 2>/dev/null; then
++      DEAD+=("$f")
++    fi
++  done < <(find "$RES/drawable" -type f 2>/dev/null)
++fi
++if (( ${#DEAD[@]} )); then
++  warn "غير مُشارٍ إليها:"
++  printf '      %s\n' "${DEAD[@]}"
++  DELETABLE+=("${DEAD[@]}")
++else
++  ok "لا مورد ميّتًا"
++fi
++
++# ===========================================================================
++#  الخلاصة والحذف
++# ===========================================================================
++printf '\n'
++if (( PROBLEMS == 0 )) && (( ${#DELETABLE[@]} == 0 )); then
++  if (( NOTES )); then
++    printf '%s\n' "${C_OK}${C_BOLD}لا شيء يكسر البناء${C_RESET} — وبقيت ${NOTES} ملاحظة أعلاه."
++  else
++    printf '%s\n' "${C_OK}${C_BOLD}الشجرة سليمة.${C_RESET}"
++  fi
++  exit 0
++fi
++
++if (( ${#DELETABLE[@]} == 0 )); then
++  printf '%s\n' "${C_WARN}${C_BOLD}${PROBLEMS} مسألة تحتاج يدك — لا شيء يُحذف آليًّا.${C_RESET}"
++  exit 1
++fi
++
++printf '%s\n' "${C_BOLD}يمكن حذفها آليًّا (${#DELETABLE[@]}):${C_RESET}"
++printf '  %s\n' "${DELETABLE[@]}"
++
++if (( ! FIX )); then
++  printf '\n%s\n' "للحذف:  ./CLEANUP.sh --fix"
++  exit 1
++fi
++if (( ! YES )); then
++  printf '\n  أأحذفها؟\n'
++  read -r -p "  > y/n [n]: " a
++  [[ "$a" =~ ^([yY]|نعم)$ ]] || { echo "أُلغي."; exit 1; }
++fi
++rm -f "${DELETABLE[@]}"
++printf '%s\n' "${C_OK}حُذف ${#DELETABLE[@]} ملفًّا. أعد التشغيل للتحقّق.${C_RESET}"
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
 @@ -3,7 +3,7 @@
  عدّاد سرعة ومسافة ومسار للهاتف، يعرض عناصره **فوق كاميرا حيّة** ويسجّل الرحلة.
  تطبيق أندرويد بـ Kotlin و Jetpack Compose.
  
 -الحالة: **v0.3.0-beta** — كل الإصدارات تجريبيّة حتى إشعارٍ آخر.
-+الحالة: **v0.4.0-beta** — كل الإصدارات تجريبيّة حتى إشعارٍ آخر.
++الحالة: **v0.5.0-beta** — كل الإصدارات تجريبيّة حتى إشعارٍ آخر.
  
  ## ما الذي يميّزه
  
-@@ -12,6 +12,19 @@
+@@ -12,6 +12,25 @@
  
  نمط الاستعمال المستهدَف **أداة قياسٍ رياضيّة** لا مسجّل طريق: يُبنى للدرّاجة أوّلًا.
  
++## v0.5.0 — الجديد
++
++- **الخريطة المحلّيّة أوّلًا**: أرشيف بلاطاتٍ على الجهاز يُغني عن الإنترنت تمامًا،
++  وتُفحص تغطيته قبل اعتماده، وشارةٌ تقول أيّهما يعمل
++- **طول مقطع الفيديو يُضبط من شاشة الكاميرا** بلا العودة إلى الإعدادات
++
 +## v0.4.0 — الجديد
 +
 +- **التسجيل لا ينقطع بمغادرة التطبيق** ولا بانطفاء الشاشة ولا باتّصالٍ وارد
@@ -213,17 +1501,17 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
  ## v0.3.0 — الجديد
  
  - **حرق العدّاد داخل الفيديو** توگلًا اختياريًّا: **محروق** أو **نظيف**، ويُقفَل
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -21,8 +21,8 @@
          applicationId = "net.gnutux.speedometer"
          minSdk = 26
          targetSdk = 35
 -        versionCode = 3
 -        versionName = "0.3.0-beta"
-+        versionCode = 4
-+        versionName = "0.4.0-beta"
++        versionCode = 5
++        versionName = "0.5.0-beta"
      }
  
      androidResources {
@@ -236,9 +1524,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
      }
      packaging {
          resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -31,10 +31,17 @@
          android:supportsRtl="true"
          android:theme="@style/Theme.GTSpeedometer">
@@ -258,9 +1546,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              android:theme="@style/Theme.GTSpeedometer">
              <intent-filter>
                  <action android:name="android.intent.action.MAIN" />
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -1,9 +1,13 @@
  package net.gnutux.speedometer
  
@@ -796,9 +2084,30 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
                          color = if (active) Bg else TextSecondary,
                          fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                      ),
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
+@@ -2,6 +2,7 @@
+ 
+ import android.app.Application
+ import net.gnutux.speedometer.core.TripEngine
++import net.gnutux.speedometer.core.map.OfflineMaps
+ 
+ class SpeedoApp : Application() {
+ 
+@@ -12,5 +13,9 @@
+     override fun onCreate() {
+         super.onCreate()
+         engine = TripEngine(this)
++        // فحصُ أرشيفات الخرائط يبدأ الآن لا عند فتح تبويب الرحلات: المسح يقع على
++        // خيط الإدخال/الإخراج، فحين يفتح المستعمل خريطةً أوّل مرّة يكون الجواب جاهزًا
++        // ولا تُطلب بلاطةٌ من الإنترنت ريثما نعرف أنّ عندنا نسخةً محلّيّة.
++        OfflineMaps.of(this)
+     }
+ }
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
 @@ -6,8 +6,12 @@
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.Job
@@ -996,9 +2305,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
      /** تُنادى لحظة بدء التسجيل فعليًا، على نفس محور زمن عيّنات الموقع */
      fun markVideoStart() = recorder.markVideoStart(SystemClock.elapsedRealtimeNanos())
  
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -4,8 +4,10 @@
  import android.annotation.SuppressLint
  import android.content.Context
@@ -1761,9 +3070,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        const val MILLIS_PER_MINUTE = 60_000L
      }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -0,0 +1,171 @@
 +package net.gnutux.speedometer.core.camera
 +
@@ -1936,9 +3245,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +    val gaugeValueBox: Float = gaugeValueText * HudMetrics.FONT_BOX
 +    val gaugeUnitBox: Float = gaugeUnitText * HudMetrics.FONT_BOX
 +}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -7,10 +7,36 @@
  import android.graphics.PorterDuff
  import android.graphics.RectF
@@ -2699,9 +4008,323 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        val ARABIC: Locale = Locale.forLanguageTag("ar")
      }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
+@@ -0,0 +1,310 @@
++package net.gnutux.speedometer.core.map
++
++import android.content.Context
++import android.os.Environment
++import androidx.annotation.StringRes
++import java.io.File
++import java.util.concurrent.atomic.AtomicBoolean
++import kotlin.math.PI
++import kotlin.math.asinh
++import kotlin.math.floor
++import kotlin.math.tan
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import net.gnutux.speedometer.R
++import org.osmdroid.config.Configuration
++import org.osmdroid.tileprovider.MapTileProviderArray
++import org.osmdroid.tileprovider.MapTileProviderBase
++import org.osmdroid.tileprovider.MapTileProviderBasic
++import org.osmdroid.tileprovider.modules.ArchiveFileFactory
++import org.osmdroid.tileprovider.modules.IArchiveFile
++import org.osmdroid.tileprovider.modules.MapTileApproximater
++import org.osmdroid.tileprovider.modules.MapTileFileArchiveProvider
++import org.osmdroid.tileprovider.modules.MapTileSqlCacheProvider
++import org.osmdroid.tileprovider.tilesource.FileBasedTileSource
++import org.osmdroid.tileprovider.tilesource.ITileSource
++import org.osmdroid.tileprovider.tilesource.TileSourceFactory
++import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
++import org.osmdroid.util.MapTileIndex
++
++/**
++ * الخرائط دون اتّصال: أين تُوضع، وكيف تُكتشف، ومتى تُقدَّم على بلاطات الإنترنت.
++ *
++ * القاعدة التي يفرضها هذا الملفّ: **البيانات المحلّيّة تسبق دائمًا حين تغطّي الموضع**،
++ * والإنترنت بديلٌ لا أصل. الراكب يخرج من التغطية كثيرًا، وكلّ بلاطةٍ تُجلب تُستهلك
++ * حزمةً وبطّاريّة.
++ *
++ * ثلاثة قرارات تفسّر شكل الملفّ:
++ *
++ * — **المجلّد**: `Android/data/<الحزمة>/files/maps`. وهو الموضع الوحيد على أندرويد 10
++ *   فما فوق الذي نقرؤه بـ `java.io.File` بلا إذنٍ البتّة؛ والأرشيف يُفتح ملفًّا حقيقيًّا
++ *   لا `Uri`، فمكتبة الوسائط لا تنفع هنا كما تنفع للفيديو في [net.gnutux.speedometer.core.media.MediaRepository].
++ *   ويُفحص معه مجلّدان عامّان (`Documents/GT-SPEEDOMETER` و`Download/GT-SPEEDOMETER`)
++ *   لأنّهما يعملان على أندرويد 9 فما دون وحيثما مُنح التطبيق وصولًا كاملًا؛ فحصهما
++ *   بلا إذنٍ يُرجع فراغًا ولا يُسقط شيئًا.
++ *
++ * — **الكشف**: مسحٌ على [Dispatchers.IO] لا على الخيط الرئيس، ونتيجته [StateFlow]
++ *   واحدة تراها الإعدادات والخريطة معًا فلا يختلف جوابان عن سؤالٍ واحد.
++ *
++ * — **الاختيار**: وجود الأرشيف لا يكفي؛ نتحقّق أنّه يغطّي موضع الرحلة فعلًا عبر
++ *   [covers]. أرشيف مدينةٍ أخرى يعني خريطةً رماديّة صمّاء، وهذا أسوأ من بلاطة إنترنت.
++ */
++class OfflineMaps private constructor(context: Context) {
++
++    private val app = context.applicationContext
++
++    /** نطاق يعيش بعمر العمليّة: المسح لا يتبع شاشةً بعينها، والإعدادات والخريطة تشتركان فيه */
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++
++    private val _library = MutableStateFlow(OfflineMapLibrary())
++
++    /** نتيجة آخر مسح. قيمتها الأولى `scanned = false`، أي «لم نسأل القرص بعد» لا «لا يوجد» */
++    val library: StateFlow<OfflineMapLibrary> = _library.asStateFlow()
++
++    /** مسحان متزامنان يقرآن المجلّد نفسه بلا فائدة، فالثاني يُهمَل ما دام الأوّل جاريًا */
++    private val scanning = AtomicBoolean(false)
++
++    /**
++     * إعادة الفحص. تُنادى مرّةً عند أوّل استعمال، ثمّ كلّما ضغط المستعمل «إعادة الفحص»
++     * بعد نسخ ملفٍّ جديد — فمجلّد التطبيق لا يُبلّغنا بتغيّره.
++     */
++    fun rescan() {
++        if (!scanning.compareAndSet(false, true)) return
++        scope.launch {
++            try {
++                // التهيئة هنا لا عند إنشاء الخريطة: `Configuration.load` يقرأ تفضيلات
++                // مشتركة من القرص، ولا يجوز أن يقع ذلك على الخيط الرئيس قبل أوّل إطار.
++                ensureConfigured(app)
++                _library.value = scanNow()
++            } finally {
++                scanning.set(false)
++            }
++        }
++    }
++
++    private fun scanNow(): OfflineMapLibrary {
++        val primary = primaryFolder(app)
++        val shared = publicFolders()
++        val folders = listOf(primary) + shared
++
++        // الامتدادات المقبولة تُسأل عنها المكتبة لحظتها ولا تُكتب عندنا: قائمةٌ مكتوبة
++        // بأيدينا تتخلّف عن أيّ صيغةٍ تضيفها osmdroid لاحقًا، أو تَعِد بما لا تفي به.
++        val supported = runCatching { ArchiveFileFactory.getRegisteredExtensions() }
++            .getOrNull().orEmpty()
++
++        val found = folders
++            .flatMap { dir -> dir.listFiles().orEmpty().asIterable() }
++            .filter { it.isFile && it.length() > 0 && it.extension.lowercase() in supported }
++            // الامتداد وعدٌ لا برهان: نفتح الأرشيف فعلًا ونغلقه، فلا يظهر في الإعدادات
++            // ملفٌّ تالفٌ أو منقوصُ النسخ على أنّه خريطةٌ جاهزة.
++            .filter { file ->
++                val archive = runCatching { ArchiveFileFactory.getArchiveFile(file) }.getOrNull()
++                archive?.also { runCatching { it.close() } } != null
++            }
++            .sortedBy { it.name }
++
++        return OfflineMapLibrary(
++            folderPath = primary.absolutePath,
++            altFolderPath = shared.firstOrNull()?.absolutePath.orEmpty(),
++            files = found,
++            scanned = true,
++        )
++    }
++
++    /**
++     * هل تغطّي الأرشيفات هذه المواضع كلَّها؟
++     *
++     * السؤال لازم لأنّ «يوجد أرشيف» لا يعني «يوجد بلاطٌ هنا»: أرشيفُ مدينةٍ أخرى
++     * يُخرج خريطةً رماديّة صمّاء، وهي أسوأ من بلاطة إنترنت.
++     *
++     * نجسّ بلاطة كلّ موضعٍ على سلّم تكبيرٍ نازل: إصابةُ مستوًى واحد تكفي، لأنّ
++     * [MapTileApproximater] يكبّر البلاطة الأدنى ليملأ ما فوقها — فالتغطية بمستوًى
++     * واحد تعني صورةً باهتة لا فراغًا. والحكم `all` لا `any`: طرفُ رحلةٍ خارج الأرشيف
++     * يعني فراغًا يراه المستعمل بمجرّد أن يُزيح إصبعه.
++     */
++    suspend fun covers(positions: List<Pair<Double, Double>>): Boolean = withContext(Dispatchers.IO) {
++        if (positions.isEmpty()) return@withContext false
++        val archives = _library.value.files
++            .mapNotNull { runCatching { ArchiveFileFactory.getArchiveFile(it) }.getOrNull() }
++        if (archives.isEmpty()) return@withContext false
++        // الجسّ يستعمل عين المصدر الذي سيستعمله الرسم، وإلّا حكمنا بعدم التغطية على
++        // أرشيفٍ يغطّي فعلًا — أو بالعكس
++        val probe = tileSourceFor(archives)
++        try {
++            archives.forEach { it.setIgnoreTileSource(true) }
++            positions.all { (latitude, longitude) ->
++                archives.any { archive ->
++                    PROBE_ZOOMS.any { zoom ->
++                        val index = MapTileIndex.getTileIndex(
++                            zoom,
++                            tileX(longitude, zoom),
++                            tileY(latitude, zoom),
++                        )
++                        val stream = runCatching { archive.getInputStream(probe, index) }.getOrNull()
++                        stream?.use { true } ?: false
++                    }
++                }
++            }
++        } finally {
++            archives.forEach { runCatching { it.close() } }
++        }
++    }
++
++    /**
++     * مزوّد البلاطات المطابق للمصدر المطلوب.
++     *
++     * في الحالة المحلّيّة نبني [MapTileProviderArray] بأيدينا بدل [org.osmdroid.tileprovider.modules.OfflineTileProvider]
++     * الجاهز: الجاهز أرشيفٌ محض، وما نحتاجه سلسلةٌ من ثلاث حلقات — الأرشيف أوّلًا،
++     * ثمّ ذاكرة البلاطات المحفوظة من جلساتٍ سابقة، ثمّ التكبير التقريبيّ من مستوًى
++     * أدنى. الحلقتان الأخيرتان لا تمسّان الشبكة، وهما ما يمنع الفراغ الرماديّ حين
++     * يملك الأرشيف المدينة بمستوًى واحدٍ لا بكلّ المستويات.
++     */
++    fun providerFor(wanted: MapSource): MapTileProviderBase {
++        ensureConfigured(app)
++        val online = TileSourceFactory.MAPNIK
++
++        if (wanted == MapSource.ONLINE) return MapTileProviderBasic(app, online)
++
++        val archives: Array<IArchiveFile> = _library.value.files
++            .mapNotNull { runCatching { ArchiveFileFactory.getArchiveFile(it) }.getOrNull() }
++            .onEach {
++                // الأرشيف يخزّن البلاط تحت اسم مصدرٍ لا نعرفه سلفًا (اسم من صنع أداة
++                // التصدير)، ومطابقة الاسم كانت تُرجع خريطةً فارغة من ملفٍّ سليم.
++                it.setIgnoreTileSource(true)
++            }
++            .toTypedArray()
++
++        if (archives.isEmpty()) return MapTileProviderBasic(app, online)
++
++        val tileSource = tileSourceFor(archives.asList())
++
++        val receiver = SimpleRegisterReceiver(app)
++        val archiveProvider = MapTileFileArchiveProvider(receiver, tileSource, archives)
++        val cacheProvider = MapTileSqlCacheProvider(receiver, tileSource)
++        val approximater = MapTileApproximater().apply {
++            addProvider(archiveProvider)
++            addProvider(cacheProvider)
++        }
++        return MapTileProviderArray(
++            tileSource,
++            receiver,
++            arrayOf(archiveProvider, cacheProvider, approximater),
++        )
++    }
++
++    /**
++     * المصدر الذي يفهمه الأرشيف.
++     *
++     * شجرة بلاطٍ مضغوطة تُخزّن ملفّاتها تحت «اسم المصدر/z/x/y.png»، ولا ينفع معها
++     * تجاهل الاسم لأنّ المسار نفسه مبنيٌّ عليه؛ فنسأل الأرشيف عن الاسم الذي بداخله
++     * ونبني منه مصدرًا ملفّيًّا. أمّا mbtiles و sqlite فتُجيب بلا شيء وتعمل بالتجاهل،
++     * فيبقى [TileSourceFactory.MAPNIK] مجرّد مفتاحٍ صوريّ لا يُطلب من الشبكة.
++     */
++    private fun tileSourceFor(archives: List<IArchiveFile>): ITileSource {
++        val declared = archives.firstNotNullOfOrNull { archive ->
++            runCatching { archive.tileSources }.getOrNull()
++                ?.firstOrNull { !it.isNullOrBlank() }
++        }
++        return declared?.let { FileBasedTileSource.getSource(it) } ?: TileSourceFactory.MAPNIK
++    }
++
++    @Suppress("DEPRECATION")
++    private fun publicFolders(): List<File> = runCatching {
++        listOf(
++            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), BRAND_DIR),
++            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), BRAND_DIR),
++        )
++    }.getOrDefault(emptyList())
++
++    companion object {
++        private const val BRAND_DIR = "GT-SPEEDOMETER"
++        private const val MAPS_DIR = "maps"
++
++        /** سلّم الجسّ نازل: أعلى مستوًى يُصيب يكفي، وما دونه يكفي بالتقريب */
++        private val PROBE_ZOOMS = listOf(16, 14, 12, 10, 8, 6, 4)
++
++        @Volatile
++        private var instance: OfflineMaps? = null
++
++        /**
++         * النسخة الوحيدة. المكان الأصحّ لإنشائها ولإطلاق أوّل مسحٍ هو
++         * `SpeedoApp.onCreate` مع سائر الحقن اليدويّ، وهو خارج نطاق هذا التغيير؛
++         * فالمسح يبدأ عند أوّل من يسأل — الخريطة أو الإعدادات أو سجلّ الرحلات —
++         * وكلّه قبل أن يرى المستعمل بلاطةً واحدة.
++         */
++        fun of(context: Context): OfflineMaps =
++            instance ?: synchronized(this) {
++                instance ?: OfflineMaps(context).also {
++                    it.rescan()
++                    instance = it
++                }
++            }
++
++        /** `Android/data/<الحزمة>/files/maps` — نفس نمط `tracks` في محرّك الرحلات */
++        fun primaryFolder(context: Context): File =
++            File(context.getExternalFilesDir(null), MAPS_DIR).apply { runCatching { mkdirs() } }
++
++        private val configured = AtomicBoolean(false)
++
++        /**
++         * تهيئة osmdroid: وكيل مستخدمٍ باسم الحزمة كما تشترط OSM، وذاكرة بلاطاتٍ
++         * داخل مخبأ التطبيق لا في جذر التخزين. تسبق أوّل `MapView` وأوّل مزوّد،
++         * لأنّ كليهما يفتح قاعدة البلاطات على المسار الساري لحظتَه.
++         */
++        fun ensureConfigured(context: Context) {
++            if (!configured.compareAndSet(false, true)) return
++            val app = context.applicationContext
++            val config = Configuration.getInstance()
++            config.load(app, app.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
++
++            val base = File(app.cacheDir, "osmdroid").apply { runCatching { mkdirs() } }
++            config.osmdroidBasePath = base
++            config.osmdroidTileCache = File(base, "tiles").apply { runCatching { mkdirs() } }
++            config.userAgentValue = app.packageName
++        }
++
++        /** إحداثيّات البلاطة في شبكة Web Mercator القياسيّة (XYZ) */
++        private fun tileX(longitude: Double, zoom: Int): Int {
++            val n = 1 shl zoom
++            val x = floor((longitude + 180.0) / 360.0 * n).toInt()
++            return x.coerceIn(0, n - 1)
++        }
++
++        private fun tileY(latitude: Double, zoom: Int): Int {
++            val n = 1 shl zoom
++            val lat = latitude.coerceIn(-85.05112878, 85.05112878)
++            val y = floor((1.0 - asinh(tan(lat * PI / 180.0)) / PI) / 2.0 * n).toInt()
++            return y.coerceIn(0, n - 1)
++        }
++    }
++}
++
++/** مصدر البلاطات الحيّ. يُعرض على الخريطة نفسها كي تُشخَّص خريطةٌ فارغة بنظرة. */
++enum class MapSource(@StringRes val label: Int) {
++    OFFLINE(R.string.map_source_offline),
++    ONLINE(R.string.map_source_online),
++}
++
++/**
++ * حصيلة المسح.
++ *
++ * [scanned] تفصل «لم نسأل بعد» عن «سألنا فلم نجد»: الخريطة تنتظر الجواب بدل أن تفترض
++ * الإنترنت ثمّ تتراجع — وافتراضٌ خاطئٌ لثانية يعني بلاطاتٍ مُنزَّلة بلا حاجة.
++ */
++data class OfflineMapLibrary(
++    val folderPath: String = "",
++    val altFolderPath: String = "",
++    val files: List<File> = emptyList(),
++    val scanned: Boolean = false,
++) {
++    val hasArchives: Boolean get() = files.isNotEmpty()
++
++    /** أسماء الملفّات للعرض في الإعدادات؛ المسار الكامل لا يُقرأ على شاشة هاتف */
++    val names: String get() = files.joinToString("، ") { it.name }
++}
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
+--- a/v0.3.0-beta
++++ b/v0.5.0-beta
 @@ -16,6 +16,7 @@
  import androidx.camera.video.Recorder
  import androidx.core.content.FileProvider
@@ -2762,10 +4385,10 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
      fun saveImage(bitmap: Bitmap, name: String): Uri? =
          if (useMediaStore) {
              val values = ContentValues().apply {
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
-@@ -0,0 +1,145 @@
++++ b/v0.5.0-beta
+@@ -0,0 +1,160 @@
 +package net.gnutux.speedometer.core.settings
 +
 +import android.content.Context
@@ -2884,6 +4507,20 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +    val invertMapTiles: StateFlow<Boolean> = pref(KEY_INVERT_TILES, true)
 +    fun setInvertMapTiles(enabled: Boolean) = put(KEY_INVERT_TILES, enabled)
 +
++    /**
++     * تفضيل الخريطة المحلّيّة على بلاطات الإنترنت.
++     *
++     * مفعَّلٌ افتراضًا لأنّ الراكب يخرج من التغطية أكثر ممّا يبقى فيها، وكلّ بلاطةٍ
++     * تُجلب تُستهلك حزمةً وبطّاريّة. وبقي خيارًا لأنّ الأرشيف يتقادم: من يريد شارعًا
++     * شُقّ بعد تاريخ ملفّه يُطفئه فيعود إلى بلاطاتٍ حيّة.
++     *
++     * إطفاؤه لا يعني «إنترنت أفضل» بل «إنترنت دائمًا»؛ وتفعيله لا يعني «محلّيّة
++     * دائمًا» بل «محلّيّة حيث تغطّي» — والتحقّق من التغطية في
++     * [net.gnutux.speedometer.core.map.OfflineMaps.covers].
++     */
++    val preferOfflineMaps: StateFlow<Boolean> = pref(KEY_PREFER_OFFLINE, true)
++    fun setPreferOfflineMaps(enabled: Boolean) = put(KEY_PREFER_OFFLINE, enabled)
++
 +    /** مهلة التراجع عن الحذف بالثواني؛ صفر يعني حذفًا فوريًّا */
 +    val undoSeconds: StateFlow<Int> = pref(KEY_UNDO_SECONDS, DEFAULT_UNDO_SECONDS)
 +    fun setUndoSeconds(seconds: Int) = put(KEY_UNDO_SECONDS, seconds.coerceIn(0, 60))
@@ -2908,12 +4545,13 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        private val KEY_SEGMENT = intPreferencesKey("video_segment_minutes")
 +        private val KEY_AUTO_TRIP = booleanPreferencesKey("auto_trip_with_recording")
 +        private val KEY_INVERT_TILES = booleanPreferencesKey("invert_map_tiles")
++        private val KEY_PREFER_OFFLINE = booleanPreferencesKey("prefer_offline_maps")
 +        private val KEY_UNDO_SECONDS = intPreferencesKey("undo_seconds")
 +    }
 +}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -0,0 +1,31 @@
 +package net.gnutux.speedometer.core.settings
 +
@@ -2946,9 +4584,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        fun from(id: String?): ThemeMode = entries.firstOrNull { it.id == id } ?: DEFAULT
 +    }
 +}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -22,6 +22,8 @@
      val name: String,
      val startMs: Long,
@@ -3006,9 +4644,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
          )
      }.getOrNull()
  
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -40,6 +40,7 @@
          trackStartNanos: Long?,
          videoFileName: String? = null,
@@ -3040,9 +4678,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              sb.append("    </extensions>\n")
          }
          sb.append("  </metadata>\n")
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -1,6 +1,7 @@
  package net.gnutux.speedometer.core.trip
  
@@ -3187,9 +4825,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              movingTimeMs = moving,
              maxSpeedMps = max(current.maxSpeedMps, smoothedMps),
              pointCount = _points.size,
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -31,7 +31,12 @@
          when (engine.recorder.state.value.status) {
              TripStatus.RUNNING, TripStatus.PAUSED -> {
@@ -3204,9 +4842,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              }
  
              TripStatus.IDLE, TripStatus.FINISHED -> {
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -11,22 +11,38 @@
  import androidx.lifecycle.LifecycleService
  import androidx.lifecycle.lifecycleScope
@@ -3458,9 +5096,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        const val SEPARATOR = " · "
      }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -24,4 +24,10 @@
      }
  
@@ -3472,9 +5110,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +    /** ساعة الجدار بخانتين: 06 لا 6، كي تستوي أعمدة الاختيار */
 +    fun hour(value: Int): String = String.format(Locale.US, "%02d", value)
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -7,7 +7,11 @@
  import androidx.core.content.ContextCompat
  import androidx.lifecycle.AndroidViewModel
@@ -3725,115 +5363,224 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        }
      }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
-@@ -1,13 +1,28 @@
++++ b/v0.5.0-beta
+@@ -1,99 +1,285 @@
  package net.gnutux.speedometer.ui.components
  
- import android.content.Context
+-import android.content.Context
 +import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.padding
 +import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
  import androidx.compose.runtime.Composable
  import androidx.compose.runtime.DisposableEffect
 +import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.key
++import androidx.compose.runtime.produceState
 +import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
  import androidx.compose.ui.Modifier
 +import androidx.compose.ui.draw.clip
 +import androidx.compose.ui.graphics.toArgb
  import androidx.compose.ui.platform.LocalContext
 +import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.text.font.FontWeight
 +import androidx.compose.ui.unit.dp
  import androidx.compose.ui.viewinterop.AndroidView
 +import androidx.lifecycle.Lifecycle
 +import androidx.lifecycle.LifecycleEventObserver
 +import androidx.lifecycle.compose.LocalLifecycleOwner
-+import java.io.File
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
 +import java.util.concurrent.atomic.AtomicBoolean
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.isActive
++import kotlinx.coroutines.withContext
 +import net.gnutux.speedometer.R
++import net.gnutux.speedometer.core.map.MapSource
++import net.gnutux.speedometer.core.map.OfflineMaps
  import net.gnutux.speedometer.core.trip.TrackPoint
  import net.gnutux.speedometer.ui.theme.Accent
+-import org.osmdroid.config.Configuration
+-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
++import net.gnutux.speedometer.ui.theme.AccentDim
++import net.gnutux.speedometer.ui.theme.Bg
 +import net.gnutux.speedometer.ui.theme.SurfaceHigh
- import org.osmdroid.config.Configuration
- import org.osmdroid.tileprovider.tilesource.TileSourceFactory
++import org.osmdroid.tileprovider.MapTileProviderBase
  import org.osmdroid.util.BoundingBox
-@@ -16,84 +31,151 @@
+ import org.osmdroid.util.GeoPoint
+ import org.osmdroid.views.MapView
  import org.osmdroid.views.overlay.Marker
  import org.osmdroid.views.overlay.Polyline
  import org.osmdroid.views.overlay.TilesOverlay
 -import java.io.File
 +
 +// خريطة المسار المحفوظ. اخترنا osmdroid لأنّ القاعدة تمنع خدمات Google،
-+// وبلاطات OSM تُجلب مباشرة دون أيّ SDK مغلق.
++// ولأنّها الوحيدة التي تقرأ أرشيفات البلاط المحلّيّة (mbtiles وأخواتها) مباشرة.
 +//
-+// الخريطة عرض Android تقليديّ ذو دورة حياة خاصّة به، فثلاثة قيود تحكم هذا الملفّ:
-+// — تهيئة osmdroid تسبق أوّل `MapView`، لأنّ مُنشئه يفتح قاعدة ذاكرة البلاطات فورًا.
++// الخريطة عرض Android تقليديّ ذو دورة حياة خاصّة به، فأربعة قيود تحكم هذا الملفّ:
++// — لا يُنشأ [MapView] قبل أن يُحسم المصدر: مُنشئه يبني مزوّدًا شبكيًّا افتراضيًّا،
++//   فإنشاؤه ثمّ تبديل مزوّده كان يعني بلاطاتٍ تُنزَّل في اللحظة التي نريد فيها ألّا
++//   يُلمس الإنترنت أصلًا.
 +// — لا شيء يمسّ التكبير بعد أوّل ملاءمة، فتبقى حركة المستعمل ملكه.
 +// — الاستئناف والإيقاف والتحرير تُشتقّ من دورة حياة المالك لا من إعادة التأليف.
++// — المصدر الحيّ يُكتب على الخريطة نفسها: خريطةٌ فارغة يجب أن تُشخَّص بنظرة، لا أن
++//   تُترك للمستعمل يظنّ التطبيق معطوبًا.
 +
 +/** الزوايا مستديرة داخل المُركّب نفسه كي لا تطغى البلاطات المربّعة على أيّ موضع استعمال */
 +private val MapShape = RoundedCornerShape(16.dp)
++
++/** المزوّد ومصدرُه معًا: تبديل أحدهما دون الآخر يعني شارةً تكذب على ما يُرسم */
++private class MapBinding(val source: MapSource, val provider: MapTileProviderBase)
  
  /**
 - * خريطة مسار الرحلة بـ osmdroid (رخصة Apache 2.0) على بلاطات OpenStreetMap.
-+ * يرسم مسار الرحلة فوق بلاطات OSM.
++ * يرسم مسار الرحلة فوق بلاطات محلّيّة إن وُجدت، وإلّا فوق بلاطات OSM.
   *
 - * البلاطات تُخزَّن في ذاكرة التطبيق المؤقّتة، فالمسار الذي فُتح مرّةً يُعرض بعدها
 - * دون إنترنت. ولو لم تصل بلاطة قطّ بقي الخطّ مرسومًا على خلفيّة فارغة — المسار
 - * نفسه لا يعتمد على الشبكة.
 + * @param points نقاط المسار كما قرأها [net.gnutux.speedometer.core.trip.GpxReader].
 + * @param invertTiles قلب ألوان البلاطات؛ يليق بالسمة الداكنة ويُتعب العين في الفاتحة.
++ * @param preferOffline تفضيل الأرشيف المحلّيّ على الإنترنت متى غطّى موضع الرحلة.
 + * @param modifier القياس يأتي من المُستدعي؛ [MapView] نفسه لا يفرض ارتفاعًا.
   */
  @Composable
 -fun RouteMap(points: List<TrackPoint>, modifier: Modifier = Modifier) {
-+fun RouteMap(points: List<TrackPoint>, invertTiles: Boolean, modifier: Modifier = Modifier) {
++fun RouteMap(
++    points: List<TrackPoint>,
++    invertTiles: Boolean,
++    preferOffline: Boolean,
++    modifier: Modifier = Modifier,
++) {
++    val context = LocalContext.current
++    val backdrop = SurfaceHigh
++
++    // أوّل من يسأل يُطلق المسح. المكان الأصحّ `SpeedoApp.onCreate`، وهو خارج نطاق
++    // هذا التغيير؛ والمسح على أيّ حال يقع على خيط قرصٍ لا على الخيط الرئيس.
++    val offlineMaps = remember(context) { OfflineMaps.of(context) }
++    val library by offlineMaps.library.collectAsStateWithLifecycle()
++
++    // ثلاثة مواضع لا موضعٌ واحد: البداية والوسط والنهاية. أرشيفٌ يغطّي المنطلق دون
++    // المقصد يُخرج نصف خريطةٍ ونصف فراغ، وهو ما لا يجوز أن يُعرض على أنّه «محلّيّة».
++    val probes = remember(points) {
++        if (points.isEmpty()) {
++            emptyList()
++        } else {
++            listOf(points.first(), points[points.size / 2], points.last())
++                .map { it.latitude to it.longitude }
++        }
++    }
++
++    // القرار كلّه خارج الخيط الرئيس: جسّ التغطية يفتح قواعد sqlite، وبناء المزوّد
++    // يفتحها ثانيةً. وقيمته الأولى `null` تعني «لم يُحسم بعد» لا «إنترنت»، فلا تُنزَّل
++    // بلاطةٌ واحدة قبل أن نعرف أنّ المحلّيّة لا تكفي.
++    val binding by produceState<MapBinding?>(null, library, preferOffline, probes, offlineMaps) {
++        if (!library.scanned) {
++            value = null
++            return@produceState
++        }
++        val useOffline = preferOffline && library.hasArchives && offlineMaps.covers(probes)
++        val source = if (useOffline) MapSource.OFFLINE else MapSource.ONLINE
++        val provider = withContext(Dispatchers.IO) { offlineMaps.providerFor(source) }
++        // إلغاءٌ يقع بين بناء المزوّد وإسناده يترك قواعد sqlite مفتوحةً بلا مالكٍ
++        // يُغلقها: لا `MapView` سيستلمه، ولا `onDetach` سيُنادى عليه.
++        if (!isActive) {
++            provider.detach()
++            return@produceState
++        }
++        value = MapBinding(source, provider)
++    }
++
++    Box(
++        modifier
++            .clip(MapShape)
++            .background(backdrop, MapShape)
++    ) {
++        val current = binding
++        if (current != null) {
++            // `key` لا `remember` وحده: `AndroidView` يمسك عرضه مدى حياة عقدته، فتبديل
++            // المزوّد بعد رصدِ ملفٍّ جديد يحتاج عقدةً جديدة لا وسمًا جديدًا.
++            key(current) {
++                RouteMapSurface(
++                    points = points,
++                    invertTiles = invertTiles,
++                    binding = current,
++                    modifier = Modifier.matchParentSize(),
++                )
++            }
++            MapSourceBadge(
++                source = current.source,
++                modifier = Modifier
++                    .align(Alignment.TopStart)
++                    .padding(8.dp),
++            )
++        }
++    }
++}
++
++/** شارة المصدر الحيّ: سطرٌ واحد يفصل «الأرشيف لا يغطّي هنا» عن «التطبيق معطوب» */
++@Composable
++private fun MapSourceBadge(source: MapSource, modifier: Modifier = Modifier) {
++    Text(
++        text = stringResource(source.label),
++        style = MaterialTheme.typography.labelSmall.copy(
++            color = Bg,
++            fontWeight = FontWeight.Bold,
++        ),
++        modifier = modifier
++            .background(Accent, RoundedCornerShape(8.dp))
++            .padding(horizontal = 8.dp, vertical = 4.dp),
++    )
++}
++
++/** [MapView] وحدها: تُنشأ بمزوّدٍ محسوم، وتموت بموت عقدتها. */
++@Composable
++private fun RouteMapSurface(
++    points: List<TrackPoint>,
++    invertTiles: Boolean,
++    binding: MapBinding,
++    modifier: Modifier = Modifier,
++) {
      val context = LocalContext.current
 +    val lifecycleOwner = LocalLifecycleOwner.current
  
 -    DisposableEffect(Unit) {
+-        configureOsmdroid(context)
+-        onDispose { }
 +    // ألوان السمة ونصوص الموارد تُقرأ داخل التركيب وحده، فتُرفع إلى متغيّرات محلّية
 +    // تلتقطها لامبدا `update` غير المُركّبة. و`toArgb` لا `value.toInt()`: القيمة
 +    // المعبّأة 64-بت تُقتطع إلى صفر، فيخرج الخطّ شفّافًا تمامًا.
 +    val routeColor = Accent.toArgb()
-+    val backdrop = SurfaceHigh
++    val voidColor = SurfaceHigh.toArgb()
++    val voidGridColor = AccentDim.toArgb()
 +    val startTitle = stringResource(R.string.map_start)
 +    val endTitle = stringResource(R.string.map_end)
 +
-+    // التهيئة داخل كتلة إنشاء العرض نفسها: هذا وحده يضمن سبقها للمُنشئ. لو تُركت
-+    // في تأثيرٍ جانبيّ لجرت بعد `factory`، وقد فتح المُنشئ حينها ذاكرة البلاطات
-+    // على المسار الافتراضيّ خارج مجلّد التطبيق.
-+    val map = remember(context) {
-         configureOsmdroid(context)
--        onDispose { }
-+        MapView(context).apply {
-+            setTileSource(TileSourceFactory.MAPNIK)
++    // المزوّد يُمرَّر إلى المُنشئ لا بعده: `MapView(context)` وحده يبني مزوّدًا شبكيًّا
++    // ويفتح ذاكرة بلاطاته فورًا، وهو ما نتجنّبه في الوضع المحلّيّ.
++    val map = remember(context, binding) {
++        MapView(context, binding.provider).apply {
 +            setMultiTouchControls(true)
-+            setUseDataConnection(true)
++            // القطع صريح في الوضع المحلّيّ: المزوّد بلا وحدة تنزيل أصلًا، وهذه
++            // طبقة أمانٍ ثانية تمنع أيّ وحدةٍ شبكيّة تُضاف لاحقًا من الانفلات.
++            setUseDataConnection(binding.source == MapSource.ONLINE)
 +        }
-     }
- 
--    AndroidView(
--        modifier = modifier,
--        factory = { ctx ->
--            MapView(ctx).apply {
--                setTileSource(TileSourceFactory.MAPNIK)
--                setMultiTouchControls(true)
--                // قلب ألوان البلاطات: خريطة داكنة تُناسب سمة التطبيق ولا تُبهر ليلًا
--                overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
--                setUseDataConnection(true)
-+    // `onDetach` يوقف خيوط جلب البلاطات ويحرّر ذاكرتها. يُستدعى من `onDispose`
-+    // ومن `onRelease` معًا، وقد يجتمعان، فالراية تمنع تحريرًا مزدوجًا.
++    }
++
++    // `onDetach` يوقف خيوط جلب البلاطات ويحرّر ذاكرتها والأرشيفات المفتوحة. يُستدعى
++    // من `onDispose` ومن `onRelease` معًا، وقد يجتمعان، فالراية تمنع تحريرًا مزدوجًا.
 +    val detached = remember(map) { AtomicBoolean(false) }
 +    val detachOnce = remember(map) {
 +        {
 +            if (detached.compareAndSet(false, true)) {
 +                map.onPause()
 +                map.onDetach()
-             }
--        },
--        update = { map ->
--            map.overlays.removeAll { it is Polyline || it is Marker }
++            }
 +        }
 +    }
 +
@@ -3864,17 +5611,30 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        // القياس الفعليّ للعرض شرط الملاءمة، فنؤجّلها إلى ما بعد أوّل تخطيط عبر post،
 +        // ونلفّها بـ runCatching لأنّها ترمي إن كان الصندوق منحلًّا.
 +        map.post { runCatching { map.zoomToBoundingBox(box.increaseByScale(1.25f), false) } }
-+    }
-+
-+    AndroidView(
+     }
+ 
+     AndroidView(
 +        factory = { map },
-+        modifier = modifier
-+            .clip(MapShape)
-+            .background(backdrop, MapShape),
+         modifier = modifier,
+-        factory = { ctx ->
+-            MapView(ctx).apply {
+-                setTileSource(TileSourceFactory.MAPNIK)
+-                setMultiTouchControls(true)
+-                // قلب ألوان البلاطات: خريطة داكنة تُناسب سمة التطبيق ولا تُبهر ليلًا
+-                overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
+-                setUseDataConnection(true)
+-            }
+-        },
+-        update = { map ->
+-            map.overlays.removeAll { it is Polyline || it is Marker }
 +        update = { view ->
-+            view.overlayManager.tilesOverlay.setColorFilter(
-+                if (invertTiles) TilesOverlay.INVERT_COLORS else null
-+            )
++            val tiles = view.overlayManager.tilesOverlay
++            tiles.setColorFilter(if (invertTiles) TilesOverlay.INVERT_COLORS else null)
++
++            // بلاطةٌ لا مصدر لها تُرسم بلون سطح التطبيق وشبكةٍ خافتة بدل الرماديّ
++            // الأصمّ: الفراغ حينها يُقرأ «لا بيانات هنا» لا «الخريطة تعطّلت».
++            tiles.setLoadingBackgroundColor(voidColor)
++            tiles.setLoadingLineColor(voidGridColor)
 +
 +            // نمسح طبقاتنا وحدها كي لا نُتلف طبقة البلاطات التي يديرها osmdroid.
 +            view.overlays.removeAll { it is Polyline || it is Marker }
@@ -3933,27 +5693,19 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        onRelease = { detachOnce() },
      )
  }
- 
-+/** مسار البلاطات داخل الذاكرة المؤقّتة للتطبيق، ووكيل مستخدم باسم الحزمة كما تشترط OSM. */
- private fun configureOsmdroid(context: Context) {
-     val config = Configuration.getInstance()
-     config.load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
+-
+-private fun configureOsmdroid(context: Context) {
+-    val config = Configuration.getInstance()
+-    config.load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
 -    // مسار الذاكرة المؤقّتة داخل التطبيق: لا إذن تخزين ولا تلويث لذاكرة الجهاز
 -    config.osmdroidBasePath = File(context.cacheDir, "osmdroid").apply { mkdirs() }
 -    config.osmdroidTileCache = File(config.osmdroidBasePath, "tiles").apply { mkdirs() }
 -    // خوادم OSM ترفض الطلبات مجهولة الهوية
-+
-+    val base = File(context.cacheDir, "osmdroid").apply { mkdirs() }
-+    config.osmdroidBasePath = base
-+
-+    val tiles = File(config.osmdroidBasePath, "tiles").apply { mkdirs() }
-+    config.osmdroidTileCache = tiles
-+
-     config.userAgentValue = context.packageName
- }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+-    config.userAgentValue = context.packageName
+-}
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -69,8 +69,14 @@
      }
  
@@ -4014,9 +5766,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              start = Offset(center.x + cosA * inner, center.y + sinA * inner),
              end = Offset(center.x + cosA * outer, center.y + sinA * outer),
              strokeWidth = 2.dp.toPx(),
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -0,0 +1,168 @@
 +package net.gnutux.speedometer.ui.components
 +
@@ -4186,9 +5938,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        ),
 +    )
 +}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -8,32 +8,44 @@
  import android.view.PixelCopy
  import androidx.camera.view.PreviewView
@@ -5164,9 +6916,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        }
      }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -19,14 +19,17 @@
  import androidx.compose.ui.Modifier
  import androidx.compose.ui.res.stringResource
@@ -5316,9 +7068,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        )
      }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -0,0 +1,160 @@
 +package net.gnutux.speedometer.ui.screens
 +
@@ -5480,10 +7232,10 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        }
 +    }
 +}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
-@@ -0,0 +1,419 @@
++++ b/v0.5.0-beta
+@@ -0,0 +1,498 @@
 +package net.gnutux.speedometer.ui.screens
 +
 +import androidx.compose.foundation.background
@@ -5514,15 +7266,18 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +import androidx.compose.material3.Text
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.getValue
++import androidx.compose.runtime.remember
 +import androidx.compose.ui.Alignment
 +import androidx.compose.ui.Modifier
 +import androidx.compose.ui.draw.clip
++import androidx.compose.ui.platform.LocalContext
 +import androidx.compose.ui.res.stringResource
 +import androidx.compose.ui.text.font.FontWeight
 +import androidx.compose.ui.unit.dp
 +import androidx.lifecycle.compose.collectAsStateWithLifecycle
 +import net.gnutux.speedometer.BuildConfig
 +import net.gnutux.speedometer.R
++import net.gnutux.speedometer.core.map.OfflineMaps
 +import net.gnutux.speedometer.core.profile.VehicleProfile
 +import net.gnutux.speedometer.core.settings.AppSettings
 +import net.gnutux.speedometer.core.settings.ThemeMode
@@ -5557,8 +7312,15 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +    val segment by s.videoSegmentMinutes.collectAsStateWithLifecycle()
 +    val autoTrip by s.autoTripWithRecording.collectAsStateWithLifecycle()
 +    val invertTiles by s.invertMapTiles.collectAsStateWithLifecycle()
++    val preferOffline by s.preferOfflineMaps.collectAsStateWithLifecycle()
 +    val undoSeconds by s.undoSeconds.collectAsStateWithLifecycle()
 +    val profile by vm.profile.collectAsStateWithLifecycle()
++
++    // مصدر الحقيقة نفسه الذي تقرؤه الخريطة، فلا تقول الإعدادات «وُجدت» بينما ترسم
++    // الخريطة بلاطات إنترنت
++    val context = LocalContext.current
++    val offlineMaps = remember(context) { OfflineMaps.of(context) }
++    val offlineLibrary by offlineMaps.library.collectAsStateWithLifecycle()
 +
 +    Column(modifier.fillMaxSize()) {
 +        SettingsHeader(onClose)
@@ -5695,6 +7457,48 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +                        options = UNDO_CHOICES.map { undoLabel(it) },
 +                        selectedIndex = UNDO_CHOICES.indexOf(undoSeconds).coerceAtLeast(0),
 +                        onSelect = { s.setUndoSeconds(UNDO_CHOICES[it]) },
++                    )
++                }
++            }
++
++            // ===== الخرائط دون اتّصال =====
++            //
++            // قسمٌ قائم بذاته لا سطرٌ في «الخريطة والسجلّ»: هو المكان الوحيد الذي
++            // يُخبر المستعمل **أين** يضع ملفّه و**هل** رآه التطبيق. بلا هذين السطرين
++            // يصير الأمر تخمينًا، وملفٌّ لا يُعثر عليه كأنّه لم يُنسخ.
++            item { SectionTitle(stringResource(R.string.settings_section_offline)) }
++            item {
++                SettingCard {
++                    SwitchRow(
++                        title = stringResource(R.string.settings_offline_maps),
++                        note = stringResource(R.string.settings_offline_maps_note),
++                        checked = preferOffline,
++                        onChange = s::setPreferOfflineMaps,
++                    )
++                    RowLabel(
++                        title = if (offlineLibrary.hasArchives) {
++                            stringResource(
++                                R.string.settings_offline_status_found,
++                                offlineLibrary.names,
++                            )
++                        } else {
++                            stringResource(R.string.settings_offline_status_none)
++                        },
++                        // المسار يظهر بعد أوّل مسحٍ فقط: قراءته من القرص لا تقع على
++                        // الخيط الرئيس، فحتّى تصل نُبقي السطر فارغًا بدل مسارٍ مخمَّن
++                        note = offlineLibrary.folderPath
++                            .takeIf { it.isNotEmpty() }
++                            ?.let { stringResource(R.string.settings_offline_folder, it) },
++                    )
++                    if (offlineLibrary.altFolderPath.isNotEmpty()) {
++                        RowLabel(
++                            title = stringResource(R.string.settings_offline_folder_alt),
++                            note = offlineLibrary.altFolderPath,
++                        )
++                    }
++                    ActionRow(
++                        label = stringResource(R.string.settings_offline_rescan),
++                        onClick = offlineMaps::rescan,
 +                    )
 +                }
 +            }
@@ -5839,6 +7643,33 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +}
 +
 +/**
++ * صفّ فعلٍ بلا حالة: نصٌّ بلون التمييز داخل مساحة لمسٍ لا تقلّ عن 56dp (قاعدة 6).
++ *
++ * فُضّل على زرّ Material لأنّ البطاقة كلّها أسطرٌ متراصّة، وزرٌّ مؤطَّر وسطها يكسر
++ * الإيقاع البصريّ للقائمة.
++ */
++@Composable
++private fun ActionRow(label: String, onClick: () -> Unit) {
++    Box(
++        modifier = Modifier
++            .fillMaxWidth()
++            .defaultMinSize(minHeight = 56.dp)
++            .clip(RoundedCornerShape(12.dp))
++            .background(SurfaceHigh)
++            .clickable(onClick = onClick),
++        contentAlignment = Alignment.Center,
++    ) {
++        Text(
++            text = label,
++            style = MaterialTheme.typography.titleSmall.copy(
++                color = Accent,
++                fontWeight = FontWeight.Bold,
++            ),
++        )
++    }
++}
++
++/**
 + * صفّ اختيارٍ أفقيّ قابل للتمرير. فُضّل على قائمة منسدلة لأنّ الخيارات قليلة
 + * ومرئيّة دفعةً واحدة، والقائمة المنسدلة تحتاج ضغطتين ولمسًا دقيقًا.
 + */
@@ -5903,9 +7734,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        }
 +    }
 +}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -1,48 +1,60 @@
  package net.gnutux.speedometer.ui.screens
  
@@ -6179,9 +8010,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 -        }
 -    }
 -}
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -5,15 +5,19 @@
  import androidx.compose.foundation.background
  import androidx.compose.foundation.clickable
@@ -6202,7 +8033,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
  import androidx.compose.foundation.shape.RoundedCornerShape
  import androidx.compose.material.icons.Icons
  import androidx.compose.material.icons.automirrored.filled.ArrowBack
-@@ -28,17 +32,24 @@
+@@ -28,18 +32,26 @@
  import androidx.compose.runtime.Composable
  import androidx.compose.runtime.LaunchedEffect
  import androidx.compose.runtime.getValue
@@ -6225,9 +8056,11 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +import java.util.Locale
 +import kotlinx.coroutines.delay
  import net.gnutux.speedometer.R
++import net.gnutux.speedometer.core.map.OfflineMaps
  import net.gnutux.speedometer.core.trip.TripTrack
  import net.gnutux.speedometer.ui.Fmt
-@@ -48,63 +59,143 @@
+ import net.gnutux.speedometer.ui.SpeedoViewModel
+@@ -48,63 +60,148 @@
  import net.gnutux.speedometer.ui.theme.Surface
  import net.gnutux.speedometer.ui.theme.SurfaceHigh
  import net.gnutux.speedometer.ui.theme.TextSecondary
@@ -6246,6 +8079,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +/** قسم الرحلات المحفوظة: بطاقة لكلّ رحلة، ولمسةٌ تفتح تفصيلها مع الخريطة. */
  @Composable
  fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
++    val context = LocalContext.current
      val trips by vm.trips.collectAsStateWithLifecycle()
 +    val pendingDelete by vm.pendingTripDelete.collectAsStateWithLifecycle()
 +    val undoSeconds by vm.settings.undoSeconds.collectAsStateWithLifecycle()
@@ -6265,9 +8099,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 -        )
 -        return
 -    }
-+    // مهلة صفر تعني حذفًا فوريًّا، فلا شريط أصلًا حينها.
-+    val pending = pendingDelete?.takeIf { undoSeconds > 0 }
- 
+-
 -    if (trips.isEmpty()) {
 -        Column(
 -            modifier = modifier.padding(32.dp),
@@ -6278,6 +8110,13 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 -                text = stringResource(R.string.trips_empty),
 -                style = MaterialTheme.typography.titleMedium,
 -                textAlign = TextAlign.Center,
++    // تسخين مبكّر: أوّل نداءٍ لـ `of` يُطلق مسح مجلّد الخرائط على خيط قرص. نفعله عند
++    // فتح التبويب لا عند فتح الرحلة، كي يكون الجواب حاضرًا قبل أن تُطلب أوّل بلاطة.
++    LaunchedEffect(Unit) { OfflineMaps.of(context) }
++
++    // مهلة صفر تعني حذفًا فوريًّا، فلا شريط أصلًا حينها.
++    val pending = pendingDelete?.takeIf { undoSeconds > 0 }
++
 +    // الشريط مثبّت أسفل الشاشة فوق المحتوى أيًّا كان: قائمة، أو حالة فراغ بعد حذف
 +    // آخر رحلة، أو تفصيلًا. لذلك يعلو الجميع داخل Box واحد.
 +    Box(modifier) {
@@ -6409,7 +8248,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
  @Composable
  private fun TripCard(trip: TripTrack, onClick: () -> Unit) {
      Column(
-@@ -138,6 +229,7 @@
+@@ -138,6 +235,7 @@
      }
  }
  
@@ -6417,7 +8256,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
  @Composable
  private fun MiniStat(label: String, value: String, unit: String) {
      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-@@ -152,6 +244,7 @@
+@@ -152,6 +250,7 @@
      }
  }
  
@@ -6425,15 +8264,18 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
  @Composable
  private fun TripDetail(
      vm: SpeedoViewModel,
-@@ -161,6 +254,7 @@
+@@ -161,6 +260,10 @@
      modifier: Modifier = Modifier,
  ) {
      val context = LocalContext.current
 +    val invertTiles by vm.settings.invertMapTiles.collectAsStateWithLifecycle()
++    // القرار تفضيلٌ لا حالة خريطة، فيُقرأ هنا ويُمرَّر: `RouteMap` مُركّب عرضٍ لا يقرأ
++    // مخزن التفضيلات بنفسه، تمامًا كما هو حال قلب الألوان.
++    val preferOffline by vm.settings.preferOfflineMaps.collectAsStateWithLifecycle()
      var confirmDelete by remember { mutableStateOf(false) }
  
      Column(
-@@ -174,11 +268,17 @@
+@@ -174,11 +277,17 @@
              verticalAlignment = Alignment.CenterVertically,
              horizontalArrangement = Arrangement.spacedBy(10.dp),
          ) {
@@ -6453,7 +8295,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              )
              Text(
                  text = formatDate(trip.startMs),
-@@ -186,18 +286,21 @@
+@@ -186,18 +295,22 @@
              )
          }
  
@@ -6469,6 +8311,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              RouteMap(
                  points = trip.points,
 +                invertTiles = invertTiles,
++                preferOffline = preferOffline,
                  modifier = Modifier
                      .fillMaxWidth()
 -                    .height(320.dp)
@@ -6477,7 +8320,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              )
          }
  
-@@ -228,9 +331,10 @@
+@@ -228,9 +341,10 @@
                  label = stringResource(R.string.trip_share),
                  modifier = Modifier.weight(1f),
              ) {
@@ -6489,7 +8332,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
                      putExtra(Intent.EXTRA_STREAM, uri)
                      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                  }
-@@ -240,16 +344,16 @@
+@@ -240,16 +354,16 @@
                      )
                  }
              }
@@ -6509,7 +8352,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
                      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                  }
                  runCatching {
-@@ -258,6 +362,7 @@
+@@ -258,6 +372,7 @@
                      )
                  }
              }
@@ -6517,7 +8360,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
              ActionChip(
                  icon = Icons.Filled.Delete,
                  label = stringResource(R.string.media_delete),
-@@ -273,7 +378,9 @@
+@@ -273,7 +388,9 @@
              text = { Text(stringResource(R.string.media_delete_body)) },
              confirmButton = {
                  TextButton(onClick = {
@@ -6528,7 +8371,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
                      confirmDelete = false
                      onDeleted()
                  }) { Text(stringResource(R.string.media_delete)) }
-@@ -288,9 +395,10 @@
+@@ -288,9 +405,10 @@
      }
  }
  
@@ -6540,7 +8383,7 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
      label: String,
      modifier: Modifier = Modifier,
      onClick: () -> Unit,
-@@ -304,9 +412,12 @@
+@@ -304,9 +422,12 @@
          verticalArrangement = Arrangement.spacedBy(5.dp),
      ) {
          Icon(icon, contentDescription = label, tint = Accent)
@@ -6554,9 +8397,9 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +/** زمن مدنيّ للعرض فقط؛ القياس كلّه على elapsedRealtimeNanos داخل المحرّك. */
  private fun formatDate(ms: Long): String =
      SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(ms))
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
++++ b/v0.5.0-beta
 @@ -1,41 +1,194 @@
  package net.gnutux.speedometer.ui.theme
  
@@ -6778,10 +8621,10 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +        MaterialTheme(colorScheme = schemeOf(colors), content = content)
 +    }
  }
-diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-beta
+diff -ruN --label a/v0.3.0-beta --label b/v0.5.0-beta a/v0.3.0-beta b/v0.5.0-beta
 --- a/v0.3.0-beta
-+++ b/v0.4.0-beta
-@@ -99,4 +99,68 @@
++++ b/v0.5.0-beta
+@@ -99,4 +99,82 @@
      <string name="tile_label">عداد السرعة</string>
      <string name="tile_running">رحلة جارية</string>
      <string name="tile_idle">ابدأ رحلة</string>
@@ -6849,4 +8692,18 @@ diff -ruN --label a/v0.3.0-beta --label b/v0.4.0-beta a/v0.3.0-beta b/v0.4.0-bet
 +    <string name="settings_pip_note">أثناء رحلةٍ أو تسجيل، ينكمش التطبيق إلى نافذةٍ صغيرة تُظهر السرعة بدل أن يختفي</string>
 +    <string name="pip_recording">التسجيل جارٍ</string>
 +    <string name="action_minimize">تصغير إلى نافذة عائمة</string>
++
++    <!-- ===== 0.5.0 ===== -->
++    <string name="segment_title">طول المقطع</string>
++    <string name="segment_applies_next">يسري على المقطع التالي</string>
++    <string name="settings_section_offline">الخرائط دون اتّصال</string>
++    <string name="settings_offline_maps">تفضيل الخريطة المحلّيّة</string>
++    <string name="settings_offline_maps_note">تُستعمل بلاطات الإنترنت حين لا تكون هناك خريطة محلّيّة تغطّي الموضع</string>
++    <string name="settings_offline_status_found">وُجدت خريطة محلّيّة: %1$s</string>
++    <string name="settings_offline_status_none">لا خريطة محلّيّة</string>
++    <string name="settings_offline_folder">ضع ملفّات .mbtiles أو .sqlite أو .zip في: %1$s</string>
++    <string name="settings_offline_rescan">إعادة الفحص</string>
++    <string name="map_source_offline">محلّيّة</string>
++    <string name="map_source_online">إنترنت</string>
++    <string name="settings_offline_folder_alt">أو، على أندرويد ٩ فما دون، مجلّد عامّ</string>
  </resources>

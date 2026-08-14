@@ -28,15 +28,18 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.profile.VehicleProfile
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.settings.ThemeMode
@@ -71,8 +74,15 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val segment by s.videoSegmentMinutes.collectAsStateWithLifecycle()
     val autoTrip by s.autoTripWithRecording.collectAsStateWithLifecycle()
     val invertTiles by s.invertMapTiles.collectAsStateWithLifecycle()
+    val preferOffline by s.preferOfflineMaps.collectAsStateWithLifecycle()
     val undoSeconds by s.undoSeconds.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
+
+    // مصدر الحقيقة نفسه الذي تقرؤه الخريطة، فلا تقول الإعدادات «وُجدت» بينما ترسم
+    // الخريطة بلاطات إنترنت
+    val context = LocalContext.current
+    val offlineMaps = remember(context) { OfflineMaps.of(context) }
+    val offlineLibrary by offlineMaps.library.collectAsStateWithLifecycle()
 
     Column(modifier.fillMaxSize()) {
         SettingsHeader(onClose)
@@ -213,6 +223,48 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                 }
             }
 
+            // ===== الخرائط دون اتّصال =====
+            //
+            // قسمٌ قائم بذاته لا سطرٌ في «الخريطة والسجلّ»: هو المكان الوحيد الذي
+            // يُخبر المستعمل **أين** يضع ملفّه و**هل** رآه التطبيق. بلا هذين السطرين
+            // يصير الأمر تخمينًا، وملفٌّ لا يُعثر عليه كأنّه لم يُنسخ.
+            item { SectionTitle(stringResource(R.string.settings_section_offline)) }
+            item {
+                SettingCard {
+                    SwitchRow(
+                        title = stringResource(R.string.settings_offline_maps),
+                        note = stringResource(R.string.settings_offline_maps_note),
+                        checked = preferOffline,
+                        onChange = s::setPreferOfflineMaps,
+                    )
+                    RowLabel(
+                        title = if (offlineLibrary.hasArchives) {
+                            stringResource(
+                                R.string.settings_offline_status_found,
+                                offlineLibrary.names,
+                            )
+                        } else {
+                            stringResource(R.string.settings_offline_status_none)
+                        },
+                        // المسار يظهر بعد أوّل مسحٍ فقط: قراءته من القرص لا تقع على
+                        // الخيط الرئيس، فحتّى تصل نُبقي السطر فارغًا بدل مسارٍ مخمَّن
+                        note = offlineLibrary.folderPath
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { stringResource(R.string.settings_offline_folder, it) },
+                    )
+                    if (offlineLibrary.altFolderPath.isNotEmpty()) {
+                        RowLabel(
+                            title = stringResource(R.string.settings_offline_folder_alt),
+                            note = offlineLibrary.altFolderPath,
+                        )
+                    }
+                    ActionRow(
+                        label = stringResource(R.string.settings_offline_rescan),
+                        onClick = offlineMaps::rescan,
+                    )
+                }
+            }
+
             // ===== عن التطبيق =====
             item { SectionTitle(stringResource(R.string.settings_section_about)) }
             item {
@@ -347,6 +399,33 @@ private fun SwitchRow(title: String, note: String, checked: Boolean, onChange: (
                 checkedTrackColor = Accent,
                 uncheckedThumbColor = TextSecondary,
                 uncheckedTrackColor = SurfaceHigh,
+            ),
+        )
+    }
+}
+
+/**
+ * صفّ فعلٍ بلا حالة: نصٌّ بلون التمييز داخل مساحة لمسٍ لا تقلّ عن 56dp (قاعدة 6).
+ *
+ * فُضّل على زرّ Material لأنّ البطاقة كلّها أسطرٌ متراصّة، وزرٌّ مؤطَّر وسطها يكسر
+ * الإيقاع البصريّ للقائمة.
+ */
+@Composable
+private fun ActionRow(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(SurfaceHigh)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall.copy(
+                color = Accent,
+                fontWeight = FontWeight.Bold,
             ),
         )
     }

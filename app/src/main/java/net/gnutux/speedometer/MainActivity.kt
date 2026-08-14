@@ -16,7 +16,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +40,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -45,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,11 +64,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.gnutux.speedometer.core.trip.TripStatus
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.screens.CameraScreen
 import net.gnutux.speedometer.ui.screens.PIP_ASPECT_H
@@ -83,6 +93,14 @@ import net.gnutux.speedometer.ui.theme.LocalGtColors
 // موافقًا لمسار الاستعمال: تقيس، ثم تنهي الرحلة، ثم تراجع مسارها، ثم لقطاتها.
 private const val PAGE_COUNT = 5
 private const val PAGE_CAMERA = 2
+
+/**
+ * مهلة بقاء الأطراف بعد لمسة الكشف.
+ *
+ * أربع ثوانٍ: أقصر من ذلك لا يكفي لقراءة التبويبات واختيار واحدٍ منها بيدٍ على
+ * المقود، وأطول منه يُبطل الانغماس عمليًّا.
+ */
+private const val CHROME_REVEAL_MS = 4_000L
 
 class MainActivity : ComponentActivity() {
 
@@ -144,7 +162,16 @@ class MainActivity : ComponentActivity() {
                 dayStartHour = dayStart,
                 nightStartHour = nightStart,
             ) {
-                AppRoot(vm, inPipMode.value)
+                AppRoot(
+                    vm = vm,
+                    isInPip = inPipMode.value,
+                    // صفةُ جهازٍ لا حالةُ تركيب، فتُقرأ مرّةً هنا: زرّ التصغير
+                    // يختفي أصلًا على ما لا يملك الميزة بدل أن يَعِد بما لا يقع
+                    canMinimize = supportsPip(),
+                    // المدخل المحروس نفسه الذي يسلكه `onUserLeaveHint`، فلا يتفرّق
+                    // حارسان على بابٍ واحد
+                    onMinimize = ::enterPipSafely,
+                )
             }
         }
     }
@@ -202,19 +229,78 @@ class MainActivity : ComponentActivity() {
     private fun enterPipSafely() {
         if (!supportsPip()) return
         if (isInPictureInPictureMode || isFinishing || isDestroyed) return
-        runCatching { enterPictureInPictureMode(pipParams(autoEnter = true)) }
+        // `autoEnter` خاصّيّةٌ تلتصق بالنشاط بعد ضبطها. تمريرها `true` هنا كان يعني
+        // أنّ من يضغط زرّ التصغير يدويًّا وقد أطفأ خيار «نافذة عائمة عند المغادرة»
+        // يجد التطبيق ينكمش تلقائيًّا عند كلّ خروجٍ بعدها — تفضيلٌ أُبطل من حيث لا
+        // يدري. القيمة تتبع التفضيل، والزرّ يدخل الآن صراحةً لا بضبط خاصّيّة.
+        runCatching { enterPictureInPictureMode(pipParams(autoEnter = isPipArmed())) }
     }
 }
 
+/**
+ * @param canMinimize هل يملك الجهاز ميزة النافذة المصغَّرة أصلًا
+ * @param onMinimize الدخول المحروس نفسه الذي يستعمله `onUserLeaveHint`
+ */
 @Composable
-private fun AppRoot(vm: SpeedoViewModel, isInPip: Boolean) {
+private fun AppRoot(
+    vm: SpeedoViewModel,
+    isInPip: Boolean,
+    canMinimize: Boolean,
+    onMinimize: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(initialPage = 0) { PAGE_COUNT }
     val isRecording by vm.isRecording.collectAsStateWithLifecycle()
+    val trip by vm.tripState.collectAsStateWithLifecycle()
+    val recordingSession by vm.isRecordingSession.collectAsStateWithLifecycle()
 
     var showExitDialog by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+
+    var locationGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var cameraGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    // «ثمّة ما يستحقّ المتابعة»: الشرط نفسه الذي يُسلّح النافذة المصغَّرة، وهو
+    // كذلك شرط إخفاء الأطراف. و`isRecordingSession` لا `isRecording` لأنّ الأوّل
+    // يُرفع لحظة اللمسة والثاني بعد مئات الملّي ثانية.
+    val riding = trip.status == TripStatus.RUNNING ||
+        trip.status == TripStatus.PAUSED ||
+        recordingSession
+
+    // الانغماس مقصورٌ على صفحة الكاميرا: المعاينة هي وحدها ما يستحقّ ملء المساحة،
+    // وبقيّة الصفحات تُقرأ بالتبويبات فوقها.
+    // بلا إذن الكاميرا تُعرض بوّابة الإذن لا المعاينة، وليس فيها طبقة لمسٍ تُعيد
+    // الشريط — فإخفاؤه هناك حبسٌ بلا مخرجٍ ظاهر
+    val immersive = pagerState.currentPage == PAGE_CAMERA && riding && cameraGranted
+
+    // عدّاد لمساتٍ لا راية: اللمسة الثانية أثناء ظهور الشريط يجب أن تُعيد تشغيل
+    // المهلة، ورايةٌ ثابتة على `true` لا تُعيد تشغيل الأثر.
+    var revealTick by remember { mutableIntStateOf(0) }
+    var chromeRevealed by remember { mutableStateOf(false) }
+    LaunchedEffect(revealTick, immersive) {
+        if (!immersive) {
+            // خروجٌ من الانغماس (تبديل صفحة أو انتهاء الرحلة): الشريط يعود دائمًا،
+            // والراية تُصفَّر كي لا تُستأنف مهلةٌ قديمة عند العودة
+            chromeRevealed = false
+            return@LaunchedEffect
+        }
+        if (revealTick == 0) return@LaunchedEffect
+        chromeRevealed = true
+        delay(CHROME_REVEAL_MS)
+        chromeRevealed = false
+    }
+    val chromeVisible = !immersive || chromeRevealed
 
     // السمة صارت تتبدّل وقت التشغيل (النهار/الليل)، فلا يكفي ضبط النافذة في البيان:
     // أيقونات شريط الحالة وخلفيّة النافذة تتبعان اللوحة الحيّة، وإلّا رأى المستعمل
@@ -230,18 +316,6 @@ private fun AppRoot(vm: SpeedoViewModel, isInPip: Boolean) {
         }
     }
 
-    var locationGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
-    var cameraGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
 
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -283,7 +357,15 @@ private fun AppRoot(vm: SpeedoViewModel, isInPip: Boolean) {
     // لا زرّ رجوعٍ فيها، ولو وصل حدثٌ لفتح محاورةَ خروجٍ لا تُرى ثمّ تفاجئ المستعمل
     // عند العودة إلى ملء الشاشة.
     BackHandler(enabled = !isInPip && showSettings) { showSettings = false }
-    BackHandler(enabled = !isInPip && !showExitDialog && !showSettings) { showExitDialog = true }
+    BackHandler(enabled = !isInPip && !showExitDialog && !showSettings && chromeVisible) {
+        showExitDialog = true
+    }
+
+    // مخرجٌ ثانٍ من الانغماس: الرجوع يُعيد الأطراف قبل أن يسأل عن الخروج. الشرطان
+    // متنافيان (`chromeVisible` هنا وهناك) فلا يتعلّق الأمر بترتيب التسجيل.
+    BackHandler(enabled = !isInPip && !showExitDialog && !showSettings && !chromeVisible) {
+        revealTick++
+    }
 
     // النافذة المصغَّرة تستبدل الشجرة كلّها ولا تغطّيها: المسطّر والخريطة ومعاينة
     // الكاميرا تبقى تقيس وتخطّط لو تُركت مركَّبةً تحتها، وشيءٌ من ذلك لا يُرى. وما فوق
@@ -297,20 +379,41 @@ private fun AppRoot(vm: SpeedoViewModel, isInPip: Boolean) {
     // صندوقٌ صريح لا اتّكال على ترتيب الجذر الضمنيّ: طبقة الإعدادات تعلو المحتوى
     Box(Modifier.fillMaxSize().background(Bg)) {
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // الأطراف تنزلق ولا تختفي فجأةً: الاختفاء اللحظيّ يقفز بالمعاينة قفزةً
+        // مقدارها ارتفاع الشريط كاملًا، وهي حركةٌ تُفزع من ينظر إلى الطريق. ولأنّ
+        // الشريط ابنُ عمودٍ لا طبقةً عائمة، انكماشه يُسلّم مساحته إلى الصفحة
+        // فتملأ المعاينة الشاشة فعلًا لا أن تختفي تحت شريطٍ شفّاف.
+        AnimatedVisibility(
+            visible = chromeVisible,
+            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
         ) {
-            SegmentedTabs(
-                selected = pagerState.currentPage,
-                onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
-                modifier = Modifier.weight(1f),
-            )
-            SettingsButton(onClick = { showSettings = true })
+            // الحشو والفرجة أضيق ممّا كانا (12/8 → 10/6): صار في الصفّ زرّان
+            // بعرض 56 لا زرٌّ واحد، وكلّ نقطةٍ تُوفَّر هنا تذهب إلى التبويبات
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                SegmentedTabs(
+                    selected = pagerState.currentPage,
+                    onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+                    modifier = Modifier.weight(1f),
+                )
+                if (canMinimize) {
+                    MinimizeButton(
+                        // الزرّ طلبٌ صريح، فشرطه ما يستحقّ المتابعة وحده: تفضيل
+                        // «نافذة عند المغادرة» يخصّ الدخول التلقائيّ، ومن يضغط
+                        // الزرّ قد أعلن نيّته فلا يُسأل عن تفضيلٍ آخر
+                        enabled = riding,
+                        onClick = onMinimize,
+                    )
+                }
+                SettingsButton(onClick = { showSettings = true })
+            }
         }
 
         if (!locationGranted) {
@@ -344,7 +447,11 @@ private fun AppRoot(vm: SpeedoViewModel, isInPip: Boolean) {
                     2 -> if (cameraGranted) {
                         // الكاميرا وحدها بلا حشو: المعاينة تملأ الشاشة
                         // والأزرار تحشو نفسها من الداخل
-                        CameraScreen(vm, Modifier.fillMaxSize())
+                        CameraScreen(
+                            vm = vm,
+                            modifier = Modifier.fillMaxSize(),
+                            onPreviewTap = { revealTick++ },
+                        )
                     } else {
                         PermissionGate(
                             body = stringResource(R.string.perm_camera_body),
@@ -422,6 +529,34 @@ private fun ExitDialog(
     )
 }
 
+/**
+ * زرّ التصغير إلى نافذةٍ عائمة، بجوار المسنّن.
+ *
+ * يبقى ظاهرًا معطَّلًا حين لا رحلة ولا تسجيل بدل أن يُنتزع من الصفّ: زرٌّ يظهر
+ * ويختفي مع كلّ بدءٍ وإيقاف يُزحزح جاره تحت الإصبع. أمّا انعدام الميزة في الجهاز
+ * فحالةٌ لا تتبدّل، وعندها يُحذف الزرّ أصلًا في موضع الاستدعاء.
+ */
+@Composable
+private fun MinimizeButton(enabled: Boolean, onClick: () -> Unit) {
+    val colors = LocalGtColors.current
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .clip(CircleShape)
+            .background(colors.surface)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.PictureInPictureAlt,
+            contentDescription = stringResource(R.string.action_minimize),
+            // التعطيل يُقرأ باللون: نصف الشدّة يكفي على الخلفيّتين الفاتحة والداكنة
+            tint = colors.textSecondary.copy(alpha = if (enabled) 1f else 0.38f),
+            modifier = Modifier.size(24.dp),
+        )
+    }
+}
+
 /** مساحة اللمس 56dp كاملة وإن كانت الأيقونة 22: القاعدة السابعة، ويدٌ بقفّاز */
 @Composable
 private fun SettingsButton(onClick: () -> Unit) {
@@ -459,8 +594,8 @@ private fun SegmentedTabs(
         modifier = modifier
             .fillMaxWidth()
             .background(Surface, RoundedCornerShape(18.dp))
-            .padding(5.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         titles.forEachIndexed { index, title ->
             val active = index == selected
@@ -479,9 +614,15 @@ private fun SegmentedTabs(
                     .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
+                // سطرٌ واحد بلا لفّ: كلمةٌ عربيّة واحدة تُلَفّ في منتصف حروفها
+                // المتّصلة فتخرج «الرحلا / ت». و13sp بدل 14: خمسة تبويبات وزرّان
+                // بعرض 56 لا يجتمعان على هاتفٍ عرضه 360 نقطة إلّا بهذا القدر.
                 Text(
                     text = title,
+                    maxLines = 1,
+                    softWrap = false,
                     style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = 13.sp,
                         color = if (active) Bg else TextSecondary,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                     ),

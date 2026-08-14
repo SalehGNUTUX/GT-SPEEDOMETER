@@ -51,6 +51,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.trip.TripTrack
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
@@ -70,12 +71,17 @@ private val UndoBarReserve = 84.dp
 /** قسم الرحلات المحفوظة: بطاقة لكلّ رحلة، ولمسةٌ تفتح تفصيلها مع الخريطة. */
 @Composable
 fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val trips by vm.trips.collectAsStateWithLifecycle()
     val pendingDelete by vm.pendingTripDelete.collectAsStateWithLifecycle()
     val undoSeconds by vm.settings.undoSeconds.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<TripTrack?>(null) }
 
     LaunchedEffect(Unit) { vm.refreshTrips() }
+
+    // تسخين مبكّر: أوّل نداءٍ لـ `of` يُطلق مسح مجلّد الخرائط على خيط قرص. نفعله عند
+    // فتح التبويب لا عند فتح الرحلة، كي يكون الجواب حاضرًا قبل أن تُطلب أوّل بلاطة.
+    LaunchedEffect(Unit) { OfflineMaps.of(context) }
 
     // مهلة صفر تعني حذفًا فوريًّا، فلا شريط أصلًا حينها.
     val pending = pendingDelete?.takeIf { undoSeconds > 0 }
@@ -255,6 +261,9 @@ private fun TripDetail(
 ) {
     val context = LocalContext.current
     val invertTiles by vm.settings.invertMapTiles.collectAsStateWithLifecycle()
+    // القرار تفضيلٌ لا حالة خريطة، فيُقرأ هنا ويُمرَّر: `RouteMap` مُركّب عرضٍ لا يقرأ
+    // مخزن التفضيلات بنفسه، تمامًا كما هو حال قلب الألوان.
+    val preferOffline by vm.settings.preferOfflineMaps.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
 
     Column(
@@ -298,6 +307,7 @@ private fun TripDetail(
             RouteMap(
                 points = trip.points,
                 invertTiles = invertTiles,
+                preferOffline = preferOffline,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(320.dp),

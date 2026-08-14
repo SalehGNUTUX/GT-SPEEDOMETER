@@ -7,11 +7,23 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Build
+import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
 import android.text.TextPaint
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.ScaleXSpan
+import android.text.style.StyleSpan
 import androidx.camera.effects.Frame
 import net.gnutux.speedometer.ui.Fmt
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 
 /**
@@ -38,21 +50,26 @@ data class HudSnapshot(
  * راسم الطبقة المحروقة داخل الفيديو.
  *
  * لا يستعمل Compose ولا موارد النصوص: يُنادى من `OverlayEffect` على خيط الرسم
- * لكلّ إطار، فلا مجال هناك لتركيبٍ ولا لقراءة `Context`. لذلك الألوان والعبارات
- * مكتوبة هنا حرفيًّا، والأدوات (Paint وMatrix والمستطيلات) تُنشأ مرّةً واحدة
- * وتُعاد تدويرها كي لا نخصّص ذاكرةً ستّين مرّة في الثانية.
+ * لكلّ إطار، فلا مجال هناك لتركيبٍ ولا لقراءة `Context`. لذلك العبارات مكتوبة هنا
+ * حرفيًّا، والأدوات (Paint وMatrix والمستطيلات) تُنشأ مرّةً واحدة وتُعاد تدويرها
+ * كي لا نخصّص ذاكرةً ستّين مرّة في الثانية.
  *
  * ## الوحدة المرجعيّة
- * `unit` هي واحد بالمئة من **الضلع الأقصر** للإطار الخارج، لا من ارتفاعه.
- * الكتلتان — صندوق الإحصاءات يسارًا وحلقة السرعة يمينًا — مرصوصتان أفقيًّا على
- * القاعدة نفسها، فاشتقاق المقاس من الارتفاع وحده كان يُنتج في الوضع الرأسيّ حلقةً
- * بعرض ‎47%‎ من الإطار وصندوقًا بعرض ‎78%‎ فيتراكبان، بينما يبدو الأمر سليمًا في
- * الوضع الأفقيّ بالشفرة ذاتها. مع `min(w, h)` يخرج التخطيط بالنسب نفسها في
- * الوضعين وعند أيّ دقّة.
+ * كلّ مقياسٍ نسبةٌ من **الضلع الأقصر** للإطار الخارج، لا من ارتفاعه. الكتلتان —
+ * حلقة السرعة يسارًا وصندوق الإحصاءات يمينًا — مرصوصتان أفقيًّا على القاعدة نفسها،
+ * فاشتقاق المقاس من الارتفاع وحده كان يُنتج في الوضع الرأسيّ حلقةً بعرض ‎%47‎ من
+ * الإطار وصندوقًا بعرض ‎%78‎ فيتراكبان، بينما يبدو الأمر سليمًا في الوضع الأفقيّ
+ * بالشفرة ذاتها. مع `min(w, h)` يخرج التخطيط بالنسب نفسها في الوضعين وعند أيّ دقّة.
  *
- * النسب أدناه مأخوذة من طبقة الشاشة (`CameraScreen`) عند عرضٍ نموذجيّ ‎411dp‎:
- * شارة السرعة ‎124dp ≈ 30%‎، ورقمها ‎44sp ≈ 10.7%‎، ونصّ الإحصاءات ‎16sp ≈ 3.9%‎.
- * فالمحروق والمعروض على الشاشة يخرجان بالإحساس نفسه.
+ * والنسب نفسها لم تعد مكتوبةً هنا: مصدرها [HudMetrics]، وهو العقد الذي تقرأ منه
+ * طبقة الشاشة أيضًا. كانت الشاشة تحمل مقاساتٍ مطلقة والراسم نسبًا مستقلّة، فتوافقا
+ * على هاتفٍ واحد وتباعدا على غيره — وهذا الملفّ لم يعد يملك رأيًا خاصًّا في المقاس.
+ *
+ * ## جهة الكتلتين
+ * التطبيق عربيّ الاتّجاه، وصفّ الشاشة في RTL يضع أوّل أبنائه — كتلة الإحصاءات —
+ * يمينًا والحلقة يسارًا. النسخة السابقة حرقت العكس، فخرج الملفّ مخالفًا لما رآه
+ * المصوِّر على شاشته وهو يسجّل. المرجع الموحَّد (HUD-SPEC) يوجب تطابق المحروق
+ * والمعروض: **الإحصاءات يمينًا والقرص يسارًا**.
  */
 class VideoOverlayPainter {
 
@@ -88,32 +105,40 @@ class VideoOverlayPainter {
     }
 
     /**
-     * `TextPaint` لا `Paint` كي يقبله `TextUtils.ellipsize` في مسار القصّ الاحتياطيّ.
-     * المحاذاة تبقى `LEFT` أبدًا: نضع الأسطر بأنفسنا انطلاقًا من عرضها المقيس،
-     * فلا نعتمد على محاذاةٍ قد يقلبها دورٌ آخر.
+     * `TextPaint` لا `Paint` لأنّ `StaticLayout` يشترطه.
+     * المحاذاة تبقى `LEFT` أبدًا: `Layout` يحسب مواضع الأسطر بنفسه ثمّ يرسمها
+     * مفترضًا مِنصَبًا يساريًّا، فأيّ قيمةٍ أخرى هنا تزيح النصّ عن لوحته.
+     * المحاذاة البصريّة إلى اليمين تأتي من اتّجاه الفقرة لا من هذه الخاصّيّة.
+     *
+     * وزنُها **متوسّط** لا عريض: هذا وزن التسمية على الشاشة (`labelMedium`)، أمّا
+     * القيمة فتُعرَّض بمقطعٍ (`StyleSpan`) داخل السطر. النسخة السابقة عرّضت السطر
+     * كلّه فذابت التسمية في قيمتها.
      */
     private val statsText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = weighted(WEIGHT_MEDIUM)
         color = Color.WHITE
         textAlign = Paint.Align.LEFT
         textLocale = ARABIC
     }
 
+    /**
+     * رقم القرص بأثقل وزنٍ يبلغه الخطّ: الشاشة ترسمه بـ `FontWeight.Black` (‎900‎)،
+     * و`Typeface.BOLD` وحده (‎700‎) كان يُخرجه في الملفّ أنحلَ ممّا رآه المصوِّر.
+     */
     private val gaugeValue = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = weighted(WEIGHT_BLACK)
         color = Color.WHITE
         textAlign = Paint.Align.LEFT
         textLocale = Locale.US
     }
 
     private val gaugeUnit = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = weighted(WEIGHT_MEDIUM)
         color = Color.WHITE
         textAlign = Paint.Align.LEFT
         textLocale = ARABIC
     }
 
-    private val statsFm = Paint.FontMetrics()
     private val valueFm = Paint.FontMetrics()
     private val unitFm = Paint.FontMetrics()
 
@@ -123,12 +148,55 @@ class VideoOverlayPainter {
     private val matrix = Matrix()
     private val corners = FloatArray(8)
 
+    /**
+     * مقاسات الإطار الحاليّ. تُشتقّ عند تبدّل الضلع الأقصر لا في كلّ إطار: الضلع
+     * ثابتٌ طوال جلسة التسجيل الواحدة، فلا داعي لتخصيص كائنٍ ستّين مرّة في الثانية.
+     */
+    private var sizes: HudSizes = HudMetrics.of(0f)
+
     /** آخر لقطة نُسّقت نصوصها. اللقطة تتبدّل مع كلّ موقع (~1Hz) لا مع كلّ إطار */
     private var formattedFor: HudSnapshot? = null
-    private val statsLines = arrayOf("", "", "")
+
+    /** قيم الأسطر الثلاث منسَّقةً، بلا تسمياتها: التسميات ثابتة في [LABELS] */
+    private val statValues = arrayOf("", "", "")
 
     /** رقم القرص يُخبَّأ مع الأسطر: `String.format` ستّين مرّة في الثانية تخصيصٌ بلا داعٍ */
     private var gaugeText = "0"
+
+    /** الأسطر بمقاطعها المنسَّقة (تسميةٌ خافتة صغيرة + قيمةٌ عريضة) */
+    private val spanned = arrayOfNulls<SpannableString>(LINES)
+
+    /**
+     * تخطيطات الأسطر الثلاثة، مخبَّأة كما تُخبَّأ نصوصها ولسببٍ أقوى: `StaticLayout`
+     * يخصّص ذاكرةً عند كلّ بناء (مصفوفات الأسطر ومخزن المحارف المشكَّلة)، و`onDraw`
+     * يعمل على خيط GL بمعدّل الإطارات.
+     *
+     * **مفتاح التخبئة هو نصّ كلّ سطرٍ على حدة** لا اللقطة كلّها. كانت التخبئة على
+     * `HudSnapshot`، فلمّا صارت المدّة تتقدّم كلّ ثانية أُعيد بناء التخطيطات الثلاثة
+     * جميعًا كلّ ثانية — وسطرا المسافة وأقصى سرعة لم يتبدّلا. الآن يُعاد بناء السطر
+     * المتبدّل وحده، ولا تُعاد الثلاثة إلّا إن تبدّلت الهندسة (حجم الخطّ أو عرض
+     * القصّ) وهي تابعةٌ لأعرض سطرٍ ولمقاس الإطار.
+     *
+     * ومقاس الإطار في المفتاح لأنّ حجم الخطّ وعرض القصّ مشتقّان منه، فتخبئةٌ على
+     * النصّ وحده كانت ستُبقي تخطيطًا مبنيًّا لمقاسٍ سابق لو تبدّلت الدقّة أو انقلب
+     * الضلع الأقصر بالدوران من غير أن يتبدّل النصّ.
+     */
+    private var statsLayouts: Array<StaticLayout>? = null
+    private val layoutValues = arrayOfNulls<String>(LINES)
+    private var layoutShortSide = 0f
+    private var layoutMaxWidth = 0f
+    private var layoutWidthPx = 0
+
+    /** هندسة الكتلة المحسوبة وقت البناء، تُقرأ في كلّ إطارٍ بلا إعادة قياس */
+    private var layoutTextSize = 0f
+    private var layoutGlyphBox = 0f
+    private var layoutLineBox = 0f
+    private var layoutLineGap = 0f
+    private var layoutPadH = 0f
+    private var layoutPadV = 0f
+    private var layoutCorner = 0f
+    private var layoutPanelWidth = 0f
+    private var layoutContentHeight = 0f
 
     /**
      * @return true دائمًا: نطلب من `OverlayEffect` إخراج الإطار حتّى لو لم نرسم
@@ -196,119 +264,294 @@ class VideoOverlayPainter {
      * تخطيط الكتلتين. نحسب الحلقة أوّلًا لأنّ مقاسها ثابت لا يتبع طول النصّ، ثمّ
      * نمنح صندوق الإحصاءات ما تبقّى من العرض.
      *
-     * **اللامتراكب (الثابتة المضمونة):** أقصى عرضٍ يُسمح به للصندوق هو
-     * `statsMaxWidth = w − 2·margin − blockGap − ringDiameter`، وفي `drawStats`
-     * لا تتجاوز اللوحة هذا العرض أبدًا (تصغير ثمّ قصّ). إذن
-     * `يمينُ الصندوق ≤ margin + statsMaxWidth = يسارُ الحلقة − blockGap`،
-     * فبينهما فجوةٌ موجبة دائمًا. وهذا العرض موجب في الوضعين: ما تحجزه الهوامش
-     * والفجوة والحلقة هو `(2×5 + 3 + 26.4)·unit = 0.394·min(w, h) ≤ 0.394·w`،
-     * فيبقى للصندوق ‎0.606·w‎ على أسوأ تقدير (الوضع الرأسيّ).
+     * **الحلقة عند الحافّة اليسرى والإحصاءات عند اليمنى**، لأنّ الشاشة في RTL
+     * تضعهما هكذا، والمحروق يجب أن يطابقها.
+     *
+     * **اللامتراكب (الثابتة المضمونة):** الحلقة مثبَّتة يسارًا فحدّها الأيمن هو
+     * `margin + ringDiameter` (قيمةٌ ثابتة لا تتبع النصّ)، والإحصاءات مثبَّتة يمينًا
+     * فحدّها الأيمن `w − margin` ثابتٌ أيضًا وإنّما تنمو يسارًا. أقصى عرضٍ يُسمح به
+     * للوحة هو
+     * `statsMaxWidth = (w − margin) − (margin + ringDiameter) − blockGap`
+     * `           = w − 2·margin − blockGap − ringDiameter`،
+     * وفي [drawStats] لا تتجاوز اللوحة هذا العرض أبدًا (تصغير ثمّ قصّ). إذن
+     * `يسارُ اللوحة = (w − margin) − panelWidth ≥ margin + ringDiameter + blockGap`
+     * `           = يمينُ الحلقة + blockGap`، فبينهما فجوةٌ موجبة لا تقلّ عن
+     * `blockGap`. وهذا العرض موجبٌ في الوضعين: ما تحجزه الهوامش والفجوة والحلقة هو
+     * `(2×16 + 12 + 124)/411 · min(w, h) = 0.4088·min(w, h) ≤ 0.4088·w`، فيبقى
+     * للصندوق ‎0.591·w‎ على أسوأ تقدير (الوضع الرأسيّ). والرقم يتبع نسب
+     * [HudMetrics]، وكان ‎0.394‎ قبل توحيدها مع الشاشة — فبقاؤه في التعليق بعد
+     * تغيّر النسب كان يجعل البرهان يشير إلى شفرةٍ لم تعد موجودة.
      */
     private fun drawHud(canvas: Canvas, w: Float, h: Float) {
         val s = snapshot
-        val unit = minOf(w, h) / 100f
-        val margin = MARGIN_UNITS * unit
-        val radius = RING_RADIUS_UNITS * unit
-        // نصف القطر الظاهر يشمل نصف عرض القوس، وإلّا خرج الحدّ الخارجيّ عن الهامش
-        val ringOuter = radius * (1f + RING_THICKNESS_RATIO / 2f)
+        val m = sizesFor(minOf(w, h))
 
-        val bottom = h - margin
-        val cx = w - margin - ringOuter
-        val cy = bottom - ringOuter
-        val statsMaxWidth = (cx - ringOuter) - BLOCK_GAP_UNITS * unit - margin
+        // الطبقة مثبَّتة على هامش القاع مباشرةً، بخلاف الشاشة التي ترفعها فوق صفّ
+        // الأزرار. **فرقٌ متعمَّد**: الأزرار لا تُحرق، فحجزُ ارتفاعها في الملفّ
+        // يترك شريطًا فارغًا أسفل الصورة بلا سببٍ يراه المشاهد. لا يُضاف هنا
+        // إزاحةُ صفّ أزرارٍ وهميّ.
+        val bottom = h - m.margin
+        val cx = m.margin + m.ringDiameter / 2f
+        val cy = bottom - m.ringDiameter / 2f
+        val statsRight = w - m.margin
+        val statsMaxWidth = statsRight - (m.margin + m.ringDiameter) - m.blockGap
 
-        // التنسيق مرّةً هنا لا داخل كلّ كتلة: القرص يقرأ `gaugeValue` المخبَّأ، فلا
+        // التنسيق مرّةً هنا لا داخل كلّ كتلة: القرص يقرأ `gaugeText` المخبَّأ، فلا
         // يبقى صحيحًا بالصدفة لأنّ الإحصاءات تُرسم قبله
         formatStats(s)
-        drawStats(canvas, margin, bottom, statsMaxWidth, unit, s)
-        drawGauge(canvas, cx, cy, radius, s)
+        drawStats(canvas, statsRight, bottom, statsMaxWidth, m, s)
+        drawGauge(canvas, cx, cy, m, s)
+    }
+
+    /** المقاسات المشتقّة، مخبَّأةً ما دام الضلع الأقصر على حاله */
+    private fun sizesFor(shortSide: Float): HudSizes {
+        val cached = sizes
+        if (cached.shortSide == shortSide) return cached
+        val fresh = HudMetrics.of(shortSide)
+        sizes = fresh
+        return fresh
     }
 
     /**
-     * كتلة الإحصاءات في الركن السفليّ الأيسر: ثلاثة أسطر فوق لوحةٍ داكنة.
+     * كتلة الإحصاءات في الركن السفليّ **الأيمن**: ثلاثة أسطر فوق لوحةٍ داكنة.
      *
-     * الحشو مشتقّ من حجم الخطّ لا من الإطار، فعرض اللوحة يتناسب خطّيًّا مع حجم
-     * النصّ. لذلك يكفي معامل تصغير واحد لإدخال الكتلة كلّها في العرض المتاح.
+     * `right` هو الحدّ الأيمن الثابت للوحة (‎w − margin‎)، واللوحة تنمو يسارًا
+     * بمقدار عرضها المقيس.
+     *
+     * الرسم هنا لا يقيس ولا يبني شيئًا: كلّ ما يلزم محسوبٌ في [ensureStatsLayouts]
+     * ومخبَّأ حتّى يتبدّل نصُّ سطرٍ أو مقاسُ الإطار.
      */
     private fun drawStats(
         canvas: Canvas,
-        left: Float,
+        right: Float,
         bottom: Float,
         maxWidth: Float,
-        unit: Float,
+        m: HudSizes,
         s: HudSnapshot,
     ) {
-        val lines = formatStats(s)
+        val layouts = ensureStatsLayouts(s, m, maxWidth)
 
-        val baseSize = STATS_TEXT_UNITS * unit
-        statsText.textSize = baseSize
-        val natural = widestLine(lines) + 2f * STATS_PAD_H_RATIO * baseSize
-        // القاع عند 0.6 كي لا يصغر النصّ إلى ما لا يُقرأ؛ ما دونه نقصّ الأسطر
-        val scale = (maxWidth / natural).coerceIn(STATS_MIN_SCALE, 1f)
+        // `Layout` يحتفظ بمرجع الـ Paint لا بنسخةٍ منه، فيرسم بحجم الخطّ الحاليّ لا
+        // بالذي بُني عليه. الحارس يعيد الحجم إن عبث به أحدٌ بين البناء والرسم،
+        // وهو مقارنةٌ لا تكلّف شيئًا حين لا يتغيّر شيء
+        if (statsText.textSize != layoutTextSize) statsText.textSize = layoutTextSize
 
-        val size = baseSize * scale
-        statsText.textSize = size
-        val padH = STATS_PAD_H_RATIO * size
-        val padV = STATS_PAD_V_RATIO * size
-        val lineGap = STATS_LINE_GAP_RATIO * size
+        val top = bottom - layoutContentHeight - 2f * layoutPadV
+        panelBox.set(right - layoutPanelWidth, top, right, bottom)
+        canvas.drawRoundRect(panelBox, layoutCorner, layoutCorner, panel)
 
-        // إعادة قياس بعد تثبيت الحجم: عرض المحارف لا يتناسب خطّيًّا تناسبًا تامًّا
-        // بسبب التلميح (hinting)، والثابتة أعلاه لا تحتمل تقريبًا
-        val panelWidth = minOf(widestLine(lines) + 2f * padH, maxWidth)
-        val innerWidth = (panelWidth - 2f * padH).coerceAtLeast(0f)
-
-        // ارتفاع السطر من مقاييس الخطّ الحقيقيّة: `descent − ascent` ≈ 1.17 من حجم
-        // الخطّ، والنسخة السابقة كانت تعدّه مساويًا للحجم فتخرج الكتلة أقصر ممّا
-        // تشغله فعلًا، ولم ينكشف الخلل إلّا لأنّ الفراغ بين الأسطر كان سخيًّا
-        statsText.getFontMetrics(statsFm)
-        val lineHeight = statsFm.descent - statsFm.ascent
-        val contentHeight = lines.size * lineHeight + (lines.size - 1) * lineGap
-        val top = bottom - contentHeight - 2f * padV
-
-        panelBox.set(left, top, left + panelWidth, bottom)
-        val corner = STATS_CORNER_RATIO * size
-        canvas.drawRoundRect(panelBox, corner, corner, panel)
-
-        // التماثل الرأسيّ بالبناء: أوّل خطّ أساس عند `top + padV − ascent`، وآخر
-        // نزولٍ ينتهي عند `bottom − padV` بالضبط
-        var baseline = top + padV - statsFm.ascent
-        val right = left + panelWidth
-        for (line in lines) {
-            val shown = fitToWidth(line, innerWidth)
-            val width = statsText.measureText(shown, 0, shown.length)
-            // الأسطر عربيّة، فمحاذاتها إلى يمين اللوحة هي المحاذاة الطبيعيّة لها
-            canvas.drawTextRun(shown, 0, shown.length, 0, shown.length, right - padH - width, baseline, true, statsText)
-            baseline += lineHeight + lineGap
+        // التماثل الرأسيّ بالبناء: الكتلة تتقدّم بصندوق السطر (`STAT_LINE_BOX`) لا
+        // بارتفاع المحارف، لأنّ الشاشة تعطي كلّ سطرٍ صندوقًا بهذا الارتفاع وتوسّط
+        // نصّه فيه. ولذلك نوسّط صندوق المحارف هنا كذلك: بغيره تخرج الكتلة أقصر
+        // بنحو ‎%15‎ من كتلة الشاشة وتعلو الأسطر عن مواضعها.
+        // أفقيًّا: عرض التخطيط هو العرض الداخليّ ومحاذاته ALIGN_NORMAL في فقرةٍ
+        // RTL أي إلى يمينه، فالسطر يلتصق بالحافّة الداخليّة اليمنى للوحة
+        val innerLeft = panelBox.left + layoutPadH
+        val glyphOffset = (layoutLineBox - layoutGlyphBox) / 2f
+        var y = top + layoutPadV
+        for (layout in layouts) {
+            val save = canvas.save()
+            canvas.translate(innerLeft, y + glyphOffset)
+            layout.draw(canvas)
+            canvas.restoreToCount(save)
+            y += layoutLineBox + layoutLineGap
         }
     }
 
-    /** قوس السرعة في الركن السفليّ الأيمن، وفي وسطه الرقم ووحدته */
-    private fun drawGauge(canvas: Canvas, cx: Float, cy: Float, radius: Float, s: HudSnapshot) {
-        val thickness = RING_THICKNESS_RATIO * radius
+    /**
+     * يبني تخطيطات الأسطر الثلاثة ويخبّئها مع هندستها، ولا يعيد بناء سطرٍ إلّا إن
+     * تبدّل نصّه أو تبدّلت الهندسة المشتركة.
+     *
+     * **لماذا `StaticLayout` لا `drawTextRun`:** كلّ سطرٍ هنا مختلط الاتّجاه —
+     * تسميةٌ عربيّة (RTL) يليها رقمٌ لاتينيّ (مقطع LTR) تليه وحدةٌ عربيّة. النسخة
+     * السابقة كانت ترسم السطر كلّه بنداءٍ واحد `drawTextRun(isRtl = true)`، وهذا
+     * يفرض على المقطع الرقميّ اتّجاه ما حوله فيخرج معكوسًا: ظهرت ‎00:00:03‎ في
+     * الملفّ المسجَّل ‎30:00:00‎، و‎0.00‎ ظهرت ‎00.0‎. ترتيب المقاطع المختلطة عملُ
+     * خوارزميّة الاتّجاه ثنائيّ الجهة (UBA)، و`drawTextRun` لا يشغّلها: هو يرسم
+     * مقطعًا واحدًا باتّجاهٍ نُمليه نحن.
+     *
+     * `StaticLayout` يشغّل الخوارزميّة كاملةً — إعادة ترتيب المقاطع **وتشكيل**
+     * الحروف العربيّة ووصلها — فيضع التسمية يمينًا والرقم يساره مقروءًا من اليسار
+     * إلى اليمين كما هو. البديل اليدويّ (تقطيع كلّ سطر إلى مقاطعه العربيّة
+     * والرقميّة وقياس كلٍّ منها ورصفها) شفرةٌ أطول وأوجهُ خطئها أكثر، ويعيد كتابة
+     * ما في المنصّة أصلًا.
+     *
+     * `TextDirectionHeuristics.RTL` لا `FIRSTSTRONG_RTL`: اتّجاه الفقرة عندنا معلوم
+     * مسبقًا (التطبيق عربيّ)، فتثبيته يمنع انقلاب المحاذاة لو بدأ سطرٌ يومًا بمحرفٍ
+     * قويّ لاتينيّ. والخوارزميّة تبقى هي التي ترتّب المقاطع داخل الفقرة.
+     *
+     * `StaticLayout.Builder` متاح من API 23 و`minSdk` هنا 26، فلا مسار احتياطيّ.
+     */
+    private fun ensureStatsLayouts(s: HudSnapshot, m: HudSizes, maxWidth: Float): Array<StaticLayout> {
+        val values = formatStats(s)
+        val cached = statsLayouts
+        var contentStale = false
+        for (i in 0 until LINES) if (values[i] != layoutValues[i]) contentStale = true
+        val frameStale = cached == null || m.shortSide != layoutShortSide || maxWidth != layoutMaxWidth
+        if (cached != null && !contentStale && !frameStale) return cached
+
+        statsText.textSize = m.statValueText
+
+        // فجوة التسمية عن قيمتها مقاسٌ من التصميم (‎6dp‎ على المرجع) لا عرضَ مسافة:
+        // نمطّ مسافةً واحدة بـ `ScaleXSpan` حتّى تبلغها. والمعامل مستقلّ عن حجم
+        // الخطّ لأنّ عرض المسافة يتناسب معه كما تتناسب الفجوة، فيبقى صحيحًا بعد
+        // أيّ تصغير — ولذلك يُحسب مرّةً مع بناء المقطع لا مع كلّ قياس.
+        val space = statsText.measureText(" ")
+        val gapScale = if (space > 0f) m.statGap / space else 1f
+        for (i in 0 until LINES) {
+            if (spanned[i] == null || values[i] != layoutValues[i]) {
+                spanned[i] = buildSpanned(LABELS[i], values[i], gapScale)
+            }
+        }
+
+        val naturalWidth = widestLine() + 2f * m.panelPadH
+        // القاع عند 0.6 كي لا يصغر النصّ إلى ما لا يُقرأ؛ ما دونه نقصّ الأسطر
+        val scale = (maxWidth / naturalWidth).coerceIn(HudMetrics.STATS_MIN_SCALE, 1f)
+
+        val size = m.statValueText * scale
+        statsText.textSize = size
+        // الحشو ونصف القطر يتبعان معامل التصغير كما يتبعه النصّ: تصغير النصّ وحده
+        // كان يترك لوحةً منتفخة حول كتلةٍ ضامرة
+        val padH = m.panelPadH * scale
+        val padV = m.panelPadV * scale
+        val lineGap = m.lineGap * scale
+        val lineBox = m.statLineBox * scale
+        val corner = m.panelCorner * scale
+
+        // إعادة قياس بعد تثبيت الحجم: عرض المحارف لا يتناسب خطّيًّا تناسبًا تامًّا
+        // بسبب التلميح (hinting)، والثابتة أعلاه لا تحتمل تقريبًا.
+        // العرض الداخليّ هو الأصغر بين أعرض سطرٍ وما تسمح به اللوحة، فيبقى
+        // `panelWidth = innerWidth + 2·padH ≤ maxWidth` وهو شرط اللامتراكب
+        val innerWidth = minOf(widestLine(), maxWidth - 2f * padH).coerceAtLeast(0f)
+
+        // التقريب لأعلى لا لأسفل: عرض التخطيط عددٌ صحيح، والتقريب لأسفل قد يُنقص
+        // كسرَ بكسلٍ عن أعرض سطرٍ فيقصّه بثلاث نقاط بلا داعٍ. الفائض (< 1px) يقع
+        // داخل الحشو الجانبيّ لا خارج اللوحة، و`layoutPanelWidth` يبقى على الكسر
+        // الحقيقيّ فلا يختلّ شرط `panelWidth ≤ maxWidth`
+        val layoutWidth = ceil(innerWidth).toInt()
+
+        // الهندسة المشتركة (حجم الخطّ وعرض القصّ) تلزم الأسطر الثلاثة معًا؛ ما
+        // دامت على حالها فالسطر المتبدّل وحده يُبنى من جديد
+        val geometryChanged = cached == null || size != layoutTextSize || layoutWidth != layoutWidthPx
+        val built = if (geometryChanged) {
+            Array(LINES) { i -> buildLine(spanned[i]!!, layoutWidth) }
+        } else {
+            val kept = cached!!
+            for (i in 0 until LINES) {
+                if (values[i] != layoutValues[i]) kept[i] = buildLine(spanned[i]!!, layoutWidth)
+            }
+            kept
+        }
+
+        statsLayouts = built
+        for (i in 0 until LINES) layoutValues[i] = values[i]
+        layoutShortSide = m.shortSide
+        layoutMaxWidth = maxWidth
+        layoutWidthPx = layoutWidth
+        layoutTextSize = size
+        // ارتفاع صندوق المحارف من التخطيط نفسه لا من مقاييس الأداة: مقاطع السطر
+        // مختلفة الحجم والوزن، والتخطيط هو من يعرف أكبرها. ويُوسَّط داخل صندوق
+        // السطر عند الرسم، تمامًا كما توسّط الشاشة نصَّها في صندوقه
+        layoutGlyphBox = built[0].height.toFloat()
+        layoutLineBox = lineBox
+        layoutLineGap = lineGap
+        layoutPadH = padH
+        layoutPadV = padV
+        layoutCorner = corner
+        layoutPanelWidth = innerWidth + 2f * padH
+        layoutContentHeight = LINES * lineBox + (LINES - 1) * lineGap
+        return built
+    }
+
+    /**
+     * السطر الواحد: تسميةٌ ثمّ قيمة، بتراتبٍ بصريّ لا بحجمٍ واحد.
+     *
+     * على الشاشة نصّان في صفّ: تسميةٌ ‎12dp‎ بأبيضَ ‎0.72‎ ووزنٍ عاديّ، وقيمةٌ ‎16dp‎
+     * بيضاءُ عريضة. وفي الملفّ كان السطر كلّه مقطعًا واحدًا بحجمٍ واحد ولونٍ واحد
+     * ووزنٍ عريض، فيختفي التراتب ويصير السطر كتلةً مصمتة.
+     *
+     * ولا سبيل إلى نصّين هنا: الاتّجاه ثنائيّ الجهة يُحسب على **الفقرة** كلّها،
+     * فتقطيعُ السطر إلى تخطيطين يعيدنا إلى رصفٍ يدويّ هو بعينه ما أخرج
+     * ‎00:00:03‎ مقلوبةً. الحلّ أن يبقى السطر فقرةً واحدة وتُلبَس مقاطعُه أنماطَها:
+     * - [RelativeSizeSpan] نسبةً لا حجمًا مطلقًا، فيتبع المقطعُ الصغير أيَّ تصغيرٍ
+     *   يقع على الفقرة كلّها بلا حسابٍ ثانٍ.
+     * - [ForegroundColorSpan] للخفوت، فيبقى لون الـ Paint للقيمة.
+     * - [StyleSpan] للتعريض على القيمة وحدها؛ والـ Paint نفسه متوسّط الوزن.
+     *
+     * ومقاييس السطر تتبع أكبر مقاطعه (القيمة)، فارتفاعه لا يتغيّر بخفض التسمية.
+     */
+    private fun buildSpanned(label: String, value: String, gapScale: Float): SpannableString {
+        val text = "$label $value"
+        val gapAt = label.length
+        val span = SpannableString(text)
+        val flag = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        span.setSpan(RelativeSizeSpan(LABEL_OF_VALUE), 0, gapAt, flag)
+        span.setSpan(ForegroundColorSpan(LABEL_COLOR), 0, gapAt, flag)
+        span.setSpan(ScaleXSpan(gapScale), gapAt, gapAt + 1, flag)
+        span.setSpan(StyleSpan(Typeface.BOLD), gapAt + 1, text.length, flag)
+        return span
+    }
+
+    /**
+     * سطرٌ واحد بارتفاع سطرٍ واحد. `maxLines(1)` مع `ellipsize(END)` يحلّان محلّ
+     * القصّ اليدويّ السابق: التخطيط يقصّ بنفسه إن بقي السطر أعرض من اللوحة بعد
+     * بلوغ قاع التصغير — وهو مسارٌ لا يُسلك إلّا عند نسبِ أبعادٍ شاذّة.
+     *
+     * `includePad = false` كي يكون ارتفاع السطر `descent − ascent` تمامًا لا
+     * `bottom − top`، فيبقى توسيطه داخل صندوق السطر مطابقًا لما تفعله الشاشة.
+     * والوصل والتقطيع مُعطَّلان: سطرٌ واحدٌ لا يحتاجهما، وهما كلفةٌ بلا مقابل.
+     */
+    private fun buildLine(line: CharSequence, width: Int): StaticLayout =
+        StaticLayout.Builder.obtain(line, 0, line.length, statsText, width)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setTextDirection(TextDirectionHeuristics.RTL)
+            .setIncludePad(false)
+            .setLineSpacing(0f, 1f)
+            .setMaxLines(1)
+            .setEllipsize(TextUtils.TruncateAt.END)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .build()
+
+    /**
+     * قوس السرعة في الركن السفليّ **الأيسر**، وفي وسطه الرقم ووحدته.
+     *
+     * هنا يبقى `drawTextRun` على حاله ولا حاجة إلى `StaticLayout`: كلٌّ من النصّين
+     * مقطعٌ أحاديّ الاتّجاه لا اختلاط فيه — الرقم أرقامٌ لاتينيّة صرفة (LTR)
+     * و`كم/س` عربيّةٌ صرفة تتوسّطها شرطةٌ محايدة تأخذ اتّجاه جاريها (RTL). وإذ لا
+     * مقطعين مختلفَي الاتّجاه في سطرٍ واحد فلا شيء تعيد الخوارزميّة ترتيبه، ويكفي
+     * أن نُملي الاتّجاه الصحيح لكلٍّ منهما. وهذا هو ما يجعل الكتلتين مختلفتين:
+     * الاختلاط هو ما يوجب محرّك التخطيط، لا مجرّد وجود العربيّة.
+     */
+    private fun drawGauge(canvas: Canvas, cx: Float, cy: Float, m: HudSizes, s: HudSnapshot) {
+        // القطر في العقد خارجيّ (يشمل عرض القوس) كما هو مقاس الخليّة على الشاشة،
+        // فنصف قطر مسار القوس هو المتبقّي بعد نصف سماكته من كلّ جانب
+        val thickness = m.ringStroke
+        val radius = (m.ringDiameter - thickness) / 2f
         arcBox.set(cx - radius, cy - radius, cx + radius, cy + radius)
 
         track.strokeWidth = thickness
-        canvas.drawArc(arcBox, START_ANGLE, SWEEP_ANGLE, false, track)
+        canvas.drawArc(arcBox, HudMetrics.ARC_START, HudMetrics.ARC_SWEEP, false, track)
 
         val fraction = (s.speedKmh / s.gaugeMaxKmh).coerceIn(0f, 1f)
         if (fraction > 0.001f) {
             progress.strokeWidth = thickness
             progress.color = when {
-                s.speedKmh >= s.gaugeMaxKmh * 0.92f -> COLOR_DANGER
-                s.speedKmh >= s.warnKmh.toFloat() -> COLOR_WARN
-                else -> COLOR_ACCENT
+                s.speedKmh >= s.gaugeMaxKmh * HudMetrics.DANGER_OF_MAX -> HudMetrics.COLOR_DANGER
+                s.speedKmh >= s.warnKmh.toFloat() -> HudMetrics.COLOR_WARN
+                else -> HudMetrics.COLOR_ACCENT
             }
-            canvas.drawArc(arcBox, START_ANGLE, fraction * SWEEP_ANGLE, false, progress)
+            canvas.drawArc(arcBox, HudMetrics.ARC_START, fraction * HudMetrics.ARC_SWEEP, false, progress)
         }
 
         val value = gaugeText
-        gaugeValue.textSize = VALUE_TEXT_RATIO * radius
+        gaugeValue.textSize = m.gaugeValueText
         // ثلاثة أرقام عند السرعات العالية أعرض من وترِ الدائرة الداخليّة عند ارتفاع
         // رؤوس الأرقام، فنصغّرها بقدرٍ محسوب بدل أن نتركها تلامس القوس
         val naturalWidth = gaugeValue.measureText(value)
-        val maxWidth = VALUE_MAX_WIDTH_RATIO * radius
+        val maxWidth = HudMetrics.VALUE_MAX_WIDTH_OF_RADIUS * radius
         if (naturalWidth > maxWidth) gaugeValue.textSize *= maxWidth / naturalWidth
-        gaugeUnit.textSize = UNIT_TEXT_RATIO * radius
+        gaugeUnit.textSize = m.gaugeUnitText
 
         applyShadow(gaugeValue)
         applyShadow(gaugeUnit)
@@ -317,12 +560,11 @@ class VideoOverlayPainter {
         gaugeUnit.getFontMetrics(unitFm)
 
         // الكتلة (رقم + فجوة + وحدة) تُوسَّط على مركز الحلقة بمقاييس الخطّ لا
-        // بمعاملات تخمينيّة. الخلوص بين الاثنين = `descent(الرقم) + |ascent(الوحدة)|`
-        // زائد الفجوة، فهو موجبٌ بالبناء؛ الحساب القديم (`0.5 × نصف القطر`) كان
-        // ينقص عن هذا المطلوب بنحو ‎0.016‎ من نصف القطر فتتلامس الحروف بالنزول
+        // بمعاملات تخمينيّة، والفجوة من العقد لا من تقديرٍ محلّيّ: هي الخلوص نفسه
+        // الذي يتركه عمود الشاشة بين صندوقَي النصّين
         val valueHeight = valueFm.descent - valueFm.ascent
         val unitHeight = unitFm.descent - unitFm.ascent
-        val innerGap = RING_INNER_GAP_RATIO * gaugeUnit.textSize
+        val innerGap = m.gaugeStackGap
         val stackTop = cy - (valueHeight + innerGap + unitHeight) / 2f
 
         val valueBaseline = stackTop - valueFm.ascent
@@ -342,79 +584,68 @@ class VideoOverlayPainter {
      * اخترنا `setShadowLayer` لا `BlurMaskFilter`: قماش `OverlayEffect` مقفول من
      * `Surface` (معجَّل بالعتاد)، وظلال النصّ هي مسار الظلّ الوحيد المدعوم هناك،
      * بينما مرشّحات القناع قد تُتجاهَل بصمت. النصف القطر والإزاحة من حجم الحرف
-     * فيثبت المظهر عند أيّ دقّة، وبنسبة ‎10/44‎ و‎2/44‎ نفسِها التي تستعملها
-     * `SpeedBadge` على الشاشة.
+     * فيثبت المظهر عند أيّ دقّة، وبالنسبتين نفسِهما اللتين تستعملهما الشاشة.
      */
     private fun applyShadow(paint: Paint) {
         paint.setShadowLayer(
-            SHADOW_BLUR_RATIO * paint.textSize,
+            HudMetrics.SHADOW_BLUR_OF_TEXT * paint.textSize,
             0f,
-            SHADOW_DY_RATIO * paint.textSize,
+            HudMetrics.SHADOW_DY_OF_TEXT * paint.textSize,
             Color.BLACK,
         )
     }
 
-    private fun widestLine(lines: Array<String>): Float {
+    /** أعرض سطرٍ بمقاطعه المنسَّقة: `getDesiredWidth` يحسب المقاطع كما يحسبها التخطيط */
+    private fun widestLine(): Float {
         var widest = 0f
-        for (line in lines) widest = maxOf(widest, statsText.measureText(line, 0, line.length))
+        for (line in spanned) {
+            if (line == null) continue
+            widest = maxOf(widest, Layout.getDesiredWidth(line, 0, line.length, statsText))
+        }
         return widest
     }
-
-    /**
-     * مسار احتياطيّ لا يُسلك إلّا عند نسبِ أبعادٍ شاذّة: بعد بلوغ قاع التصغير قد
-     * يبقى السطر أعرض من اللوحة، فالقصّ بثلاث نقاط أهون من الخروج فوق الحلقة.
-     */
-    private fun fitToWidth(line: String, available: Float): CharSequence =
-        if (statsText.measureText(line, 0, line.length) <= available) {
-            line
-        } else {
-            TextUtils.ellipsize(line, statsText, available, TextUtils.TruncateAt.END)
-        }
 
     /** التنسيق يتبع اللقطة لا الإطار، واللقطة تتبدّل مع كلّ تحديث موقع لا ستّين مرّة في الثانية */
     private fun formatStats(s: HudSnapshot): Array<String> {
         if (s != formattedFor) {
-            statsLines[0] = "$LABEL_DISTANCE  ${Fmt.distance(s.distanceKm)} $UNIT_KM"
-            statsLines[1] = "$LABEL_MAX_SPEED  ${Fmt.speed(s.maxSpeedKmh)} $UNIT_KMH"
-            statsLines[2] = "$LABEL_DURATION  ${Fmt.duration(s.durationMs)}"
+            statValues[0] = "${Fmt.distance(s.distanceKm)} $UNIT_KM"
+            statValues[1] = "${Fmt.speed(s.maxSpeedKmh)} $UNIT_KMH"
+            statValues[2] = Fmt.duration(s.durationMs)
             gaugeText = Fmt.speed(s.speedKmh)
             formattedFor = s
         }
-        return statsLines
+        return statValues
     }
 
     private companion object {
-        const val START_ANGLE = 150f
-        const val SWEEP_ANGLE = 240f
+        const val LINES = 3
 
-        /** نفس ألوان `ui/theme/Theme.kt`، مكرّرة هنا لأنّ الرسم خارج Compose */
-        const val COLOR_ACCENT = 0xFF00E5C7.toInt()
-        const val COLOR_WARN = 0xFFFFB020.toInt()
-        const val COLOR_DANGER = 0xFFFF5A45.toInt()
+        /** ألفا من ‎0..1‎ إلى ‎0..255‎: ‎0.50‎ → ‎128‎. النسخة السابقة كتبت 120 و130 يدويًّا فخالفت المواصفة في الاثنتين */
+        fun alpha255(alpha: Float): Int = (alpha * 255f).roundToInt()
 
-        const val PANEL_ALPHA = 120
-        const val TRACK_ALPHA = 130
+        val PANEL_ALPHA = alpha255(HudMetrics.PANEL_ALPHA)
+        val TRACK_ALPHA = alpha255(HudMetrics.TRACK_ALPHA)
+        val LABEL_COLOR = Color.argb(alpha255(HudMetrics.LABEL_ALPHA), 255, 255, 255)
 
-        /** كلّها بوحدات `unit` أو بنسبةٍ من نصف القطر / حجم الخطّ، لا بالبكسل */
-        const val MARGIN_UNITS = 5f
-        const val BLOCK_GAP_UNITS = 3f
-        const val RING_RADIUS_UNITS = 12f
-        const val STATS_TEXT_UNITS = 4.2f
+        /** حجم التسمية نسبةً إلى حجم القيمة — نسبةٌ لا مقاس، فتصمد أمام التصغير */
+        const val LABEL_OF_VALUE = HudMetrics.STAT_LABEL_TEXT / HudMetrics.STAT_VALUE_TEXT
 
-        const val RING_THICKNESS_RATIO = 0.20f
-        const val VALUE_TEXT_RATIO = 0.86f
-        const val VALUE_MAX_WIDTH_RATIO = 1.40f
-        const val UNIT_TEXT_RATIO = 0.26f
-        const val RING_INNER_GAP_RATIO = 0.22f
+        const val WEIGHT_MEDIUM = 500
+        const val WEIGHT_BLACK = 900
 
-        const val STATS_PAD_H_RATIO = 0.70f
-        const val STATS_PAD_V_RATIO = 0.55f
-        const val STATS_LINE_GAP_RATIO = 0.36f
-        const val STATS_CORNER_RATIO = 0.50f
-        const val STATS_MIN_SCALE = 0.60f
-
-        const val SHADOW_BLUR_RATIO = 10f / 44f
-        const val SHADOW_DY_RATIO = 2f / 44f
+        /**
+         * وزنٌ رقميّ حيث تسمح المنصّة. `Typeface.create(Typeface, int, boolean)`
+         * من API 28، و`minSdk` هنا 26 — فدونها نقرّب: العريض للأوزان الثقيلة
+         * والعاديّ لما دونها، وهو أقصى ما يبلغه `Typeface` القديم.
+         */
+        fun weighted(weight: Int): Typeface =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Typeface.create(Typeface.DEFAULT, weight, false)
+            } else if (weight >= 600) {
+                Typeface.DEFAULT_BOLD
+            } else {
+                Typeface.DEFAULT
+            }
 
         /** نفس نصوص `res/values/strings.xml`، مكرّرة لأنّ الراسم بلا `Context` */
         const val LABEL_DISTANCE = "المسافة"
@@ -423,10 +654,15 @@ class VideoOverlayPainter {
         const val UNIT_KM = "كم"
         const val UNIT_KMH = "كم/س"
 
+        val LABELS = arrayOf(LABEL_DISTANCE, LABEL_MAX_SPEED, LABEL_DURATION)
+
         /**
-         * لغة النصّ العربيّ صراحةً، ومعها `drawTextRun` باتّجاه RTL: `drawText`
-         * يفترض فقرةً يسارًا-يمينًا افتراضًا، فتقع الأرقام داخل الجملة العربيّة
-         * حيث تُلقيها خوارزميّة الاتّجاه ثنائيّ الجهة لا حيث نريد.
+         * لغة النصّ العربيّ صراحةً كي يقع اختيار الخطّ والتشكيل على الشكل العربيّ
+         * لا على شكلٍ فارسيّ أو أرديّ من خطوطٍ احتياطيّة.
+         *
+         * وهي لا تمسّ الأرقام: المحارف التي نرسمها ‎0-9‎ اللاتينيّة كما تُخرجها
+         * `Fmt` بـ `Locale.US` (قاعدة المشروع 4)، و`textLocale` لا يستبدلها
+         * بأرقامٍ هنديّة.
          */
         val ARABIC: Locale = Locale.forLanguageTag("ar")
     }

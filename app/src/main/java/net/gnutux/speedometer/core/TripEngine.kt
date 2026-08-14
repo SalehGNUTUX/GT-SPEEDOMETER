@@ -6,8 +6,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import net.gnutux.speedometer.core.camera.CameraSession
 import net.gnutux.speedometer.core.camera.HudSnapshot
@@ -23,6 +27,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** دورة النبضة: خانة الثواني وحدها هي ما يُعرض، فأكثرُ من مرّةٍ في الثانية رسمٌ بلا أثر */
+private const val TICK_PERIOD_MS = 1_000L
 
 /**
  * الغراء بين مصدر الموقع والمرشّح والمسجّل. نسخة واحدة تعيش في [net.gnutux.speedometer.SpeedoApp]،
@@ -97,6 +104,35 @@ class TripEngine(private val context: Context) {
                 }
             }
         }
+
+        // نبضة المدّة. `_state` كان لا ينبعث إلّا بوصول عيّنة، فالعدّاد على الشاشة
+        // وفي الطبقة المحروقة كان يتجمّد كلّما تجمّد الاستقبال — وهو أسوأ ما يكون
+        // في النفق والمرآب، حيث المستعمل أحوج ما يكون إلى دليلٍ على أنّ الجهاز يعمل.
+        //
+        // النطاق نطاق المحرّك نفسه (`Dispatchers.Main.immediate`) لا خيطًا جديدًا،
+        // وهو عين النطاق الذي تجري فيه `onSample`: فلا تتشابك كتابتان على `_state`
+        // إذ لا تتداخل روتينتان مشتركتان على مرسِلٍ واحد إلّا عند نقطة تعليق.
+        //
+        // و`collectLatest` على الحالة وحدها هي المفتاح: كلّ انتقالٍ يُلغي حلقة
+        // النبض السابقة، فتموت النبضة تلقائيًّا عند «إيقاف» و«إنهاء» و«تصفير»
+        // أيًّا كان من أمر بها — الواجهة أو مربّع الإعدادات السريعة أو خروج التطبيق.
+        scope.launch {
+            recorder.state
+                .map { it.status }
+                .distinctUntilChanged()
+                .collectLatest { status ->
+                    if (status != TripStatus.RUNNING) return@collectLatest
+                    while (true) {
+                        // انتظارٌ إلى حدّ الثانية التالية لا ألف ملّي ثانية عمياء:
+                        // الرقم المعروض ينقلب عند ثانيته الحقيقيّة فلا يتراكم انزياح
+                        delay(TICK_PERIOD_MS - recorder.elapsedNowMs() % TICK_PERIOD_MS)
+                        recorder.refreshElapsed()
+                        // الطبقة المحروقة تُرسم من لقطةٍ لا من الحالة، فلولا دفعُها
+                        // هنا لبقيت ساعة الفيديو واقفةً بينما ساعة الشاشة تعدّ
+                        pushHud(_liveSpeedMps.value)
+                    }
+                }
+        }
     }
 
     /**
@@ -164,6 +200,7 @@ class TripEngine(private val context: Context) {
             trackStartUtcMillis = recorder.trackStartUtcMillis,
             trackStartNanos = start,
             videoFileName = videoName,
+            durationMs = recorder.state.value.elapsedMs,
             videoOffsetMs = offsetMs,
         )
         return gpx

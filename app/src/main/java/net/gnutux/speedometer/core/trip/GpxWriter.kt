@@ -40,6 +40,7 @@ object GpxWriter {
         trackStartNanos: Long?,
         videoFileName: String? = null,
         videoOffsetMs: Long? = null,
+        durationMs: Long? = null,
     ) {
         val iso = isoFormat()
         val sb = StringBuilder(points.size * 160 + 1024)
@@ -53,10 +54,19 @@ object GpxWriter {
         sb.append("  <metadata>\n")
         sb.append("    <name>").append(escape(name)).append("</name>\n")
         sb.append("    <time>").append(iso.format(Date(trackStartUtcMillis))).append("</time>\n")
-        if (videoFileName != null && videoOffsetMs != null) {
+        val hasVideo = videoFileName != null && videoOffsetMs != null
+        if (hasVideo || durationMs != null) {
             sb.append("    <extensions>\n")
-            sb.append("      <gtspeedo:video>").append(escape(videoFileName)).append("</gtspeedo:video>\n")
-            sb.append("      <gtspeedo:videoOffsetMs>").append(videoOffsetMs).append("</gtspeedo:videoOffsetMs>\n")
+            if (hasVideo) {
+                sb.append("      <gtspeedo:video>").append(escape(videoFileName!!)).append("</gtspeedo:video>\n")
+                sb.append("      <gtspeedo:videoOffsetMs>").append(videoOffsetMs).append("</gtspeedo:videoOffsetMs>\n")
+            }
+            // المدّة تُكتب صراحةً: منذ 0.4.0 تُحسب من لحظة الضغط لا من أوّل تثبيت،
+            // وتُخصم منها الوقفات — ولا سبيل إلى استنتاج ذلك من فروق النقاط، فكان
+            // السجلّ يعرض مدّةً تخالف ما رآه صاحب الرحلة على الشاشة.
+            if (durationMs != null) {
+                sb.append("      <gtspeedo:durationMs>").append(durationMs).append("</gtspeedo:durationMs>\n")
+            }
             sb.append("    </extensions>\n")
         }
         sb.append("  </metadata>\n")

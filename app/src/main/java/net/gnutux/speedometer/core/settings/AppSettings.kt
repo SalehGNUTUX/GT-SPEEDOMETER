@@ -92,7 +92,11 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     // ===== الفيديو =====
 
-    val burnOverlay: StateFlow<Boolean> = pref(KEY_BURN, false)
+    /**
+     * الحرق مفعَّلٌ افتراضيًّا منذ 0.4.0: مَن يصوّر رحلته يريد الرقم داخل الملفّ، لا
+     * على شاشةٍ لن يراها أحدٌ بعد النزول. والفيديو النظيف يبقى خيارًا بلمسة.
+     */
+    val burnOverlay: StateFlow<Boolean> = pref(KEY_BURN, true)
     fun setBurnOverlay(enabled: Boolean) = put(KEY_BURN, enabled)
 
     val recordAudio: StateFlow<Boolean> = pref(KEY_AUDIO, true)
@@ -111,6 +115,20 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
     /** قلب ألوان بلاطات الخريطة؛ يليق بالسمة الداكنة ويُتعب العين في الفاتحة */
     val invertMapTiles: StateFlow<Boolean> = pref(KEY_INVERT_TILES, true)
     fun setInvertMapTiles(enabled: Boolean) = put(KEY_INVERT_TILES, enabled)
+
+    /**
+     * تفضيل الخريطة المحلّيّة على بلاطات الإنترنت.
+     *
+     * مفعَّلٌ افتراضًا لأنّ الراكب يخرج من التغطية أكثر ممّا يبقى فيها، وكلّ بلاطةٍ
+     * تُجلب تُستهلك حزمةً وبطّاريّة. وبقي خيارًا لأنّ الأرشيف يتقادم: من يريد شارعًا
+     * شُقّ بعد تاريخ ملفّه يُطفئه فيعود إلى بلاطاتٍ حيّة.
+     *
+     * إطفاؤه لا يعني «إنترنت أفضل» بل «إنترنت دائمًا»؛ وتفعيله لا يعني «محلّيّة
+     * دائمًا» بل «محلّيّة حيث تغطّي» — والتحقّق من التغطية في
+     * [net.gnutux.speedometer.core.map.OfflineMaps.covers].
+     */
+    val preferOfflineMaps: StateFlow<Boolean> = pref(KEY_PREFER_OFFLINE, true)
+    fun setPreferOfflineMaps(enabled: Boolean) = put(KEY_PREFER_OFFLINE, enabled)
 
     /** مهلة التراجع عن الحذف بالثواني؛ صفر يعني حذفًا فوريًّا */
     val undoSeconds: StateFlow<Int> = pref(KEY_UNDO_SECONDS, DEFAULT_UNDO_SECONDS)
@@ -136,6 +154,7 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_SEGMENT = intPreferencesKey("video_segment_minutes")
         private val KEY_AUTO_TRIP = booleanPreferencesKey("auto_trip_with_recording")
         private val KEY_INVERT_TILES = booleanPreferencesKey("invert_map_tiles")
+        private val KEY_PREFER_OFFLINE = booleanPreferencesKey("prefer_offline_maps")
         private val KEY_UNDO_SECONDS = intPreferencesKey("undo_seconds")
     }
 }

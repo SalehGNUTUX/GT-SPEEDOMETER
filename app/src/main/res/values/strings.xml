@@ -162,4 +162,19 @@
     <string name="settings_pip">نافذة عائمة عند المغادرة</string>
     <string name="settings_pip_note">أثناء رحلةٍ أو تسجيل، ينكمش التطبيق إلى نافذةٍ صغيرة تُظهر السرعة بدل أن يختفي</string>
     <string name="pip_recording">التسجيل جارٍ</string>
+    <string name="action_minimize">تصغير إلى نافذة عائمة</string>
+
+    <!-- ===== 0.5.0 ===== -->
+    <string name="segment_title">طول المقطع</string>
+    <string name="segment_applies_next">يسري على المقطع التالي</string>
+    <string name="settings_section_offline">الخرائط دون اتّصال</string>
+    <string name="settings_offline_maps">تفضيل الخريطة المحلّيّة</string>
+    <string name="settings_offline_maps_note">تُستعمل بلاطات الإنترنت حين لا تكون هناك خريطة محلّيّة تغطّي الموضع</string>
+    <string name="settings_offline_status_found">وُجدت خريطة محلّيّة: %1$s</string>
+    <string name="settings_offline_status_none">لا خريطة محلّيّة</string>
+    <string name="settings_offline_folder">ضع ملفّات .mbtiles أو .sqlite أو .zip في: %1$s</string>
+    <string name="settings_offline_rescan">إعادة الفحص</string>
+    <string name="map_source_offline">محلّيّة</string>
+    <string name="map_source_online">إنترنت</string>
+    <string name="settings_offline_folder_alt">أو، على أندرويد ٩ فما دون، مجلّد عامّ</string>
 </resources>

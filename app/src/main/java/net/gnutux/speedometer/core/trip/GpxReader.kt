@@ -22,6 +22,8 @@ class TripTrack(
     val name: String,
     val startMs: Long,
     val points: List<TrackPoint>,
+    /** المدّة كما سجّلها التطبيق لحظة الإنهاء؛ `null` في ملفّات ما قبل 0.4.0 */
+    private val recordedDurationMs: Long? = null,
 ) {
     val distanceM: Double
     val durationMs: Long
@@ -51,7 +53,10 @@ class TripTrack(
         distanceM = distance
         maxSpeedKmh = maxSpeed * 3.6f
         movingTimeMs = moving
-        durationMs = if (points.size >= 2) points.last().timeMs - points.first().timeMs else 0L
+        // المسجَّلة أصدق: فارق زمن النقاط يُسقط ما قبل أوّل تثبيتٍ ويحسب الوقفات،
+        // وهو نقيض ما يعدّه العدّاد الحيّ. وتبقى الفروق للملفّات القديمة.
+        durationMs = recordedDurationMs
+            ?: if (points.size >= 2) points.last().timeMs - points.first().timeMs else 0L
     }
 
     val distanceKm: Double get() = distanceM / 1000.0
@@ -71,6 +76,7 @@ object GpxReader {
         val points = mutableListOf<TrackPoint>()
         var name = file.nameWithoutExtension
         var nameFromMetadata = false
+        var recordedDuration: Long? = null
 
         file.inputStream().use { input ->
             val parser = Xml.newPullParser()
@@ -95,7 +101,7 @@ object GpxReader {
                             speed = 0f
                         }
 
-                        "time", "speed", "name" -> pendingText = ""
+                        "time", "speed", "name", "durationMs" -> pendingText = ""
                     }
 
                     XmlPullParser.TEXT -> if (pendingText != null) pendingText = parser.text
@@ -118,6 +124,10 @@ object GpxReader {
                                 }
                             }
 
+                            "durationMs" -> if (!inTrkpt) {
+                                recordedDuration = pendingText?.trim()?.toLongOrNull()
+                            }
+
                             else -> if (inTrkpt && parser.name.endsWith("speed")) {
                                 speed = pendingText?.toFloatOrNull() ?: 0f
                             }
@@ -135,6 +145,7 @@ object GpxReader {
             name = name,
             startMs = points.first().timeMs.takeIf { it > 0 } ?: file.lastModified(),
             points = points,
+            recordedDurationMs = recordedDuration,
         )
     }.getOrNull()
 
