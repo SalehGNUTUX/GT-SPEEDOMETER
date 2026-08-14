@@ -193,4 +193,35 @@
     <string name="settings_about_repo">المستودع</string>
     <string name="settings_about_repo_url">https://github.com/SalehGNUTUX/GT-SPEEDOMETER</string>
     <string name="settings_about_developer_name">SalehGNUTUX</string>
+
+    <!-- 0.7.0 — جسر OsmAnd -->
+    <string name="settings_section_osmand">خرائط OsmAnd</string>
+    <string name="settings_osmand_title">ارسم خريطة الرحلة من OsmAnd</string>
+    <string name="settings_osmand_note">إن كان OsmAnd مثبّتًا وفيه خريطة منطقتك، رُسمت خريطة الرحلة منه دون اتّصال. صيغته المتّجهة ‎.obf‎ لا يرسمها هذا التطبيق بنفسه.</string>
+    <string name="settings_osmand_installed">مثبَّت: %1$s</string>
+    <string name="settings_osmand_missing">لا نسخة OsmAnd على الجهاز</string>
+    <string name="settings_osmand_ready">جاهز — تُرسم خريطة الرحلة من خرائطه المحلّيّة</string>
+    <string name="settings_osmand_unreachable">مثبَّت لكنّ واجهته الخارجيّة لا تستجيب. افتح OsmAnd مرّةً، ثمّ فعّل «واجهة برمجة التطبيقات» في إعداداته.</string>
+    <string name="settings_osmand_checking">جارٍ الفحص…</string>
+    <string name="settings_osmand_recheck">إعادة الفحص</string>
+    <string name="settings_osmand_get">تنزيل OsmAnd</string>
+    <string name="settings_osmand_url">https://osmand.net</string>
+    <string name="map_source_osmand">OsmAnd</string>
+    <string name="map_osmand_rendering">تُرسم من OsmAnd…</string>
+
+    <!-- 0.7.0 — مسارٌ بلا خريطة أساس -->
+    <string name="map_sketch_badge">مخطَّط</string>
+    <string name="map_sketch_note">مسارٌ بلا خريطة أساس: لا بلاطات محلّيّة ولا اتّصال</string>
+    <string name="map_scale_km">%1$s كم</string>
+    <string name="map_scale_m">%1$s م</string>
+
+    <!-- 0.7.0 — السرعة القصوى والتنبيه -->
+    <string name="settings_section_limit">السرعة القصوى</string>
+    <string name="settings_speed_limit">الحدّ الذي لا أتجاوزه</string>
+    <string name="settings_speed_limit_note">يُضبط عليه مدى القرص وتُرسم عنده علامةٌ حمراء</string>
+    <string name="settings_speed_limit_off">بلا حدّ</string>
+    <string name="settings_speed_alert">تنبيه صوتيّ عند التجاوز</string>
+    <string name="settings_speed_alert_note">صفيرةٌ لحظة تخطّي الحدّ، فإن دام التجاوز صار الصفير متكرّرًا</string>
+    <string name="speed_limit_value">%1$s كم/س</string>
+    <string name="speed_over_limit">تجاوزتَ الحدّ</string>
 </resources>

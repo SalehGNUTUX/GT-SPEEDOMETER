@@ -20,10 +20,14 @@ import android.text.style.RelativeSizeSpan
 import android.text.style.ScaleXSpan
 import android.text.style.StyleSpan
 import androidx.camera.effects.Frame
+import net.gnutux.speedometer.core.alert.SpeedScale
+import net.gnutux.speedometer.core.alert.SpeedZone
 import net.gnutux.speedometer.ui.Fmt
 import java.util.Locale
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 
 /**
@@ -34,8 +38,9 @@ import kotlin.math.roundToInt
  * متناقضًا. لذا نمرّر قيمًا بدائيّة غير قابلة للتغيّر تُستبدَل ذرّيًّا مرّةً واحدة
  * لكلّ تحديث موقع، ويقرؤها الراسم كما هي.
  *
- * `gaugeMaxKmh` و`warnKmh` جزءٌ من اللقطة لأنّهما يتبعان مركبةَ المستخدم، وقد
- * يتغيّران أثناء التسجيل.
+ * `gaugeMaxKmh` و`warnKmh` و`limitKmh` جزءٌ من اللقطة لأنّها تتبع مركبةَ المستخدم
+ * وحدَّه المضبوط، وقد تتغيّر أثناء التسجيل. ومصدرها جميعًا
+ * [net.gnutux.speedometer.core.alert.SpeedScale] لا حسابٌ ثانٍ هنا.
  */
 data class HudSnapshot(
     val speedKmh: Float = 0f,
@@ -46,6 +51,8 @@ data class HudSnapshot(
     val durationMs: Long = 0L,
     val gaugeMaxKmh: Int = 200,
     val warnKmh: Int = 100,
+    /** حدّ السائق؛ صفرٌ يعني بلا حدّ فلا علامةَ حمراء ولا حكمَ لها على اللون */
+    val limitKmh: Int = 0,
 )
 
 /**
@@ -104,6 +111,16 @@ class VideoOverlayPainter {
     private val progress = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
+    }
+
+    /**
+     * علامة حدّ السائق. لونها ثابتٌ فلا يُضبط عند كلّ إطار، وطرفها مستوٍ
+     * (`BUTT`) لا مستدير: هي خطٌّ حادّ يقول «هنا الحدّ» لا امتدادٌ للقوس.
+     */
+    private val limitMark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.BUTT
+        color = HudMetrics.COLOR_DANGER
     }
 
     /**
@@ -557,13 +574,22 @@ class VideoOverlayPainter {
         val fraction = (s.speedKmh / s.gaugeMaxKmh).coerceIn(0f, 1f)
         if (fraction > 0.001f) {
             progress.strokeWidth = thickness
-            progress.color = when {
-                s.speedKmh >= s.gaugeMaxKmh * HudMetrics.DANGER_OF_MAX -> HudMetrics.COLOR_DANGER
-                s.speedKmh >= s.warnKmh.toFloat() -> HudMetrics.COLOR_WARN
-                else -> HudMetrics.COLOR_ACCENT
+            // الحكم من العقد المشترك بقيمٍ بدائيّة: لا تخصيصَ كائنٍ على خيط الرسم،
+            // ولا نسخةَ ثانية من الشرط تنحرف عن نسخة الشاشة بعد تعديل
+            progress.color = when (
+                SpeedScale.zoneOf(s.speedKmh, s.gaugeMaxKmh, s.warnKmh, s.limitKmh)
+            ) {
+                SpeedZone.DANGER -> HudMetrics.COLOR_DANGER
+                SpeedZone.WARN -> HudMetrics.COLOR_WARN
+                SpeedZone.NORMAL -> HudMetrics.COLOR_ACCENT
             }
             canvas.drawArc(arcBox, HudMetrics.ARC_START, fraction * HudMetrics.ARC_SWEEP, false, progress)
         }
+
+        // علامة الحدّ **بعد** القوس الحيّ: لو رُسمت قبله لغطّاها القوس عند تجاوز
+        // الحدّ — أي في اللحظة التي تُقرأ فيها. المواصفة: المرسوم هو المحروق، وهذه
+        // العلامة نفسها تُرسم على قوس الشاشة بالنسب ذاتها
+        drawLimitMark(canvas, cx, cy, radius, thickness, s)
 
         val value = gaugeText
         gaugeValue.textSize = m.gaugeValueText
@@ -596,6 +622,41 @@ class VideoOverlayPainter {
 
         val unitWidth = gaugeUnit.measureText(UNIT_KMH)
         canvas.drawTextRun(UNIT_KMH, 0, UNIT_KMH.length, 0, UNIT_KMH.length, cx - unitWidth / 2f, unitBaseline, true, gaugeUnit)
+    }
+
+    /**
+     * الخطّ الشعاعيّ الأحمر عند حدّ السائق، على مسار القوس نفسه.
+     *
+     * علامةٌ لا تبدّلَ لون: اللون يقول «تجاوزتَ» بعد فوات الأمر، والعلامة تقول
+     * «هنا الحدّ» قبله فيُهدّئ السائق قبل بلوغه. وهي في الملفّ المحروق كما هي على
+     * الشاشة، لأنّ المواصفة توجب أن يكون المرسوم هو المحروق.
+     *
+     * النسب من [HudMetrics] لا من تقديرٍ محلّيّ: العرض والطول محسوبان من سماكة
+     * القوس، فتخرج العلامة بالنسبة ذاتها على الشاشة وفي الملفّ وعند أيّ دقّة.
+     */
+    private fun drawLimitMark(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        thickness: Float,
+        s: HudSnapshot,
+    ) {
+        // خارج المدى أو بلا حدّ: لا شيء يُرسم
+        if (s.limitKmh <= 0 || s.limitKmh > s.gaugeMaxKmh) return
+        val fraction = s.limitKmh.toFloat() / s.gaugeMaxKmh
+        val angle = Math.toRadians((HudMetrics.ARC_START + HudMetrics.ARC_SWEEP * fraction).toDouble())
+        val cosA = cos(angle).toFloat()
+        val sinA = sin(angle).toFloat()
+        val half = thickness * HudMetrics.LIMIT_MARK_LENGTH_OF_STROKE / 2f
+        limitMark.strokeWidth = thickness * HudMetrics.LIMIT_MARK_WIDTH_OF_STROKE
+        canvas.drawLine(
+            cx + cosA * (radius - half),
+            cy + sinA * (radius - half),
+            cx + cosA * (radius + half),
+            cy + sinA * (radius + half),
+            limitMark,
+        )
     }
 
     /**

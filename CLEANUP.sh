@@ -9,7 +9,7 @@
 #      ./CLEANUP.sh --fix      يحذف الزائد بعد تأكيد
 #      ./CLEANUP.sh --fix -y   بلا تأكيد
 #
-#  الفحوص السبعة:
+#  الفحوص الثمانية:
 #    1. تعريفاتٌ مكرّرة  — صنفٌ واحد في ملفّين، وهو عطب «Redeclaration» الذي يوقف
 #                          المصرّف. يُكتشف بلا Gradle وفي ثانية.
 #    2. ملفّات Kotlin زائدة أو ناقصة مقابل بيان الإصدار المضمَّن أدناه.
@@ -18,6 +18,8 @@
 #    5. مخرجات بناءٍ متتبَّعة — حزم أو مجلّدات build دخلت الاعتماد.
 #    6. ملفّات دخيلة في الجذر — رقعات وملاحظات ومخلّفات فكّ ضغط.
 #    7. موارد ميّتة — صور وأيقونات لا يشير إليها شيء.
+#    8. واجهاتٌ تجريبيّة بلا @OptIn — يراها المصرّف ولا يراها فحصُ الأنواع الذي
+#                          يعمل على أصنافٍ مستخرَجة من APK (R8 يجرّد @RequiresOptIn).
 # ============================================================================
 
 set -uo pipefail
@@ -51,11 +53,12 @@ PROBLEMS=0
 DELETABLE=()
 
 # ---------------------------------------------------------------------------
-#  بيان الإصدار 0.5.0-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#  بيان الإصدار 0.7.0-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
 # ---------------------------------------------------------------------------
 MANIFEST="MainActivity.kt
 SpeedoApp.kt
 core/TripEngine.kt
+core/alert/SpeedAlert.kt
 core/camera/CameraSession.kt
 core/camera/HudMetrics.kt
 core/camera/VideoOverlayPainter.kt
@@ -64,6 +67,7 @@ core/location/LocationEngine.kt
 core/location/SpeedFilter.kt
 core/location/SpeedSample.kt
 core/map/OfflineMaps.kt
+core/map/OsmAndBridge.kt
 core/media/MediaRepository.kt
 core/profile/VehicleProfile.kt
 core/settings/AppSettings.kt
@@ -79,6 +83,7 @@ ui/Format.kt
 ui/SpeedoViewModel.kt
 ui/components/GpsStatusBar.kt
 ui/components/RouteMap.kt
+ui/components/RouteSketch.kt
 ui/components/SpeedGauge.kt
 ui/components/StatTile.kt
 ui/components/TripControls.kt
@@ -229,7 +234,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude .github "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac

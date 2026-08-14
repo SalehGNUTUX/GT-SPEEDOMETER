@@ -38,6 +38,13 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     val liveSpeedMps = engine.liveSpeedMps
     val profile = engine.profile
 
+    /**
+     * مدى القرص وعتباته وحدّ السائق. الشاشات تقرأ هذا ولا تشتقّ شيئًا بنفسها:
+     * أربع نسخٍ من الاشتقاق هي أربع فرصٍ لأن تختلف الشاشات في مشهدٍ واحد، والاشتقاق
+     * كلّه في [net.gnutux.speedometer.core.alert.SpeedScale.of].
+     */
+    val speedScale = engine.speedScale
+
     /** التفضيلات: مصدر حقيقة واحد تقرؤه الشاشات مباشرة بلا وسيطٍ في هذا الصنف */
     val settings: AppSettings = engine.settings
 

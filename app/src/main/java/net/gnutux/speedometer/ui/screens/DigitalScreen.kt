@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.alert.SpeedZone
 import net.gnutux.speedometer.core.trip.TripStatus
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
@@ -41,13 +42,15 @@ fun DigitalScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val trip by vm.tripState.collectAsStateWithLifecycle()
     val gnss by vm.gnss.collectAsStateWithLifecycle()
     val liveSpeed by vm.liveSpeedMps.collectAsStateWithLifecycle()
-    val profile by vm.profile.collectAsStateWithLifecycle()
+    val scale by vm.speedScale.collectAsStateWithLifecycle()
 
     val kmh = liveSpeed * 3.6f
-    val color = when {
-        kmh >= profile.gaugeMaxKmh * 0.92f -> Danger
-        kmh >= profile.defaultWarnKmh -> Warn
-        else -> Accent
+    // الحكم من العقد المشترك حرفًا بحرف: هذه الشاشة والقرص والنافذة المصغّرة وطبقة
+    // الكاميرا تقول اللون نفسه للسرعة نفسها، وإلّا اختلف المعنى في عين من يلمح
+    val color = when (scale.zoneOf(kmh)) {
+        SpeedZone.DANGER -> Danger
+        SpeedZone.WARN -> Warn
+        SpeedZone.NORMAL -> Accent
     }
 
     // شريط الحالة أعلى، والأزرار أسفل بارتفاعٍ ثابت، وما بينهما `weight(1f)` يتوسّط

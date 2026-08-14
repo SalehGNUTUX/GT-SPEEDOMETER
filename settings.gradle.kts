@@ -21,3 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "GT-SPEEDOMETER"
 include(":app")
+// واجهة OsmAnd الخارجيّة — شفرةٌ منسوخة من مستودع OsmAnd، معزولةٌ عن شفرتنا
+include(":osmand-api")

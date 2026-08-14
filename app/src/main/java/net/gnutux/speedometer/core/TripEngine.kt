@@ -8,11 +8,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import net.gnutux.speedometer.core.alert.AlertAction
+import net.gnutux.speedometer.core.alert.SpeedAlert
+import net.gnutux.speedometer.core.alert.SpeedAlertPlayer
+import net.gnutux.speedometer.core.alert.SpeedScale
 import net.gnutux.speedometer.core.camera.CameraSession
 import net.gnutux.speedometer.core.camera.HudSnapshot
 import net.gnutux.speedometer.core.location.LocationEngine
@@ -57,6 +65,31 @@ class TripEngine(private val context: Context) {
     private val _liveSpeedMps = MutableStateFlow(0f)
     val liveSpeedMps = _liveSpeedMps.asStateFlow()
 
+    /**
+     * مدى القرص وعتباته وحدّ السائق — جوابٌ واحد تقرؤه الشاشات الأربع والطبقة
+     * المحروقة. اشتقاقه في [SpeedScale.of] وحدها، فلا تحسبه شاشةٌ لنفسها.
+     *
+     * `StateFlow` لا `Flow`: الطبقة المحروقة تُدفَع من [pushHud] وهو نداءٌ متزامن
+     * على خيط الموقع، فيحتاج القيمة **الآن**. و`Eagerly` كي تكون جاهزةً قبل أوّل
+     * عيّنة.
+     */
+    val speedScale: StateFlow<SpeedScale> =
+        combine(_profile, settings.speedLimitKmh) { p, limit -> SpeedScale.of(p, limit) }
+            .stateIn(
+                scope,
+                SharingStarted.Eagerly,
+                SpeedScale.of(VehicleProfile.DEFAULT, AppSettings.NO_SPEED_LIMIT),
+            )
+
+    /**
+     * التنبيه في المحرّك لا في الشاشة، وهذا شرطُ صحّته: [TripEngine] هو من يرصد
+     * السرعة ويعيش على نطاق التطبيق، فيبقى التنبيه عاملًا والتطبيق في الخلفيّة أو
+     * في النافذة المصغّرة أو والشاشة مطفأة. تركيبةٌ في `@Composable` كانت تصمت عند
+     * أوّل انطفاءٍ للشاشة — أي حين يحتاجها السائق.
+     */
+    private val alert = SpeedAlert()
+    private val alertPlayer = SpeedAlertPlayer()
+
     fun setProfile(p: VehicleProfile) {
         // الاختيار يُحفظ: ملفّ المركبة يضبط مدى القرص وعتبة التوقّف وشدّة التنعيم،
         // أي القياس نفسه، فعودته إلى الافتراضيّ عند كلّ إقلاع تغيّر الأرقام صامتةً
@@ -76,7 +109,7 @@ class TripEngine(private val context: Context) {
      */
     private fun pushHud(smoothedMps: Float) {
         val trip = recorder.state.value
-        val p = _profile.value
+        val scale = speedScale.value
         camera.updateHud(
             HudSnapshot(
                 speedKmh = smoothedMps * 3.6f,
@@ -88,10 +121,41 @@ class TripEngine(private val context: Context) {
                 // في الفيديو رقمًا يخالف ما تعرضه شاشتا العدّاد والرحلات.
                 avgSpeedKmh = trip.avgSpeedKmh,
                 durationMs = trip.elapsedMs,
-                gaugeMaxKmh = p.gaugeMaxKmh,
-                warnKmh = p.defaultWarnKmh,
+                // المدى والعتبة والحدّ من الاشتقاق الواحد لا من ملفّ المركبة مباشرةً:
+                // المواصفة توجب أن يكون المحروق هو المرسوم، فلو أخذت الشاشة مداها من
+                // حدّ السائق وأخذه الملفّ من المركبة لخرج قوسان مختلفان لمشهدٍ واحد
+                gaugeMaxKmh = scale.gaugeMaxKmh,
+                warnKmh = scale.warnKmh,
+                limitKmh = scale.limitKmh,
             )
         )
+    }
+
+    /**
+     * التنبيه الصوتيّ. يُنادى لكلّ عيّنةٍ **قُبلت** (مرّت ببوّابة الدقّة في
+     * [SpeedFilter.accepts])، فشرط «لا تنبيه والإشارة رديئة» مستوفًى قبل الدخول
+     * هنا. ويبقى شرط «لا تنبيه والمركبة واقفة» أدناه.
+     *
+     * القرار كلّه في [SpeedAlert.onSample]، وهذه الدالّة غلافٌ يجمع الشروط ويناول
+     * الناتج إلى المشغّل.
+     */
+    private fun onSpeedForAlert(smoothedMps: Float, nowNanos: Long) {
+        val limit = settings.speedLimitKmh.value
+        if (!settings.speedAlertEnabled.value || limit <= 0) {
+            // الخيار مطفأ أو لا حدّ: لا نُبقي حالةً معلّقة تنفجر صفيرةً عند إعادة
+            // التفعيل، والمورد الصوتيّ يُحرَّر فلا يبقى مسار صوتٍ محجوزًا بلا عمل
+            alert.reset()
+            alertPlayer.release()
+            return
+        }
+        // واقفة: العدّاد يصفّر ما دون عتبة التوقّف، ومع ذلك نشترطها صراحةً — تذبذبُ
+        // التموضع وقوفًا يُخرج قفزاتٍ كاذبة، وصفيرةٌ والسيّارة ساكنة تُفقد الثقة كلّها
+        if (smoothedMps <= _profile.value.stopThresholdMps) {
+            alert.reset()
+            return
+        }
+        val action = alert.onSample(smoothedMps * 3.6f, limit, nowNanos)
+        if (action != AlertAction.SILENT) alertPlayer.play(action)
     }
 
     init {
@@ -108,6 +172,13 @@ class TripEngine(private val context: Context) {
                     pushHud(_liveSpeedMps.value)
                 }
             }
+        }
+
+        // تبدّل الحدّ يغيّر مدى القرص وعتبته وموضع علامته الحمراء، فتُدفَع لقطةٌ
+        // فورًا: الطبقة المحروقة ترسم من اللقطة لا من الحالة، فلولا هذا لبقي قوس
+        // الملفّ على المدى القديم حتّى وصول العيّنة التالية — وقد لا تصل في نفق
+        scope.launch {
+            speedScale.collect { pushHud(_liveSpeedMps.value) }
         }
 
         // نبضة المدّة. `_state` كان لا ينبعث إلّا بوصول عيّنة، فالعدّاد على الشاشة
@@ -156,6 +227,9 @@ class TripEngine(private val context: Context) {
                     _liveSpeedMps.value = smoothed
                     recorder.onSample(sample, smoothed)
                     pushHud(smoothed)
+                    // زمن العيّنة لا زمن الآن: كلاهما على محور `elapsedRealtimeNanos`،
+                    // وزمن العيّنة هو اللحظة التي كانت فيها السرعة هذه فعلًا
+                    onSpeedForAlert(smoothed, sample.elapsedRealtimeNanos)
                 }
             }
         }
@@ -171,6 +245,10 @@ class TripEngine(private val context: Context) {
         collectJob?.cancel()
         collectJob = null
         _liveSpeedMps.value = 0f
+        // مسار التحرير: لا عيّنات بعد اليوم فلا صفير، و`ToneGenerator` يمسك مسار
+        // صوتٍ في النظام فلا يُترك معلّقًا
+        alert.reset()
+        alertPlayer.release()
     }
 
     fun startTrip() {

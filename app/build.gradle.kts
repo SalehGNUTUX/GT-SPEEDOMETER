@@ -21,8 +21,8 @@ android {
         applicationId = "net.gnutux.speedometer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0-beta"
+        versionCode = 7
+        versionName = "0.7.0-beta"
     }
 
     androidResources {
@@ -95,4 +95,8 @@ dependencies {
     implementation(libs.androidx.camera.effects)
 
     implementation(libs.osmdroid.android)
+
+    // واجهة OsmAnd الخارجيّة: تُستدعى وقت التشغيل إن كان OsmAnd مثبَّتًا، وغيابه
+    // لا يعطّل شيئًا — الربط بالخدمة يفشل بهدوء فيعود التطبيق إلى مساره الخاصّ
+    implementation(project(":osmand-api"))
 }

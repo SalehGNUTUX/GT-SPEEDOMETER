@@ -62,6 +62,9 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val gnss by vm.gnss.collectAsStateWithLifecycle()
     val liveSpeed by vm.liveSpeedMps.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
+    // المدى والعتبة والحدّ من اشتقاقٍ واحد لا من ملفّ المركبة مباشرةً: حين يضبط
+    // السائق حدًّا يُعاد بناء القرص حوله، والشاشات الأربع تقرأ الجواب نفسه
+    val scale by vm.speedScale.collectAsStateWithLifecycle()
 
     // عمودٌ خارجيّ لا يتمرّر: القرص والبلاطات وحدها تتمرّر داخل `weight(1f)`، وصفّ
     // الأزرار مثبَّت تحته خارج منطقة التمرير. قبلها كان «إنهاء» ينزلق تحت حافّة الشاشة
@@ -89,12 +92,13 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                 // القرص أوّلًا وفي أعلى الشاشة: هو ما تقع عليه العين في لمحةٍ خاطفة
                 SpeedGauge(
                     speedKmh = liveSpeed * 3.6f,
-                    maxKmh = profile.gaugeMaxKmh,
-                    warnKmh = profile.defaultWarnKmh,
+                    maxKmh = scale.gaugeMaxKmh,
+                    warnKmh = scale.warnKmh,
                     unitLabel = stringResource(R.string.unit_kmh),
                     modifier = Modifier
                         .padding(top = ItemSpacing)
                         .size(gaugeSize),
+                    limitKmh = scale.limitKmh,
                 )
 
                 // شريط التموضع تحت القرص: كان يحتلّ شريطًا كاملًا في الأعلى قبل

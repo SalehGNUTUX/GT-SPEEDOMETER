@@ -48,6 +48,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.map.OfflineMaps
+import net.gnutux.speedometer.core.map.OsmAndBridge
+import net.gnutux.speedometer.core.map.OsmAndState
 import net.gnutux.speedometer.core.profile.VehicleProfile
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.settings.ThemeMode
@@ -85,12 +87,19 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val preferOffline by s.preferOfflineMaps.collectAsStateWithLifecycle()
     val undoSeconds by s.undoSeconds.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
+    val speedLimit by s.speedLimitKmh.collectAsStateWithLifecycle()
+    val speedAlert by s.speedAlertEnabled.collectAsStateWithLifecycle()
 
     // مصدر الحقيقة نفسه الذي تقرؤه الخريطة، فلا تقول الإعدادات «وُجدت» بينما ترسم
     // الخريطة بلاطات إنترنت
     val context = LocalContext.current
     val offlineMaps = remember(context) { OfflineMaps.of(context) }
     val offlineLibrary by offlineMaps.library.collectAsStateWithLifecycle()
+
+    // فتحُ الإعدادات أحد الموضعين اللذين يُوقظان جسر OsmAnd؛ والآخر فتحُ رحلة.
+    // ولا يُنشأ في `SpeedoApp` كي لا يوقظ عمليّة OsmAnd عند كلّ إقلاع.
+    val osmAndBridge = remember(context) { OsmAndBridge.of(context) }
+    val osmAnd by osmAndBridge.status.collectAsStateWithLifecycle()
 
     Column(modifier.fillMaxSize()) {
         SettingsHeader(onClose)
@@ -159,6 +168,36 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                         selectedIndex = VehicleProfile.entries.indexOf(profile),
                         onSelect = { vm.setProfile(VehicleProfile.entries[it]) },
                     )
+                }
+            }
+
+            // ===== السرعة القصوى =====
+            //
+            // قسمٌ قائم بذاته لا سطرٌ في «القيادة»: الحدُّ يغيّر مدى القرص وألوانه
+            // وصوت التطبيق، وهو أثرٌ أوسع من أن يُخبَّأ بين مفاتيح.
+            item { SectionTitle(stringResource(R.string.settings_section_limit)) }
+            item {
+                SettingCard {
+                    RowLabel(
+                        title = stringResource(R.string.settings_speed_limit),
+                        note = stringResource(R.string.settings_speed_limit_note),
+                    )
+                    ChoiceRow(
+                        options = AppSettings.LIMIT_CHOICES.map { limitLabel(it) },
+                        selectedIndex = AppSettings.LIMIT_CHOICES.indexOf(speedLimit)
+                            .coerceAtLeast(0),
+                        onSelect = { s.setSpeedLimitKmh(AppSettings.LIMIT_CHOICES[it]) },
+                    )
+                    // المفتاح يظهر مع الحدّ وحده: تنبيهٌ صوتيّ بلا حدٍّ يُنبّه على
+                    // ماذا؟ وإظهاره معطَّلًا يترك المستعمل يقلبه فلا يقع شيء.
+                    if (speedLimit > 0) {
+                        SwitchRow(
+                            title = stringResource(R.string.settings_speed_alert),
+                            note = stringResource(R.string.settings_speed_alert_note),
+                            checked = speedAlert,
+                            onChange = s::setSpeedAlertEnabled,
+                        )
+                    }
                 }
             }
 
@@ -285,6 +324,50 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                 }
             }
 
+            // ===== خرائط OsmAnd =====
+            //
+            // قسمٌ منفصلٌ عن «الخرائط دون اتّصال» رغم قربهما: ذاك عن أرشيفِ بلاطاتٍ
+            // يضعه المستعمل بيده ويرسمه تطبيقنا، وهذا عن خرائطَ متجهيّة يملكها
+            // تطبيقٌ آخر ويرسمها بنفسه. خلطُهما كان يجعل «لا خريطة محلّيّة» جوابًا
+            // واحدًا عن سؤالين مختلفين، وعلاجُ كلٍّ منهما غير علاج الآخر.
+            item { SectionTitle(stringResource(R.string.settings_section_osmand)) }
+            item {
+                SettingCard {
+                    RowLabel(
+                        title = stringResource(R.string.settings_osmand_title),
+                        note = stringResource(R.string.settings_osmand_note),
+                    )
+                    RowLabel(
+                        title = when (osmAnd.state) {
+                            OsmAndState.CHECKING ->
+                                stringResource(R.string.settings_osmand_checking)
+                            OsmAndState.MISSING ->
+                                stringResource(R.string.settings_osmand_missing)
+                            OsmAndState.UNREACHABLE ->
+                                stringResource(R.string.settings_osmand_unreachable)
+                            OsmAndState.READY ->
+                                stringResource(R.string.settings_osmand_ready)
+                        },
+                        // اسم الحزمة يُعرض عند وجودها وحدها: سطرٌ فارغ تحت «غير
+                        // مثبَّت» يوحي بأنّ شيئًا نقص من العرض
+                        note = osmAnd.packageName
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { stringResource(R.string.settings_osmand_installed, it) },
+                    )
+                    if (osmAnd.state == OsmAndState.MISSING) {
+                        LinkRow(
+                            title = stringResource(R.string.settings_osmand_get),
+                            url = stringResource(R.string.settings_osmand_url),
+                        )
+                    } else {
+                        ActionRow(
+                            label = stringResource(R.string.settings_osmand_recheck),
+                            onClick = osmAndBridge::recheck,
+                        )
+                    }
+                }
+            }
+
             // ===== عن التطبيق =====
             item { SectionTitle(stringResource(R.string.settings_section_about)) }
             item {
@@ -330,6 +413,15 @@ private fun undoLabel(seconds: Int): String =
         stringResource(R.string.settings_undo_off)
     } else {
         stringResource(R.string.settings_undo_seconds, Fmt.count(seconds))
+    }
+
+/** صفرٌ ليس سرعةً بل غيابُ حدٍّ، فله نصُّه لا الرقم «0 كم/س» */
+@Composable
+private fun limitLabel(kmh: Int): String =
+    if (kmh <= AppSettings.NO_SPEED_LIMIT) {
+        stringResource(R.string.settings_speed_limit_off)
+    } else {
+        stringResource(R.string.speed_limit_value, Fmt.count(kmh))
     }
 
 @Composable

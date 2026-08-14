@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.alert.SpeedZone
 import net.gnutux.speedometer.core.trip.TripStatus
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
@@ -69,7 +70,7 @@ fun PipScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     // بلا ما يُنبئ أنّ شيئًا انتهى. يقع هذا حين ينتهي التسجيل من تلقائه ونحن في
     // الانكماش — امتلاء القرص مثلًا — فنطوي النافذة بدل أن نكذب.
     val liveSpeedMps by vm.liveSpeedMps.collectAsStateWithLifecycle()
-    val profile by vm.profile.collectAsStateWithLifecycle()
+    val scale by vm.speedScale.collectAsStateWithLifecycle()
     val isRecording by vm.isRecordingSession.collectAsStateWithLifecycle()
     val trip by vm.tripState.collectAsStateWithLifecycle()
 
@@ -89,10 +90,11 @@ fun PipScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
 
     // العتبات نفسها التي يلوّن بها القرص الكبير، حرفًا بحرف: النافذة امتدادٌ للعداد لا
     // شاشةٌ أخرى، ولو اختلف اللون بينهما لاختلف المعنى في عين سائقٍ يلمح ولا يقرأ.
-    val speedColor = when {
-        kmh >= profile.gaugeMaxKmh * 0.92f -> Danger
-        kmh >= profile.defaultWarnKmh -> Warn
-        else -> Accent
+    // ولذلك صار «حرفًا بحرف» دالّةً واحدة لا نسختين متطابقتين بالمصادفة.
+    val speedColor = when (scale.zoneOf(kmh)) {
+        SpeedZone.DANGER -> Danger
+        SpeedZone.WARN -> Warn
+        SpeedZone.NORMAL -> Accent
     }
 
     val recLabel = stringResource(R.string.pip_recording)

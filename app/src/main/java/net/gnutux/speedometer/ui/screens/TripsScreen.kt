@@ -346,6 +346,9 @@ private fun TripDetail(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(320.dp),
+                // ملفّ الرحلة نفسه لا نسخةٌ مصغَّرة في المخبأ: OsmAnd يقرؤه مباشرةً
+                // حين يرسم الخريطة، فتُوفَّر كتابةُ ملفٍّ ثانٍ لكلّ رحلةٍ تُفتح.
+                gpxFile = trip.file,
                 noticeVisible = noticeVisible,
                 onDismissNotice = onDismissNotice,
                 onOpenOsmAnd = openInOsmAnd,

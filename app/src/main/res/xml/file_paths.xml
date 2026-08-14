@@ -5,4 +5,6 @@
     <external-files-path name="videos" path="videos/" />
     <external-files-path name="shots" path="shots/" />
     <external-files-path name="tracks" path="tracks/" />
+    <!-- نسخ GPX المصغَّرة التي يقرؤها OsmAnd حين يرسم خريطة الرحلة (OsmAndBridge) -->
+    <cache-path name="osmand-gpx" path="osmand-gpx/" />
 </paths>

@@ -22,6 +22,17 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!--
+        رؤية حزم OsmAnd. على أندرويد 11 فما فوق لا يرى `PackageManager` تطبيقًا
+        غير مُعلَنٍ هنا، فيقول «غير مثبَّت» عن تطبيقٍ قائم ويتعذّر الربط بخدمته.
+        الثلاثة نسخٌ متوازية: الكاملة والمجّانيّة ونسخة المطوّرين.
+    -->
+    <queries>
+        <package android:name="net.osmand.plus" />
+        <package android:name="net.osmand" />
+        <package android:name="net.osmand.dev" />
+    </queries>
+
     <application
         android:name=".SpeedoApp"
         android:allowBackup="true"
@@ -66,7 +77,18 @@
             </intent-filter>
         </service>
 
-        <!-- لمشاركة ملفّات مجلد التطبيق على أندرويد 9 فما دون -->
+        <!--
+            لمشاركة ملفّات مجلد التطبيق على أندرويد 9 فما دون، وهو نفسه الذي يمنح
+            OsmAnd قراءةَ ملفّ الرحلة حين نطلب منه رسم خريطتها.
+
+            ولماذا لا مزوّدٌ ثانٍ بسلطةٍ خاصّة بالجسر؟ لأنّ عنصرَي `<provider>`
+            باسم الصنف نفسه يُدمجان عند التركيب في `ActivityThread`: الثاني يجد
+            سجلّ الأوّل باسم مكوّنه فيتخلّى عن سجلّه هو، فيصير أيّ المسارَين يخدم
+            أيّ سلطةٍ أمرًا غير محسوم. وفصلُهما حقًّا يوجب صنفًا وارثًا لـ
+            `FileProvider` باسمٍ مغاير، وذلك ثمنٌ لا يشتري شيئًا: الإذن يُمنح على
+            عنوان ملفٍّ بعينه لا على المزوّد كلّه، وهذه السلطة نفسها هي التي يمرّ
+            بها زرّ «فتح في OsmAnd» منذ 0.4.0.
+        -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

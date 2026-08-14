@@ -90,6 +90,30 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
     val pipOnLeave: StateFlow<Boolean> = pref(KEY_PIP_ON_LEAVE, true)
     fun setPipOnLeave(enabled: Boolean) = put(KEY_PIP_ON_LEAVE, enabled)
 
+    // ===== السرعة القصوى =====
+
+    /**
+     * الحدّ الذي يضعه السائق لنفسه (كم/س)، و[NO_SPEED_LIMIT] يعني بلا حدّ.
+     *
+     * افتراضه «بلا حدّ» عمدًا: من لم يضبط شيئًا يجب ألّا يتبدّل عنده مدى القرص ولا
+     * لونه ولا يُصفر له شيء. والميزة كلّها تنبني على هذا المفتاح — القرص والعلامة
+     * الحمراء والتنبيه — فمصدره واحد هنا لا نسخةٌ في كلّ شاشة.
+     */
+    val speedLimitKmh: StateFlow<Int> = pref(KEY_SPEED_LIMIT, NO_SPEED_LIMIT)
+
+    /**
+     * السقف ‎300‎ لا لأنّ أحدًا يبلغه، بل لأنّ الحدّ يضبط مدى القرص: قيمةٌ شاذّة
+     * تُخرج قوسًا لا يُقرأ. والقاع صفرٌ لأنّه «بلا حدّ» لا حدٌّ منخفض.
+     */
+    fun setSpeedLimitKmh(v: Int) = put(KEY_SPEED_LIMIT, v.coerceIn(0, 300))
+
+    /**
+     * التنبيه الصوتيّ عند التجاوز. مطفأٌ افتراضًا: صوتٌ لم يطلبه أحدٌ في سيّارةٍ
+     * صامتة مفاجأةٌ لا خدمة، فليكن الصمت هو الأصل ويُفعّله من يريده.
+     */
+    val speedAlertEnabled: StateFlow<Boolean> = pref(KEY_SPEED_ALERT, false)
+    fun setSpeedAlertEnabled(enabled: Boolean) = put(KEY_SPEED_ALERT, enabled)
+
     // ===== الفيديو =====
 
     /**
@@ -143,6 +167,16 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         /** أطوال المقاطع المعروضة في الإعدادات */
         val SEGMENT_CHOICES = listOf(SEGMENT_CONTINUOUS, 3, 5, 7, 10)
 
+        /** [speedLimitKmh] بهذه القيمة يعني «بلا حدّ» */
+        const val NO_SPEED_LIMIT = 0
+
+        /**
+         * الحدود المعروضة في الإعدادات: حدود السرعة الشائعة على اللوحات لا سلّمًا
+         * حسابيًّا. من يريد رقمًا خارجها فـ [setSpeedLimitKmh] تقبل أيّ قيمة، وهذه
+         * قائمة اختيارٍ بلمسةٍ واحدة لا حصر.
+         */
+        val LIMIT_CHOICES = listOf(NO_SPEED_LIMIT, 30, 50, 60, 80, 90, 100, 110, 120, 140)
+
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_DAY_START = intPreferencesKey("day_start_hour")
         private val KEY_NIGHT_START = intPreferencesKey("night_start_hour")
@@ -156,5 +190,7 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_INVERT_TILES = booleanPreferencesKey("invert_map_tiles")
         private val KEY_PREFER_OFFLINE = booleanPreferencesKey("prefer_offline_maps")
         private val KEY_UNDO_SECONDS = intPreferencesKey("undo_seconds")
+        private val KEY_SPEED_LIMIT = intPreferencesKey("speed_limit_kmh")
+        private val KEY_SPEED_ALERT = booleanPreferencesKey("speed_alert_enabled")
     }
 }

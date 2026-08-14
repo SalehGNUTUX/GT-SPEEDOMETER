@@ -79,6 +79,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.alert.SpeedScale
+import net.gnutux.speedometer.core.alert.SpeedZone
 import net.gnutux.speedometer.core.camera.CameraSession
 import net.gnutux.speedometer.core.camera.HudMetrics
 import net.gnutux.speedometer.core.location.FixQuality
@@ -86,6 +88,8 @@ import net.gnutux.speedometer.core.location.GnssInfo
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
+import kotlin.math.cos
+import kotlin.math.sin
 
 // ===== شبكة الطبقة =====
 //
@@ -247,7 +251,9 @@ fun CameraScreen(
     val trip by vm.tripState.collectAsStateWithLifecycle()
     val gnss by vm.gnss.collectAsStateWithLifecycle()
     val liveSpeed by vm.liveSpeedMps.collectAsStateWithLifecycle()
-    val profile by vm.profile.collectAsStateWithLifecycle()
+    // المدى والعتبة والحدّ من الاشتقاق الواحد الذي يقرأ منه الراسم المحروق كذلك
+    // (عبر `HudSnapshot`)، فيبقى المرسوم هو المحروق كما توجب المواصفة
+    val scale by vm.speedScale.collectAsStateWithLifecycle()
     val isRecording by vm.isRecording.collectAsStateWithLifecycle()
     val cameraMessage by vm.cameraMessage.collectAsStateWithLifecycle()
     val burnOverlay by vm.burnOverlay.collectAsStateWithLifecycle()
@@ -437,8 +443,9 @@ fun CameraScreen(
                 SpeedRing(
                     dim = dim,
                     speedKmh = liveSpeed * 3.6f,
-                    maxKmh = profile.gaugeMaxKmh,
-                    warnKmh = profile.defaultWarnKmh,
+                    maxKmh = scale.gaugeMaxKmh,
+                    warnKmh = scale.warnKmh,
+                    limitKmh = scale.limitKmh,
                 )
                 StatsPanel(
                     dim = dim,
@@ -617,7 +624,7 @@ private fun OverlayStat(dim: HudDim, label: String, value: String, unit: String)
  * وهنا نملك كذلك سماكة القوس ونسبها، فتطابق ثوابت الراسم بلا وسيط.
  */
 @Composable
-private fun SpeedRing(dim: HudDim, speedKmh: Float, maxKmh: Int, warnKmh: Int) {
+private fun SpeedRing(dim: HudDim, speedKmh: Float, maxKmh: Int, warnKmh: Int, limitKmh: Int) {
     val target = (speedKmh / maxKmh).coerceIn(0f, 1f)
     val animated by animateFloatAsState(
         targetValue = target,
@@ -625,11 +632,13 @@ private fun SpeedRing(dim: HudDim, speedKmh: Float, maxKmh: Int, warnKmh: Int) {
         label = "hudRingSweep",
     )
     // عتبات المواصفة نفسها التي يستعملها الراسم المحروق، من العقد لا من نسخةٍ ثانية
-    val activeColor = when {
-        speedKmh >= maxKmh * HudMetrics.DANGER_OF_MAX -> HUD_DANGER
-        speedKmh >= warnKmh -> HUD_WARN
-        else -> HUD_ACCENT
+    val activeColor = when (SpeedScale.zoneOf(speedKmh, maxKmh, warnKmh, limitKmh)) {
+        SpeedZone.DANGER -> HUD_DANGER
+        SpeedZone.WARN -> HUD_WARN
+        SpeedZone.NORMAL -> HUD_ACCENT
     }
+    // سالبٌ يعني «لا علامة». يُحسب هنا لا داخل `DrawScope` كي يبقى الرسم بلا شرط
+    val limitFraction = if (limitKmh in 1..maxKmh) limitKmh.toFloat() / maxKmh else -1f
     Box(
         // القطر خارجيّ: ضلع الخليّة هو حدّ القوس الخارجيّ، وهو تعريف العقد نفسه
         modifier = Modifier.size(dim.ringDiameter),
@@ -659,6 +668,28 @@ private fun SpeedRing(dim: HudDim, speedKmh: Float, maxKmh: Int, warnKmh: Int) {
                     topLeft = topLeft,
                     size = arcSize,
                     style = Stroke(width = stroke, cap = StrokeCap.Round),
+                )
+            }
+            // علامة الحدّ فوق القوس الحيّ: تحته كان يغطّيها عند التجاوز، وهو
+            // بالضبط الحال الذي تُقرأ فيه. والنسب من العقد فتطابق ما يحرقه الراسم
+            if (limitFraction >= 0f) {
+                val angleRad = Math.toRadians(
+                    (HudMetrics.ARC_START + HudMetrics.ARC_SWEEP * limitFraction).toDouble()
+                )
+                val cosA = cos(angleRad).toFloat()
+                val sinA = sin(angleRad).toFloat()
+                val half = stroke * HudMetrics.LIMIT_MARK_LENGTH_OF_STROKE / 2f
+                drawLine(
+                    color = HUD_DANGER,
+                    start = Offset(
+                        center.x + cosA * (radius - half),
+                        center.y + sinA * (radius - half),
+                    ),
+                    end = Offset(
+                        center.x + cosA * (radius + half),
+                        center.y + sinA * (radius + half),
+                    ),
+                    strokeWidth = stroke * HudMetrics.LIMIT_MARK_WIDTH_OF_STROKE,
                 )
             }
         }

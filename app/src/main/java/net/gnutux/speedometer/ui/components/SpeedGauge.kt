@@ -27,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import net.gnutux.speedometer.core.alert.SpeedScale
+import net.gnutux.speedometer.core.alert.SpeedZone
+import net.gnutux.speedometer.core.camera.HudMetrics
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Danger
@@ -45,6 +48,11 @@ private const val TICK_COUNT = 8
 /**
  * قرص العداد. القوس يتلوّن بحسب المنطقة: عادي، فوق عتبة التحذير، ثم الحمراء.
  * التلوّن هنا مقصود لقارئ عجلان: راكب الدراجة يلمح اللون قبل أن يقرأ الرقم.
+ *
+ * @param limitKmh حدّ السائق، وصفرٌ يعني بلا حدّ. حين يُضبط تُرسم عنده علامةٌ حمراء
+ *   عريضة على مسار القوس، ويصير الحكم على اللون للحدّ لا لنسبةٍ من المدى. والمدى
+ *   نفسه ([maxKmh]) يأتي مضبوطًا على الحدّ من
+ *   [net.gnutux.speedometer.core.alert.SpeedScale.of] — لا يُشتقّ هنا.
  */
 @OptIn(ExperimentalTextApi::class)
 @Composable
@@ -54,6 +62,7 @@ fun SpeedGauge(
     warnKmh: Int,
     unitLabel: String,
     modifier: Modifier = Modifier,
+    limitKmh: Int = 0,
 ) {
     val target = (speedKmh / maxKmh).coerceIn(0f, 1f)
     val animated by animateFloatAsState(
@@ -62,11 +71,18 @@ fun SpeedGauge(
         label = "gaugeSweep",
     )
     val warnFraction = (warnKmh.toFloat() / maxKmh).coerceIn(0f, 1f)
-    val activeColor = when {
-        speedKmh >= maxKmh * 0.92f -> Danger
-        speedKmh >= warnKmh -> Warn
-        else -> Accent
+    // الحكم من العقد المشترك لا من شرطٍ محلّيّ: هو نفسه الذي يلوّن به الراسمُ
+    // المحروق قوسَه، فلا يختلف اللون بين شاشةٍ وملفّ في المشهد الواحد
+    val activeColor = when (SpeedScale.zoneOf(speedKmh, maxKmh, warnKmh, limitKmh)) {
+        SpeedZone.DANGER -> Danger
+        SpeedZone.WARN -> Warn
+        SpeedZone.NORMAL -> Accent
     }
+
+    // صفرٌ سالب يعني «لا علامة». يُرفع هنا لا داخل `DrawScope`: الألوان تُقرأ من
+    // التركيب (قاعدة المشروع)، وحساب النسبة يجاور لونها
+    val limitFraction = if (limitKmh in 1..maxKmh) limitKmh.toFloat() / maxKmh else -1f
+    val limitColor = Danger
 
     val measurer = rememberTextMeasurer()
     // ألوان اللوحة صارت تُقرأ من التركيب، و`DrawScope` ليس تركيبًا: تُرفع هنا مرّة
@@ -132,6 +148,18 @@ fun SpeedGauge(
                 style = tickStyle,
                 lineColor = tickLineColor,
             )
+
+            // بعد القوس الحيّ وبعد التدريج: لو رُسمت قبلهما لغطّاها القوسُ عند
+            // تجاوز الحدّ — أي في اللحظة التي تُقرأ فيها
+            if (limitFraction >= 0f) {
+                drawLimitMark(
+                    center = center,
+                    radius = radius,
+                    stroke = stroke,
+                    fraction = limitFraction,
+                    color = limitColor,
+                )
+            }
         }
 
         Column(
@@ -193,6 +221,36 @@ private fun DrawScope.drawTicks(
     }
 }
 
+/**
+ * علامة حدّ السائق: خطٌّ شعاعيّ أحمر يقطع مسار القوس عند الحدّ.
+ *
+ * **خطٌّ لا مجرّد تبدّل لون**: اللون يقول «تجاوزتَ» بعد فوات الأمر، والعلامة تقول
+ * «هنا الحدّ» قبله. وعرضها من سماكة القوس بنسبة [HudMetrics.LIMIT_MARK_WIDTH_OF_STROKE]
+ * — وهي النسبة نفسها التي يرسم بها الراسم المحروق — فتخرج أعرض من علامات التدريج
+ * (‎2dp‎) في كلّ المقاسات، وتنتأ عن القوس من طرفيه فتُقرأ علامةً لا فجوةً فيه.
+ *
+ * اللون يُمرَّر ولا يُقرأ هنا: `DrawScope` ليس تركيبًا، وألوان اللوحة تُقرأ من
+ * التركيب (قاعدة المشروع).
+ */
+private fun DrawScope.drawLimitMark(
+    center: Offset,
+    radius: Float,
+    stroke: Float,
+    fraction: Float,
+    color: Color,
+) {
+    val angleRad = Math.toRadians((START_ANGLE + SWEEP_ANGLE * fraction).toDouble())
+    val cosA = cos(angleRad).toFloat()
+    val sinA = sin(angleRad).toFloat()
+    val half = stroke * HudMetrics.LIMIT_MARK_LENGTH_OF_STROKE / 2f
+    drawLine(
+        color = color,
+        start = Offset(center.x + cosA * (radius - half), center.y + sinA * (radius - half)),
+        end = Offset(center.x + cosA * (radius + half), center.y + sinA * (radius + half)),
+        strokeWidth = stroke * HudMetrics.LIMIT_MARK_WIDTH_OF_STROKE,
+    )
+}
+
 /** نسخة مصغّرة للطبقة فوق الكاميرا، بلا تدرّجات ولا أرقام صغيرة */
 @Composable
 fun CompactGauge(
@@ -200,6 +258,7 @@ fun CompactGauge(
     maxKmh: Int,
     warnKmh: Int,
     modifier: Modifier = Modifier,
+    limitKmh: Int = 0,
 ) {
     val target = (speedKmh / maxKmh).coerceIn(0f, 1f)
     val animated by animateFloatAsState(
@@ -207,11 +266,13 @@ fun CompactGauge(
         animationSpec = tween(130),
         label = "compactSweep",
     )
-    val activeColor: Color = when {
-        speedKmh >= maxKmh * 0.92f -> Danger
-        speedKmh >= warnKmh -> Warn
-        else -> Accent
+    val activeColor: Color = when (SpeedScale.zoneOf(speedKmh, maxKmh, warnKmh, limitKmh)) {
+        SpeedZone.DANGER -> Danger
+        SpeedZone.WARN -> Warn
+        SpeedZone.NORMAL -> Accent
     }
+    val limitFraction = if (limitKmh in 1..maxKmh) limitKmh.toFloat() / maxKmh else -1f
+    val limitColor = Danger
     Canvas(modifier.aspectRatio(1f)) {
         val stroke = size.minDimension * 0.09f
         val radius = (size.minDimension - stroke) / 2f
@@ -237,6 +298,9 @@ fun CompactGauge(
                 size = arcSize,
                 style = Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round),
             )
+        }
+        if (limitFraction >= 0f) {
+            drawLimitMark(center, radius, stroke, limitFraction, limitColor)
         }
     }
 }
