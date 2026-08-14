@@ -1,6 +1,9 @@
 package net.gnutux.speedometer.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,14 +32,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
@@ -252,6 +260,18 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                             .takeIf { it.isNotEmpty() }
                             ?.let { stringResource(R.string.settings_offline_folder, it) },
                     )
+                    // «لا خريطة محلّيّة» جوابٌ ناقص لمن نزّل خرائطه بـ OsmAnd فعلًا:
+                    // الملفّات موجودة والتطبيق رآها، وإنّما صيغتها متجهيّة لا
+                    // يرسمها osmdroid. بلا هذا السطر يظنّ المستعمل الفحصَ فاشلًا
+                    // فيعيده أبدًا.
+                    if (offlineLibrary.hasVectorOnly) {
+                        RowLabel(
+                            title = stringResource(
+                                R.string.map_obf_found,
+                                offlineLibrary.vectorNames,
+                            ),
+                        )
+                    }
                     if (offlineLibrary.altFolderPath.isNotEmpty()) {
                         RowLabel(
                             title = stringResource(R.string.settings_offline_folder_alt),
@@ -277,6 +297,14 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                         title = stringResource(R.string.settings_license),
                         note = stringResource(R.string.settings_osm_notice),
                     )
+                    RowLabel(
+                        title = stringResource(R.string.settings_about_developer),
+                        note = stringResource(R.string.settings_about_developer_name),
+                    )
+                    LinkRow(
+                        title = stringResource(R.string.settings_about_repo),
+                        url = stringResource(R.string.settings_about_repo_url),
+                    )
                 }
             }
             item { Spacer(Modifier.height(24.dp)) }
@@ -284,8 +312,8 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     }
 }
 
-/** ساعات التبديل المعروضة: كلّ ساعة زوجيّة تكفي، والقائمة الكاملة لا تُمرَّر بقفّاز */
-private val HOUR_CHOICES = (0..23 step 1).toList()
+/** ساعات التبديل: الفهرس هو الساعة نفسها، وعليه يعتمد القفز إلى العنصر المختار */
+private val HOUR_CHOICES = (0..23).toList()
 private val UNDO_CHOICES = listOf(0, 5, 10, 20, 30)
 
 @Composable
@@ -361,7 +389,7 @@ private fun SettingCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RowLabel(title: String, note: String?) {
+private fun RowLabel(title: String, note: String? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             text = title,
@@ -432,6 +460,47 @@ private fun ActionRow(label: String, onClick: () -> Unit) {
 }
 
 /**
+ * سطرٌ يفتح رابطًا في المتصفّح.
+ *
+ * `runCatching` ليست زينة: جهازٌ مثبَّت على المقود قد يخلو من أيّ متصفّح، وعندها
+ * يرمي `startActivity` استثناء `ActivityNotFoundException` فيسقط التطبيق كلّه
+ * لأنّ المستخدم لمس سطر «المستودع».
+ */
+@Composable
+private fun LinkRow(title: String, url: String) {
+    val context = LocalContext.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                runCatching { context.startActivity(intent) }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                ),
+            )
+            // التسطير مقصود: بلا إشارةٍ بصريّة لا يخطر ببال أحدٍ أنّ السطر يُنقر
+            Text(
+                text = url,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = Accent,
+                    textDecoration = TextDecoration.Underline,
+                ),
+            )
+        }
+    }
+}
+
+/**
  * صفّ اختيارٍ أفقيّ قابل للتمرير. فُضّل على قائمة منسدلة لأنّ الخيارات قليلة
  * ومرئيّة دفعةً واحدة، والقائمة المنسدلة تحتاج ضغطتين ولمسًا دقيقًا.
  */
@@ -466,15 +535,32 @@ private fun ChoiceRow(options: List<String>, selectedIndex: Int, onSelect: (Int)
     }
 }
 
+/**
+ * منتقي الساعة.
+ *
+ * `LazyRow` لا `Row` مُمرَّر: التمرير الكسول وحده يملك `LazyListState` القادر على
+ * القفز إلى فهرسٍ بعينه. كان الصفّ يُفتح دائمًا عند 00:00، فمن ضبط الليل على 22
+ * لا يرى اختياره ولا يعرف ما هو مضبوطٌ أصلًا حتى يمرّر الصفّ كلّه.
+ */
 @Composable
 private fun HourRow(selected: Int, onSelect: (Int) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+    val target = selected.coerceIn(0, HOUR_CHOICES.lastIndex)
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = target)
+
+    // القفز مشروطٌ بغياب العنصر عن الشاشة: بلا هذا الشرط يرتدّ الصفّ إلى أوّله مع
+    // كلّ نقرةٍ على ساعةٍ مرئيّة. ويبقى مفيدًا حين تصل القيمة المحفوظة بعد أوّل تركيب
+    LaunchedEffect(target) {
+        val visible = state.layoutInfo.visibleItemsInfo.any { it.index == target }
+        if (!visible) state.scrollToItem(target)
+    }
+
+    LazyRow(
+        state = state,
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        HOUR_CHOICES.forEach { hour ->
+        items(HOUR_CHOICES.size) { index ->
+            val hour = HOUR_CHOICES[index]
             val active = hour == selected
             Box(
                 modifier = Modifier
@@ -482,6 +568,13 @@ private fun HourRow(selected: Int, onSelect: (Int) -> Unit) {
                     .width(72.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(if (active) Accent else SurfaceHigh)
+                    // حلقةٌ حول المختار زيادةً على لون التعبئة: التمييز باللون وحده
+                    // يضيع على شاشةٍ تحت الشمس أو لمن لا يميّز الألوان
+                    .border(
+                        width = if (active) 2.dp else 0.dp,
+                        color = if (active) TextPrimary else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp),
+                    )
                     .clickable { onSelect(hour) },
                 contentAlignment = Alignment.Center,
             ) {

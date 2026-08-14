@@ -82,6 +82,11 @@ class TripEngine(private val context: Context) {
                 speedKmh = smoothedMps * 3.6f,
                 distanceKm = trip.distanceKm,
                 maxSpeedKmh = trip.maxSpeedKmh,
+                // المتوسّط من [net.gnutux.speedometer.core.trip.TripState] لا من حسابٍ
+                // ثانٍ هنا: هو المسافة على زمن الحركة، وكلاهما مشتقٌّ من فروق
+                // `elapsedRealtimeNanos` (القاعدة الأولى). ونسخةٌ محلّيّة كانت ستُخرج
+                // في الفيديو رقمًا يخالف ما تعرضه شاشتا العدّاد والرحلات.
+                avgSpeedKmh = trip.avgSpeedKmh,
                 durationMs = trip.elapsedMs,
                 gaugeMaxKmh = p.gaugeMaxKmh,
                 warnKmh = p.defaultWarnKmh,

@@ -41,6 +41,8 @@ data class HudSnapshot(
     val speedKmh: Float = 0f,
     val distanceKm: Double = 0.0,
     val maxSpeedKmh: Float = 0f,
+    /** متوسّط الرحلة الجارية كما يحسبه المسجّل؛ لا محورَ زمنٍ جديدًا هنا */
+    val avgSpeedKmh: Float = 0f,
     val durationMs: Long = 0L,
     val gaugeMaxKmh: Int = 200,
     val warnKmh: Int = 100,
@@ -157,8 +159,8 @@ class VideoOverlayPainter {
     /** آخر لقطة نُسّقت نصوصها. اللقطة تتبدّل مع كلّ موقع (~1Hz) لا مع كلّ إطار */
     private var formattedFor: HudSnapshot? = null
 
-    /** قيم الأسطر الثلاث منسَّقةً، بلا تسمياتها: التسميات ثابتة في [LABELS] */
-    private val statValues = arrayOf("", "", "")
+    /** قيم الأسطر منسَّقةً، بلا تسمياتها: التسميات ثابتة في [LABELS] */
+    private val statValues = Array(LINES) { "" }
 
     /** رقم القرص يُخبَّأ مع الأسطر: `String.format` ستّين مرّة في الثانية تخصيصٌ بلا داعٍ */
     private var gaugeText = "0"
@@ -167,14 +169,14 @@ class VideoOverlayPainter {
     private val spanned = arrayOfNulls<SpannableString>(LINES)
 
     /**
-     * تخطيطات الأسطر الثلاثة، مخبَّأة كما تُخبَّأ نصوصها ولسببٍ أقوى: `StaticLayout`
+     * تخطيطات الأسطر، مخبَّأةً كما تُخبَّأ نصوصها ولسببٍ أقوى: `StaticLayout`
      * يخصّص ذاكرةً عند كلّ بناء (مصفوفات الأسطر ومخزن المحارف المشكَّلة)، و`onDraw`
      * يعمل على خيط GL بمعدّل الإطارات.
      *
      * **مفتاح التخبئة هو نصّ كلّ سطرٍ على حدة** لا اللقطة كلّها. كانت التخبئة على
-     * `HudSnapshot`، فلمّا صارت المدّة تتقدّم كلّ ثانية أُعيد بناء التخطيطات الثلاثة
-     * جميعًا كلّ ثانية — وسطرا المسافة وأقصى سرعة لم يتبدّلا. الآن يُعاد بناء السطر
-     * المتبدّل وحده، ولا تُعاد الثلاثة إلّا إن تبدّلت الهندسة (حجم الخطّ أو عرض
+     * `HudSnapshot`، فلمّا صارت المدّة تتقدّم كلّ ثانية أُعيد بناء التخطيطات
+     * جميعًا كلّ ثانية — وسائر الأسطر لم تتبدّل. الآن يُعاد بناء السطر
+     * المتبدّل وحده، ولا تُعاد جميعًا إلّا إن تبدّلت الهندسة (حجم الخطّ أو عرض
      * القصّ) وهي تابعةٌ لأعرض سطرٍ ولمقاس الإطار.
      *
      * ومقاس الإطار في المفتاح لأنّ حجم الخطّ وعرض القصّ مشتقّان منه، فتخبئةٌ على
@@ -267,34 +269,53 @@ class VideoOverlayPainter {
      * **الحلقة عند الحافّة اليسرى والإحصاءات عند اليمنى**، لأنّ الشاشة في RTL
      * تضعهما هكذا، والمحروق يجب أن يطابقها.
      *
-     * **اللامتراكب (الثابتة المضمونة):** الحلقة مثبَّتة يسارًا فحدّها الأيمن هو
-     * `margin + ringDiameter` (قيمةٌ ثابتة لا تتبع النصّ)، والإحصاءات مثبَّتة يمينًا
-     * فحدّها الأيمن `w − margin` ثابتٌ أيضًا وإنّما تنمو يسارًا. أقصى عرضٍ يُسمح به
-     * للوحة هو
-     * `statsMaxWidth = (w − margin) − (margin + ringDiameter) − blockGap`
-     * `           = w − 2·margin − blockGap − ringDiameter`،
+     * **اللامتراكب (الثابتة المضمونة):** لتكن `L = insetX + margin` حافّةَ المنطقة
+     * الآمنة اليسرى بعد هامشها و`R = w − insetX − margin` حافّتَها اليمنى، فعرضها
+     * `R − L = safeShort − 2·margin` في الوضع الرأسيّ. الحلقة مثبَّتة عند `L` فحدّها
+     * الأيمن `L + ringDiameter` (قيمةٌ ثابتة لا تتبع النصّ)، والإحصاءات مثبَّتة عند
+     * `R` وإنّما تنمو يسارًا. أقصى عرضٍ يُسمح به للوحة هو
+     * `statsMaxWidth = R − (L + ringDiameter) − blockGap`،
      * وفي [drawStats] لا تتجاوز اللوحة هذا العرض أبدًا (تصغير ثمّ قصّ). إذن
-     * `يسارُ اللوحة = (w − margin) − panelWidth ≥ margin + ringDiameter + blockGap`
-     * `           = يمينُ الحلقة + blockGap`، فبينهما فجوةٌ موجبة لا تقلّ عن
-     * `blockGap`. وهذا العرض موجبٌ في الوضعين: ما تحجزه الهوامش والفجوة والحلقة هو
-     * `(2×16 + 12 + 124)/411 · min(w, h) = 0.4088·min(w, h) ≤ 0.4088·w`، فيبقى
-     * للصندوق ‎0.591·w‎ على أسوأ تقدير (الوضع الرأسيّ). والرقم يتبع نسب
+     * `يسارُ اللوحة = R − panelWidth ≥ L + ringDiameter + blockGap = يمينُ الحلقة +
+     * blockGap`، فبينهما فجوةٌ موجبة لا تقلّ عن `blockGap`. وهو موجبٌ في الوضعين:
+     * ما تحجزه الهوامش والفجوة والحلقة `(2×16 + 12 + 124)/411 · safeShort =
+     * 0.4088·safeShort`، فيبقى للصندوق ‎0.591·safeShort‎. والرقم يتبع نسب
      * [HudMetrics]، وكان ‎0.394‎ قبل توحيدها مع الشاشة — فبقاؤه في التعليق بعد
      * تغيّر النسب كان يجعل البرهان يشير إلى شفرةٍ لم تعد موجودة.
      */
     private fun drawHud(canvas: Canvas, w: Float, h: Float) {
         val s = snapshot
-        val m = sizesFor(minOf(w, h))
+
+        // **المنطقة الآمنة.** الملفّ يُسجَّل ‎16:9‎ بينما شاشة الهاتف اليوم ‎20:9‎ أو
+        // أنحف، ومشغّلات الفيديو تملأ الشاشة افتراضًا فتقتطع من الضلع الأقصر نحو
+        // ‎%10‎ من كلّ جانب. وكانت الطبقة تُرسم على الإطار كلّه فيبتلع هذا الاقتطاعُ
+        // حافّتيها: ظهرت «المسافة» ‏«سافة» وابتُلع يسارُ القرص — والملفّ سليمٌ في
+        // ذاته، العطب في العرض لا في الرسم. فنحصر الطبقة داخل مستطيلٍ موسَّطٍ نسبةُ
+        // ضلعه الأقصر إلى الأطول [HudMetrics.SAFE_SHORT_OF_LONG] كي تنجو من
+        // الاقتطاع، ولا تكلّف ذلك — إن عُرض الملفّ كاملًا — غير إزاحةٍ يسيرة عن
+        // الحافّة.
+        val frameShort = minOf(w, h)
+        val frameLong = maxOf(w, h)
+        val safeShort = minOf(frameShort, frameLong * HudMetrics.SAFE_SHORT_OF_LONG)
+        val inset = (frameShort - safeShort) / 2f
+        // الاقتطاع يقع على الضلع الأقصر وحده، وهو العرض في الوضع الرأسيّ والارتفاع
+        // في الأفقيّ — فالإزاحة تنتقل بين المحورين بحسب وضع الإطار
+        val insetX = if (w <= h) inset else 0f
+        val insetY = if (w <= h) 0f else inset
+
+        // المقاسات تتبع الضلع الأقصر **للمنطقة الآمنة** لا للإطار: التصميم أُقرّ
+        // على ما يراه المشاهد، لا على ما يحمله الملفّ ولا يبلغ عينه.
+        val m = sizesFor(safeShort)
 
         // الطبقة مثبَّتة على هامش القاع مباشرةً، بخلاف الشاشة التي ترفعها فوق صفّ
         // الأزرار. **فرقٌ متعمَّد**: الأزرار لا تُحرق، فحجزُ ارتفاعها في الملفّ
         // يترك شريطًا فارغًا أسفل الصورة بلا سببٍ يراه المشاهد. لا يُضاف هنا
         // إزاحةُ صفّ أزرارٍ وهميّ.
-        val bottom = h - m.margin
-        val cx = m.margin + m.ringDiameter / 2f
+        val bottom = h - insetY - m.margin
+        val cx = insetX + m.margin + m.ringDiameter / 2f
         val cy = bottom - m.ringDiameter / 2f
-        val statsRight = w - m.margin
-        val statsMaxWidth = statsRight - (m.margin + m.ringDiameter) - m.blockGap
+        val statsRight = w - insetX - m.margin
+        val statsMaxWidth = statsRight - (insetX + m.margin + m.ringDiameter) - m.blockGap
 
         // التنسيق مرّةً هنا لا داخل كلّ كتلة: القرص يقرأ `gaugeText` المخبَّأ، فلا
         // يبقى صحيحًا بالصدفة لأنّ الإحصاءات تُرسم قبله
@@ -313,7 +334,7 @@ class VideoOverlayPainter {
     }
 
     /**
-     * كتلة الإحصاءات في الركن السفليّ **الأيمن**: ثلاثة أسطر فوق لوحةٍ داكنة.
+     * كتلة الإحصاءات في الركن السفليّ **الأيمن**: أسطر [LINES] فوق لوحةٍ داكنة.
      *
      * `right` هو الحدّ الأيمن الثابت للوحة (‎w − margin‎)، واللوحة تنمو يسارًا
      * بمقدار عرضها المقيس.
@@ -359,7 +380,7 @@ class VideoOverlayPainter {
     }
 
     /**
-     * يبني تخطيطات الأسطر الثلاثة ويخبّئها مع هندستها، ولا يعيد بناء سطرٍ إلّا إن
+     * يبني تخطيطات الأسطر ويخبّئها مع هندستها، ولا يعيد بناء سطرٍ إلّا إن
      * تبدّل نصّه أو تبدّلت الهندسة المشتركة.
      *
      * **لماذا `StaticLayout` لا `drawTextRun`:** كلّ سطرٍ هنا مختلط الاتّجاه —
@@ -430,7 +451,7 @@ class VideoOverlayPainter {
         // الحقيقيّ فلا يختلّ شرط `panelWidth ≤ maxWidth`
         val layoutWidth = ceil(innerWidth).toInt()
 
-        // الهندسة المشتركة (حجم الخطّ وعرض القصّ) تلزم الأسطر الثلاثة معًا؛ ما
+        // الهندسة المشتركة (حجم الخطّ وعرض القصّ) تلزم الأسطر كلّها معًا؛ ما
         // دامت على حالها فالسطر المتبدّل وحده يُبنى من جديد
         val geometryChanged = cached == null || size != layoutTextSize || layoutWidth != layoutWidthPx
         val built = if (geometryChanged) {
@@ -610,7 +631,8 @@ class VideoOverlayPainter {
         if (s != formattedFor) {
             statValues[0] = "${Fmt.distance(s.distanceKm)} $UNIT_KM"
             statValues[1] = "${Fmt.speed(s.maxSpeedKmh)} $UNIT_KMH"
-            statValues[2] = Fmt.duration(s.durationMs)
+            statValues[2] = "${Fmt.avg(s.avgSpeedKmh)} $UNIT_KMH"
+            statValues[3] = Fmt.duration(s.durationMs)
             gaugeText = Fmt.speed(s.speedKmh)
             formattedFor = s
         }
@@ -618,7 +640,14 @@ class VideoOverlayPainter {
     }
 
     private companion object {
-        const val LINES = 3
+        /**
+         * عدد أسطر اللوحة. صار أربعةً في 0.6.0 بإضافة المتوسّط، واللوحة تسع الزيادة
+         * في الوضعين: ارتفاعها `4·24 + 3·6 + 2·12 = 138` من ‎411‎، أي ‎0.336‎ من
+         * الضلع الأقصر، ومع هامش القاع ‎0.375‎ منه — وهو أقلّ من الارتفاع مهما كان
+         * الضلع الأقصر (في الوضع الأفقيّ الضلعُ هو الارتفاع نفسه). فلا حاجة إلى
+         * تعديل نسب [HudMetrics] ولا إلى إعادة ترتيب الأسطر.
+         */
+        const val LINES = 4
 
         /** ألفا من ‎0..1‎ إلى ‎0..255‎: ‎0.50‎ → ‎128‎. النسخة السابقة كتبت 120 و130 يدويًّا فخالفت المواصفة في الاثنتين */
         fun alpha255(alpha: Float): Int = (alpha * 255f).roundToInt()
@@ -650,11 +679,16 @@ class VideoOverlayPainter {
         /** نفس نصوص `res/values/strings.xml`، مكرّرة لأنّ الراسم بلا `Context` */
         const val LABEL_DISTANCE = "المسافة"
         const val LABEL_MAX_SPEED = "أقصى سرعة"
+        const val LABEL_AVG_SPEED = "المتوسّط"
         const val LABEL_DURATION = "المدة"
         const val UNIT_KM = "كم"
         const val UNIT_KMH = "كم/س"
 
-        val LABELS = arrayOf(LABEL_DISTANCE, LABEL_MAX_SPEED, LABEL_DURATION)
+        /**
+         * ترتيب المرجع الموحَّد محفوظ (مسافة ← أقصى سرعة ← مدّة)، والمتوسّط أُقحم
+         * قبل المدّة: هو سرعةٌ فيجاور أختها، والمدّة تبقى آخر سطرٍ كما اعتادها العين.
+         */
+        val LABELS = arrayOf(LABEL_DISTANCE, LABEL_MAX_SPEED, LABEL_AVG_SPEED, LABEL_DURATION)
 
         /**
          * لغة النصّ العربيّ صراحةً كي يقع اختيار الخطّ والتشكيل على الشكل العربيّ

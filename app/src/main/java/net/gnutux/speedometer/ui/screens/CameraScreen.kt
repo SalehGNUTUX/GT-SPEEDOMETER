@@ -450,6 +450,7 @@ fun CameraScreen(
                         .coerceAtLeast(0.dp),
                     distance = Fmt.distance(trip.distanceKm),
                     maxSpeed = Fmt.speed(trip.maxSpeedKmh),
+                    avgSpeed = Fmt.avg(trip.avgSpeedKmh),
                     duration = Fmt.duration(trip.elapsedMs),
                 )
             }
@@ -524,11 +525,14 @@ private fun captureWindow(view: android.view.View, onResult: (Bitmap?) -> Unit) 
 // ===== الشريط السفليّ =====
 
 /**
- * خليّة الإحصاءات: ثلاثة أسطر فوق لوحٍ داكن، محاذاةً إلى بداية السطر — وهي اليمين
+ * خليّة الإحصاءات: أسطرٌ فوق لوحٍ داكن، محاذاةً إلى بداية السطر — وهي اليمين
  * في العربيّة، كما يرسمها الراسم المحروق تمامًا.
  *
  * كلّ سطرٍ نصّان لا نصٌّ واحد: الرقم مقطع LTR داخل جملة RTL، وفصلُه في `Text`
  * مستقلّ يمنع محرّك الاتّجاه ثنائيّ الجهة من قلب `00:00:03` إلى `30:00:00`.
+ *
+ * وترتيب الأسطر هو ترتيب `LABELS` في الراسم المحروق حرفًا بحرف: أيّ اختلافٍ بينهما
+ * يعني لوحين مختلفين في مشهدٍ واحد.
  */
 @Composable
 private fun StatsPanel(
@@ -536,6 +540,7 @@ private fun StatsPanel(
     maxWidth: Dp,
     distance: String,
     maxSpeed: String,
+    avgSpeed: String,
     duration: String,
 ) {
     // اتّجاهٌ مصرَّحٌ به لا موروث: الراسم المحروق يرسم الأسطر بالعربيّة ومن اليمين
@@ -552,6 +557,9 @@ private fun StatsPanel(
         ) {
             OverlayStat(dim, stringResource(R.string.stat_distance), distance, stringResource(R.string.unit_km))
             OverlayStat(dim, stringResource(R.string.stat_max_speed), maxSpeed, stringResource(R.string.unit_kmh))
+            // التسمية القصيرة لا `stat_avg_speed`: اللوح مقيَّدٌ بعرضٍ أقصى، و«متوسّط
+            // السرعة» تدفع السطر إلى القصّ على الشاشات الضيّقة
+            OverlayStat(dim, stringResource(R.string.stat_avg_speed_short), avgSpeed, stringResource(R.string.unit_kmh))
             OverlayStat(dim, stringResource(R.string.stat_duration), duration, "")
         }
     }

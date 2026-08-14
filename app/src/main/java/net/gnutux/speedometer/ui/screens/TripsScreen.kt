@@ -77,6 +77,14 @@ fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val undoSeconds by vm.settings.undoSeconds.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<TripTrack?>(null) }
 
+    // ملاحظة الخرائط المحلّيّة تُعلِّم مرّةً ثمّ تصمت.
+    //
+    // موضع الحالة هنا لا داخل `TripDetail` عن قصد: لو كانت هناك لعادت مع كلّ رحلة
+    // يفتحها الراكب، وهو إلحاحٌ لا تعليم. وهي `remember` لا حفظٌ دائم لأنّ المقصود
+    // «مرّةً في هذه الزيارة»: من ترك التبويب ثمّ عاد بعد أن نزّل خريطةً يستحقّ أن
+    // يعرف أنّها لم تُر بعد.
+    var mapNoticeUsed by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) { vm.refreshTrips() }
 
     // تسخين مبكّر: أوّل نداءٍ لـ `of` يُطلق مسح مجلّد الخرائط على خيط قرص. نفعله عند
@@ -93,12 +101,20 @@ fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
         val current = selected
 
         if (current != null) {
-            BackHandler { selected = null }
+            // مغادرة التفصيل تستهلك الملاحظة: رآها الراكب أو لم يرها، وقد أُتيحت له
+            // مرّة، فلا تلاحقه في كلّ رحلةٍ يفتحها بعدها.
+            val leave = {
+                mapNoticeUsed = true
+                selected = null
+            }
+            BackHandler(onBack = leave)
             TripDetail(
                 vm = vm,
                 trip = current,
-                onBack = { selected = null },
-                onDeleted = { selected = null },
+                noticeVisible = !mapNoticeUsed,
+                onDismissNotice = { mapNoticeUsed = true },
+                onBack = leave,
+                onDeleted = leave,
                 modifier = content,
             )
         } else if (trips.isEmpty()) {
@@ -255,6 +271,8 @@ private fun MiniStat(label: String, value: String, unit: String) {
 private fun TripDetail(
     vm: SpeedoViewModel,
     trip: TripTrack,
+    noticeVisible: Boolean,
+    onDismissNotice: () -> Unit,
     onBack: () -> Unit,
     onDeleted: () -> Unit,
     modifier: Modifier = Modifier,
@@ -265,6 +283,23 @@ private fun TripDetail(
     // مخزن التفضيلات بنفسه، تمامًا كما هو حال قلب الألوان.
     val preferOffline by vm.settings.preferOfflineMaps.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
+
+    // فعلٌ واحد لموضعَي نداء: زرّ «فتح في OsmAnd»، وملاحظةُ الخريطة حين لا يملك
+    // الراكب إلّا خرائط `.obf` المتجهيّة — فتلك OsmAnd وحدها ترسمها.
+    val openInOsmAnd = {
+        // ACTION_VIEW على نوع GPX يلتقطه OsmAnd وأمثاله؛ لا نربط أنفسنا بحزمة بعينها.
+        val uri = vm.uriForTrack(trip.file)
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, GPX_MIME)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching {
+            context.startActivity(
+                Intent.createChooser(view, context.getString(R.string.trip_open_osmand))
+            )
+        }
+        Unit
+    }
 
     Column(
         modifier = modifier.padding(horizontal = 14.dp),
@@ -311,6 +346,9 @@ private fun TripDetail(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(320.dp),
+                noticeVisible = noticeVisible,
+                onDismissNotice = onDismissNotice,
+                onOpenOsmAnd = openInOsmAnd,
             )
         }
 
@@ -359,19 +397,8 @@ private fun TripDetail(
                 icon = Icons.Filled.Map,
                 label = stringResource(R.string.trip_open_osmand),
                 modifier = Modifier.weight(1f),
-            ) {
-                // ACTION_VIEW على نوع GPX يلتقطه OsmAnd وأمثاله؛ لا نربط أنفسنا بحزمة بعينها.
-                val uri = vm.uriForTrack(trip.file)
-                val view = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, GPX_MIME)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                runCatching {
-                    context.startActivity(
-                        Intent.createChooser(view, context.getString(R.string.trip_open_osmand))
-                    )
-                }
-            }
+                onClick = openInOsmAnd,
+            )
 
             ActionChip(
                 icon = Icons.Filled.Delete,

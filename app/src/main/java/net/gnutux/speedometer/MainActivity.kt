@@ -84,6 +84,7 @@ import net.gnutux.speedometer.ui.screens.SpeedometerScreen
 import net.gnutux.speedometer.ui.screens.TripsScreen
 import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Bg
+import net.gnutux.speedometer.ui.theme.Danger
 import net.gnutux.speedometer.ui.theme.GtSpeedometerTheme
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.TextSecondary
@@ -401,6 +402,11 @@ private fun AppRoot(
                 SegmentedTabs(
                     selected = pagerState.currentPage,
                     onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+                    // التسجيل يمضي وإن غادر المستخدم تبويب الكاميرا، ولم يكن على
+                    // الشاشة ما يقول ذلك: زرّ الإيقاف في تبويب الكاميرا وحده
+                    // وإشعارُ الخدمة خارج التطبيق. نقطةٌ حمراء على التبويب تكفي
+                    // للإخبار، ولا يتّسع الشريط لكلمةٍ عند عرض 360 نقطة.
+                    recording = recordingSession,
                     modifier = Modifier.weight(1f),
                 )
                 if (canMinimize) {
@@ -581,6 +587,7 @@ private fun SettingsButton(onClick: () -> Unit) {
 private fun SegmentedTabs(
     selected: Int,
     onSelect: (Int) -> Unit,
+    recording: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val titles = listOf(
@@ -627,6 +634,17 @@ private fun SegmentedTabs(
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
                     ),
                 )
+                // النقطة داخل صندوق التبويب لا فوقه: `Box` هنا يحمل الحشو نفسه،
+                // فتقع في ركنه العلويّ بلا إزاحةٍ تخرجها إلى جاره
+                if (recording && index == PAGE_CAMERA) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 2.dp, end = 6.dp)
+                            .size(8.dp)
+                            .background(Danger, CircleShape)
+                    )
+                }
             }
         }
     }

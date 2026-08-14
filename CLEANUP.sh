@@ -229,7 +229,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude .github "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac
@@ -267,6 +267,38 @@ if (( ${#DEAD[@]} )); then
   DELETABLE+=("${DEAD[@]}")
 else
   ok "لا مورد ميّتًا"
+fi
+
+# ===========================================================================
+# 8. واجهاتٌ تجريبيّة بلا إقرار
+#
+# مصرّف Kotlin يرفض واجهةً موسومة `@RequiresOptIn` بلا `@OptIn` صريح، وهو رفضٌ
+# لا تراه أدوات فحصٍ تعمل على مسار أصنافٍ مستخرَجٍ من حزمة APK: R8 يجرّد تلك
+# السمة، فتمرّ الشفرة في الفحص وتسقط في Gradle. فيُفحص هنا نصًّا لا بالمصرّف.
+# ===========================================================================
+head2 "واجهات تجريبيّة"
+EXPERIMENTAL_SYMBOLS=(
+  SecondaryTabRow PrimaryTabRow PrimaryScrollableTabRow SecondaryScrollableTabRow
+  TopAppBar CenterAlignedTopAppBar MediumTopAppBar LargeTopAppBar
+  ModalBottomSheet BottomSheetScaffold SearchBar DockedSearchBar
+  DatePicker DatePickerDialog TimePicker TimeInput
+  TooltipBox PlainTooltip RichTooltip PullToRefreshBox
+)
+UNOPTED=()
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  for sym in "${EXPERIMENTAL_SYMBOLS[@]}"; do
+    if grep -qE "^import androidx\.compose\.material3\.${sym}\$" "$f"; then
+      grep -q '@OptIn(' "$f" || UNOPTED+=("$(basename "$f") ← $sym")
+    fi
+  done
+done < <(find "$SRC" -name '*.kt' 2>/dev/null)
+if (( ${#UNOPTED[@]} )); then
+  warn "واجهةٌ تجريبيّة بلا @OptIn (سيسقط بناء Gradle):"
+  printf '      %s\n' "${UNOPTED[@]}"
+  PROBLEMS=$((PROBLEMS + 1))
+else
+  ok "لا واجهة تجريبيّة بلا إقرار"
 fi
 
 # ===========================================================================
