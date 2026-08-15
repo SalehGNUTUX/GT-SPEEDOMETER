@@ -51,6 +51,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.DeviceTier
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.trip.TripTrack
 import net.gnutux.speedometer.ui.Fmt
@@ -282,7 +283,20 @@ private fun TripDetail(
     // القرار تفضيلٌ لا حالة خريطة، فيُقرأ هنا ويُمرَّر: `RouteMap` مُركّب عرضٍ لا يقرأ
     // مخزن التفضيلات بنفسه، تمامًا كما هو حال قلب الألوان.
     val preferOffline by vm.settings.preferOfflineMaps.collectAsStateWithLifecycle()
+    // وتجاوز ترتيب المصادر مثلهما: يُقرأ هنا ويُكتب من زرّ الخريطة نفسها، فيبقى
+    // الاختيار بعد إغلاق الرحلة.
+    val mapSource by vm.settings.mapSource.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
+
+    // التخفيف يقع عند الرسم لا عند القراءة: `trip.points` تبقى كاملةً للإحصاءات
+    // ولعدّاد النقاط، ولا تُخفَّف إلّا النسخة التي تذهب إلى الخريطة.
+    val liteMode by vm.settings.liteMode.collectAsStateWithLifecycle()
+    val drawPoints = remember(trip, liteMode) {
+        DeviceTier.thin(
+            trip.points,
+            DeviceTier.maxRoutePoints(DeviceTier.liteActive(context, liteMode)),
+        )
+    }
 
     // فعلٌ واحد لموضعَي نداء: زرّ «فتح في OsmAnd»، وملاحظةُ الخريطة حين لا يملك
     // الراكب إلّا خرائط `.obf` المتجهيّة — فتلك OsmAnd وحدها ترسمها.
@@ -340,12 +354,18 @@ private fun TripDetail(
             // الخلفيّة والزوايا صارتا داخل RouteMap نفسه، وإلّا رسمت البلاطات
             // المربّعة فوق الاستدارة فبدا الإطار متبدّل الشكل مع كلّ تكبير.
             RouteMap(
-                points = trip.points,
+                // نقاطُ **الرسم** لا نقاط الرحلة: التخفيف هنا لا في `TripTrack`،
+                // فالملفّ والإحصاءات وعدّاد النقاط أسفل الشاشة تبقى على الأصل
+                // كاملًا. ورحلةٌ فيها ألفُ نقطةٍ على شاشةٍ عرضها ‎1080‎ بكسل ترسم ما
+                // ترسمه عشرة آلاف؛ الفرق يظهر في زمن الرسم وحده.
+                points = drawPoints,
                 invertTiles = invertTiles,
                 preferOffline = preferOffline,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(320.dp),
+                mapSource = mapSource,
+                onMapSourceChange = vm.settings::setMapSource,
                 // ملفّ الرحلة نفسه لا نسخةٌ مصغَّرة في المخبأ: OsmAnd يقرؤه مباشرةً
                 // حين يرسم الخريطة، فتُوفَّر كتابةُ ملفٍّ ثانٍ لكلّ رحلةٍ تُفتح.
                 gpxFile = trip.file,

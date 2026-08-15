@@ -158,6 +158,39 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
     val undoSeconds: StateFlow<Int> = pref(KEY_UNDO_SECONDS, DEFAULT_UNDO_SECONDS)
     fun setUndoSeconds(seconds: Int) = put(KEY_UNDO_SECONDS, seconds.coerceIn(0, 60))
 
+    /** تجاوزٌ صريح لترتيب مصادر الخريطة الذي أقرّته 0.7.0 */
+    val mapSource: StateFlow<MapSourcePreference> =
+        data.map { MapSourcePreference.from(it[KEY_MAP_SOURCE]) }
+            .stateIn(scope, SharingStarted.Eagerly, MapSourcePreference.DEFAULT)
+
+    fun setMapSource(source: MapSourcePreference) = put(KEY_MAP_SOURCE, source.id)
+
+    // ===== الكاميرا =====
+
+    val cameraScene: StateFlow<CameraScene> =
+        data.map { CameraScene.from(it[KEY_CAMERA_SCENE]) }
+            .stateIn(scope, SharingStarted.Eagerly, CameraScene.DEFAULT)
+
+    fun setCameraScene(scene: CameraScene) = put(KEY_CAMERA_SCENE, scene.id)
+
+    // ===== الأجهزة المحدودة =====
+
+    val liteMode: StateFlow<LiteMode> =
+        data.map { LiteMode.from(it[KEY_LITE_MODE]) }
+            .stateIn(scope, SharingStarted.Eagerly, LiteMode.DEFAULT)
+
+    fun setLiteMode(mode: LiteMode) = put(KEY_LITE_MODE, mode.id)
+
+    /**
+     * تثبيت الموقع السريع: نعرض آخر موقعٍ معروف ومزوّد الشبكة ريثما تُثبَّت الأقمار.
+     *
+     * مفعَّلٌ افتراضًا. الرقم التقريبيّ ليس كذبًا ما دام موسومًا بأنّه تقريبيّ، وهو
+     * أصدق من شاشةٍ فارغة تُوهم المستعمل أنّ التطبيق لا يعمل — وعلى الأجهزة المحدودة
+     * قد يبلغ انتظار أوّل قمرٍ دقيقةً كاملة.
+     */
+    val fastFirstFix: StateFlow<Boolean> = pref(KEY_FAST_FIX, true)
+    fun setFastFirstFix(enabled: Boolean) = put(KEY_FAST_FIX, enabled)
+
     companion object {
         const val SEGMENT_CONTINUOUS = 0
         const val DEFAULT_DAY_START = 6
@@ -192,5 +225,65 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_UNDO_SECONDS = intPreferencesKey("undo_seconds")
         private val KEY_SPEED_LIMIT = intPreferencesKey("speed_limit_kmh")
         private val KEY_SPEED_ALERT = booleanPreferencesKey("speed_alert_enabled")
+        private val KEY_CAMERA_SCENE = stringPreferencesKey("camera_scene")
+        private val KEY_MAP_SOURCE = stringPreferencesKey("map_source_preference")
+        private val KEY_LITE_MODE = stringPreferencesKey("lite_mode")
+        private val KEY_FAST_FIX = booleanPreferencesKey("fast_first_fix")
+    }
+}
+
+/**
+ * وضع تصوير الكاميرا.
+ *
+ * الليل ليس «أظلمَ» بل **إضاءةٌ أطول**: يُرفع تعويض الإضاءة ويُخفَّض حدُّ الإطارات
+ * الأدنى، فيدخل الحسّاسَ ضوءٌ أكثر بثمنِ ضبابةٍ في الحركة. وهي مقايضةٌ لا تصحّ
+ * نهارًا، ولذلك لم يكفِ «تلقائيّ» وحده.
+ */
+enum class CameraScene(val id: String) {
+    /** يتبع ساعتَي النهار والليل نفسَهما اللتين تتبعهما السمة */
+    AUTO("auto"),
+    DAY("day"),
+    NIGHT("night");
+
+    companion object {
+        val DEFAULT = AUTO
+        fun from(id: String?): CameraScene = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * مصدر خريطة الرحلة حين يتوفّر أكثر من واحد.
+ *
+ * [AUTO] هو الترتيب الذي أقرّته 0.7.0 (أرشيفٌ محلّيّ ← OsmAnd ← إنترنت ← مخطَّط).
+ * والخياران الآخران **تجاوزٌ صريح**: صورة OsmAnd أدقّ خريطةً وأفقرُ تفاعلًا،
+ * وبلاطات الإنترنت عكسها — فأيّهما أفضل سؤالٌ لا جواب واحد له.
+ */
+enum class MapSourcePreference(val id: String) {
+    AUTO("auto"),
+    OSMAND("osmand"),
+    TILES("tiles");
+
+    companion object {
+        val DEFAULT = AUTO
+        fun from(id: String?): MapSourcePreference = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * الوضع المخفَّف للأجهزة المحدودة.
+ *
+ * ثلاث حالاتٍ لا رايةٌ واحدة: [AUTO] يعني «قرّر عنّي» ويُشتقّ من
+ * `ActivityManager.isLowRamDevice`، و[ON] و[OFF] تجاوزٌ صريح. والفرق بين «مطفأٌ
+ * لأنّ الجهاز قويّ» و«مطفأٌ لأنّي أطفأتُه» يجب أن يبقى محفوظًا: الأوّل يتبدّل مع
+ * الجهاز والثاني لا يتبدّل.
+ */
+enum class LiteMode(val id: String) {
+    AUTO("auto"),
+    ON("on"),
+    OFF("off");
+
+    companion object {
+        val DEFAULT = AUTO
+        fun from(id: String?): LiteMode = entries.firstOrNull { it.id == id } ?: DEFAULT
     }
 }

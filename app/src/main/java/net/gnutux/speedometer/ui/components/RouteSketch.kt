@@ -224,8 +224,11 @@ private fun DrawScope.drawSketchGrid(color: Color, strokeWidth: Float) {
 /**
  * علامة البداية: حلقةٌ مفرَّغة بلون التمييز داخل هالةٍ بلون الخلفيّة.
  * الشكل نفسه المرسوم في [RouteMap]، فلا يتعلّم المستعمل رمزين لمعنًى واحد.
+ *
+ * وصارت `internal` لأنّ [RouteMap] صار يرسم العلامتين بنفسه فوق صورة OsmAnd أيضًا:
+ * نسخُ الرسم هناك يعني شكلين ينحرف أحدهما عن الآخر عند أوّل تعديل.
  */
-private fun DrawScope.drawRingMarker(
+internal fun DrawScope.drawRingMarker(
     center: Offset,
     fill: Color,
     halo: Color,
@@ -238,7 +241,7 @@ private fun DrawScope.drawRingMarker(
 }
 
 /** علامة النهاية: معيّنٌ مصمت بلون الخطر، وهي مقابل الحلقة في [RouteMap] */
-private fun DrawScope.drawDiamondMarker(
+internal fun DrawScope.drawDiamondMarker(
     center: Offset,
     fill: Color,
     halo: Color,

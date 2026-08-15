@@ -33,9 +33,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SatelliteAlt
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -60,6 +66,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -86,6 +93,7 @@ import net.gnutux.speedometer.core.camera.HudMetrics
 import net.gnutux.speedometer.core.location.FixQuality
 import net.gnutux.speedometer.core.location.GnssInfo
 import net.gnutux.speedometer.core.settings.AppSettings
+import net.gnutux.speedometer.core.settings.CameraScene
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import kotlin.math.cos
@@ -118,11 +126,23 @@ private val RECORD_SIZE = 80.dp
 private val SHUTTER_SIZE = 72.dp
 
 /**
- * دون هذا العرض لا يتّسع الشريط العلويّ لحبّاته الأربع بنصوصها، فكانت شارة REC
- * تُقصّ. أقصى عرضٍ تطلبه الحبّات مجتمعةً نحو ‎350dp‎ مع الهوامش، فجعلنا الحدّ عند
- * ‎360dp‎: ما دونه تسقط النصوص الثانويّة وتبقى الأيقونات.
+ * أقصى عرضٍ للوحة اختيار وضع التصوير. مطلقٌ عمدًا كسائر عناصر التحكّم: هي لا تُحرق،
+ * وثلاثة أسطرٍ قصيرة لا تحتاج أكثر من هذا مهما اتّسعت الشاشة — واللوحة الممتدّة على
+ * عرض لوحٍ كامل تُقرأ نافذةَ خطأٍ لا قائمةَ اختيار.
  */
-private val COMPACT_WIDTH = 360.dp
+private val PICKER_MAX_WIDTH = 320.dp
+
+/**
+ * دون هذا العرض لا يتّسع الشريط العلويّ لحبّاته بنصوصها، فتُقصّ آخرُها. والقصّ
+ * أسوأ من الحذف لأنّه يوهم بعطبٍ في الرسم، فما دون الحدّ تسقط النصوص الثانويّة
+ * وتبقى الأيقونات.
+ *
+ * ارتفع من ‎360dp‎ إلى ‎430dp‎ في 0.8.0: صارت الحبّات خمسًا بإضافة وضع التصوير،
+ * وأقصى ما تطلبه مجتمعةً بنصوصها نحو ‎420dp‎ مع الهوامش. أثرُ ذلك أنّ الهاتف
+ * المرجعيّ (‎411dp‎ رأسيًّا) صار مضغوطًا — أيقوناتٌ بلا نصّ — بينما يبقى الوضع
+ * الأفقيّ، وهو وضع التثبيت على الزجاج، على نصوصه كاملة.
+ */
+private val COMPACT_WIDTH = 430.dp
 
 /**
  * تباعدُ الحروف صفرٌ في نصوص الطبقة المحروقة.
@@ -255,14 +275,17 @@ fun CameraScreen(
     // (عبر `HudSnapshot`)، فيبقى المرسوم هو المحروق كما توجب المواصفة
     val scale by vm.speedScale.collectAsStateWithLifecycle()
     val isRecording by vm.isRecording.collectAsStateWithLifecycle()
+    val isPaused by vm.isVideoPaused.collectAsStateWithLifecycle()
     val cameraMessage by vm.cameraMessage.collectAsStateWithLifecycle()
     val burnOverlay by vm.burnOverlay.collectAsStateWithLifecycle()
     val segmentMinutes by vm.camera.segmentMinutes.collectAsStateWithLifecycle()
+    val scene by vm.cameraScene.collectAsStateWithLifecycle()
 
     var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var captureTick by remember { mutableIntStateOf(0) }
     var hideControls by remember { mutableStateOf(false) }
+    var scenePickerOpen by remember { mutableStateOf(false) }
 
     // COMPATIBLE يفرض TextureView: SurfaceView لا يظهر في PixelCopy لنافذة التطبيق،
     // فكانت اللقطة تخرج بمستطيل أسود مكان المعاينة.
@@ -311,6 +334,9 @@ fun CameraScreen(
             CameraSession.Message.BurnUnsupported ->
                 toast = context.getString(R.string.burn_unsupported)
 
+            CameraSession.Message.SceneUnsupported ->
+                toast = context.getString(R.string.camera_scene_unsupported)
+
             null -> return@LaunchedEffect
         }
         delay(3500)
@@ -325,6 +351,9 @@ fun CameraScreen(
     LaunchedEffect(captureTick) {
         if (captureTick == 0) return@LaunchedEffect
         hideControls = true
+        // لوحة الاختيار ليست جزءًا من المشهد: هي عنصر تحكّم كالأزرار، ولا يجوز أن
+        // تُخلَّد في لقطةٍ يُشارِكها المصوِّر
+        scenePickerOpen = false
         // إطاران حتى تختفي الأزرار فعلًا قبل الالتقاط
         withFrameNanos { }
         withFrameNanos { }
@@ -393,6 +422,12 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.Absolute.spacedBy(CHIP_GAP),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SceneChip(
+                    dim = dim,
+                    compact = compact,
+                    scene = scene,
+                    onClick = { scenePickerOpen = !scenePickerOpen },
+                )
                 BurnChip(
                     dim = dim,
                     compact = compact,
@@ -401,7 +436,12 @@ fun CameraScreen(
                     onToggle = { vm.setBurnOverlay(!burnOverlay) },
                 )
                 if (segmentMinutes > AppSettings.SEGMENT_CONTINUOUS) SegmentChip(dim, segmentMinutes)
-                if (isRecording) RecordingChip(dim, compact)
+                // شارةٌ واحدة لا شارتان: «موقوف» تحلّ محلّ REC في الخانة نفسها.
+                // إظهارهما معًا يقول «يسجّل» و«لا يسجّل» في سطرٍ واحد، ويزيد عرض
+                // الشريط في اللحظة التي لا تحتمل زيادة
+                if (isRecording) {
+                    if (isPaused) PausedChip(dim, compact) else RecordingChip(dim, compact)
+                }
             }
         }
 
@@ -495,10 +535,42 @@ fun CameraScreen(
                         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                             RecordButton(isRecording = isRecording, onClick = vm::toggleRecording)
                         }
-                        Spacer(Modifier.weight(1f))
+                        // الخانة الثالثة كانت فراغًا محجوزًا لتوسيط زرّ التسجيل؛
+                        // صارت تحمل زرّ الإيقاف المؤقّت حين يكون له معنى وحده،
+                        // فلا يتزحزح زرّ التسجيل عن منتصف الشاشة بظهوره أو غيابه
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            if (isRecording) {
+                                PauseButton(paused = isPaused, onClick = vm::toggleVideoPause)
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        // ===== لوحة وضع التصوير =====
+        //
+        // تُعلن آخرَ أبناء الصندوق فتقع فوق الجميع في ترتيب الرسم والإصابة. ولا
+        // تُستعمل هنا `ModalBottomSheet`: هي واجهة تجريبيّة في Material 3 تحتاج
+        // إقرارًا صريحًا، ولا تُقدّم على لوحةٍ بسيطةٍ فوق المعاينة شيئًا يستحقّه.
+        if (scenePickerOpen) {
+            // حجابٌ يبتلع اللمس خارج اللوحة ويُغلقها. بدونه كانت اللمسة تنفذ إلى
+            // طبقة اللمس تحتها فتُظهر شريط التبويبات واللوحة مفتوحة فوقه
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .pointerInput(Unit) { detectTapGestures { scenePickerOpen = false } }
+            )
+            ScenePicker(
+                dim = dim,
+                selected = scene,
+                modifier = Modifier.align(Alignment.Center),
+                onPick = { picked ->
+                    vm.setCameraScene(picked)
+                    scenePickerOpen = false
+                },
+            )
         }
     }
 }
@@ -745,6 +817,39 @@ private fun RecordButton(isRecording: Boolean, onClick: () -> Unit) {
     }
 }
 
+/**
+ * إيقاف الفيديو مؤقّتًا واستئنافه.
+ *
+ * **مداه الفيديو وحده**: الرحلة تمضي — المسار والمسافة والزمن — فمن يقف عند إشارةٍ
+ * يوفّر مساحة القرص ولا يُفسد إحصاءات رحلته. ولذلك لا يشبه زرَّ التسجيل الأحمر
+ * شكلًا: هو أصغر منه وأخفت، كي لا يُقرأ «إيقافًا» للركوبة كلّها.
+ *
+ * لا يظهر إلّا والتسجيل جارٍ — لا معنى لإيقاف ما لم يبدأ — ومقاسه [TOUCH_MIN]
+ * بتمامه، فمساحة لمسه هي القاعدة السادسة نفسها لا أقلّ.
+ */
+@Composable
+private fun PauseButton(paused: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(TOUCH_MIN)
+            .background(PANEL, CircleShape)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+            contentDescription = stringResource(
+                if (paused) R.string.camera_resume else R.string.camera_pause
+            ),
+            // لون التحذير حين يكون موقوفًا: الحال شاذّة ويجب أن تُرى، وهو اللون
+            // نفسه الذي تحمله شارة «موقوف» أعلى الشاشة فيقرأ الاثنين خبرًا واحدًا
+            tint = if (paused) HUD_WARN else Color.White,
+            modifier = Modifier.size(28.dp),
+        )
+    }
+}
+
 @Composable
 private fun ShutterButton(onClick: () -> Unit) {
     Box(
@@ -925,6 +1030,177 @@ private fun RecordingChip(dim: HudDim, compact: Boolean) {
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                 ),
+            )
+        }
+    }
+}
+
+/**
+ * شارة «موقوف» — تحلّ محلّ شارة REC ما دام الفيديو موقوفًا.
+ *
+ * لونها التحذير (`Warn`) لا الخطر: الحال ليست عطبًا بل اختيارًا للراكب، لكنّها
+ * حالٌ **لا يُسجَّل فيها شيء**، ونسيانُها هو العطب الحقيقيّ — أن يظنّ المصوِّر أنّه
+ * يصوّر منذ نصف ساعة والملفّ واقفٌ عند الإشارة الأولى.
+ *
+ * **ولا تُحرق في الملفّ**، ولا معنى لحرقها: لا إطارات تُكتب أصلًا وهي موقوفة،
+ * فالشارة التي تعلن التوقّف لا يمكن أن تظهر في تسجيلٍ متوقّف. وهذا لا يخرق «المرسوم
+ * هو المحروق»: تلك المواصفة تحكم القرص والإحصاءات، وشارات الشريط العلويّ (REC
+ * والأقمار والحرق والتقسيم) خارج المحروق أصلًا كما هي الأزرار.
+ */
+@Composable
+private fun PausedChip(dim: HudDim, compact: Boolean) {
+    HudChip(dim) {
+        Box(
+            Modifier
+                .size(10.dp)
+                .background(HUD_WARN, CircleShape)
+        )
+        if (!compact) {
+            Text(
+                text = stringResource(R.string.camera_paused_badge),
+                maxLines = 1,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    color = HUD_WARN,
+                    fontWeight = FontWeight.Bold,
+                ),
+            )
+        }
+    }
+}
+
+// ===== وضع التصوير =====
+
+/** أيقونة الوضع: شمسٌ للنهار وهلالٌ لليل و«تلقائيّ» للتابع للساعة */
+private fun sceneIcon(scene: CameraScene): ImageVector = when (scene) {
+    CameraScene.AUTO -> Icons.Filled.BrightnessAuto
+    CameraScene.DAY -> Icons.Filled.WbSunny
+    CameraScene.NIGHT -> Icons.Filled.Bedtime
+}
+
+private fun sceneLabel(scene: CameraScene): Int = when (scene) {
+    CameraScene.AUTO -> R.string.camera_scene_auto
+    CameraScene.DAY -> R.string.camera_scene_day
+    CameraScene.NIGHT -> R.string.camera_scene_night
+}
+
+/**
+ * حبّة وضع التصوير: تعرض الوضع الجاري وتفتح لوحة اختياره بلمسة.
+ *
+ * الاختيار من شاشة الكاميرا لا من الإعدادات وحدها، لأنّ الحاجة إليه تقع والراكب
+ * على الطريق: يدخل نفقًا أو يخرج من مدينةٍ مضاءة، فلا يُعقل أن يترك الشاشة ويغوص
+ * في قائمة. والتبديل لا يقطع تسجيلًا جاريًا — تعويض الإضاءة يُضبط على
+ * `CameraControl` بلا إعادة ربط — فلا يُقفَل الزرّ أثناء التصوير كما يُقفَل الحرق.
+ */
+@Composable
+private fun SceneChip(dim: HudDim, compact: Boolean, scene: CameraScene, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = TOUCH_MIN, minHeight = TOUCH_MIN)
+            .clip(RoundedCornerShape(dim.corner))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        HudChip(dim) {
+            Icon(
+                imageVector = sceneIcon(scene),
+                contentDescription = stringResource(R.string.camera_scene_title),
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(CHIP_ICON),
+            )
+            if (!compact) {
+                Text(
+                    text = stringResource(sceneLabel(scene)),
+                    maxLines = 1,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        color = Color.White.copy(alpha = 0.85f),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * لوحة اختيار الوضع: عنوانٌ وثلاثة خيارات وملاحظة.
+ *
+ * الملاحظة (`camera_scene_note`) ليست زينة: «تلقائيّ» يتبع ساعتَي النهار والليل
+ * المضبوطتين للمظهر، ومن لم يعرف ذلك سيظنّ أنّ الوضع يقرأ الضوء بالحسّاس فيستغرب
+ * أن يبقى «نهارًا» في نفقٍ مظلم.
+ */
+@Composable
+private fun ScenePicker(
+    dim: HudDim,
+    selected: CameraScene,
+    modifier: Modifier = Modifier,
+    onPick: (CameraScene) -> Unit,
+) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        Column(
+            modifier = modifier
+                .widthIn(max = PICKER_MAX_WIDTH)
+                .background(PANEL, RoundedCornerShape(dim.corner))
+                .padding(horizontal = dim.panelPadH, vertical = dim.panelPadV),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.camera_scene_title),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                ),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+            // ترتيب التعداد نفسه: تلقائيّ ثمّ نهار ثمّ ليل، كما في الإعدادات
+            for (option in CameraScene.entries) {
+                SceneOption(
+                    scene = option,
+                    selected = option == selected,
+                    onClick = { onPick(option) },
+                )
+            }
+            Text(
+                text = stringResource(R.string.camera_scene_note),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = Color.White.copy(alpha = HudMetrics.LABEL_ALPHA),
+                ),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/** خيارٌ واحد: أيقونةٌ فتسمية، وعلامة صحٍّ للمختار — ومساحة لمسٍ لا تقلّ عن القاعدة */
+@Composable
+private fun SceneOption(scene: CameraScene, selected: Boolean, onClick: () -> Unit) {
+    val tint = if (selected) HUD_ACCENT else Color.White.copy(alpha = 0.85f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = TOUCH_MIN)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            imageVector = sceneIcon(scene),
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(CHIP_ICON),
+        )
+        Text(
+            text = stringResource(sceneLabel(scene)),
+            maxLines = 1,
+            style = MaterialTheme.typography.titleSmall.copy(color = tint),
+        )
+        Spacer(Modifier.weight(1f))
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = HUD_ACCENT,
+                modifier = Modifier.size(CHIP_ICON),
             )
         }
     }

@@ -233,6 +233,10 @@ class TripEngine(private val context: Context) {
                 }
             }
         }
+        // يُقرأ قبل البدء لا بعده: [LocationEngine.start] تسجّل مزوّديها مرّةً، فتبديل
+        // التفضيل بعدها لا يسري إلّا على تشغيلٍ لاحق — وهو مقبول، فالإعداد يخصّ أوّل
+        // ثوانٍ من الجلسة لا مجراها.
+        location.fastFirstFix = settings.fastFirstFix.value
         return location.start()
     }
 

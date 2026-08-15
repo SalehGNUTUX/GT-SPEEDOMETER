@@ -20,6 +20,7 @@ import net.gnutux.speedometer.SpeedoApp
 import net.gnutux.speedometer.core.media.MediaItem
 import net.gnutux.speedometer.core.profile.VehicleProfile
 import net.gnutux.speedometer.core.settings.AppSettings
+import net.gnutux.speedometer.core.settings.CameraScene
 import net.gnutux.speedometer.core.trip.TripLibrary
 import net.gnutux.speedometer.core.trip.TripStatus
 import net.gnutux.speedometer.core.trip.TripTrack
@@ -53,6 +54,12 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     val cameraMessage = engine.camera.message
 
     /**
+     * الفيديو موقوفٌ مؤقّتًا. **الرحلة لا تتوقّف معه**: المدى مقرَّر على أنّ الملفّ
+     * وحده يتوقّف، فلا تُمسّ هنا [toggleTrip] ولا يُخطَر المسجّل بشيء.
+     */
+    val isVideoPaused = engine.camera.isPaused
+
+    /**
      * جلسة التصوير أوسع من الترميز: تبدأ باللمسة وتنتهي بإغلاق آخر ملفّ. عليها
      * تُبنى قرارات العمر (الخدمة الأماميّة، تثبيت الكاميرا)، لا على [isRecording]
      * الذي يخدم الواجهة وحدها.
@@ -63,6 +70,19 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     val burnOverlay = engine.camera.burnOverlay
 
     fun setBurnOverlay(enabled: Boolean) = engine.camera.setBurnOverlay(enabled)
+
+    /** وضع التصوير كالحرق: الجلسة تملك الحالة وتحفظها، والشاشة تعرض وتبدّل */
+    val cameraScene = engine.camera.cameraScene
+
+    fun setCameraScene(scene: CameraScene) = engine.camera.setCameraScene(scene)
+
+    /**
+     * توگل الإيقاف المؤقّت. يُنادى من صفّ أزرار الكاميرا وحده، ولا أثر له على
+     * الرحلة: من أراد إيقاف الرحلة فزرّها قائمٌ في شاشتها.
+     */
+    fun toggleVideoPause() {
+        if (engine.camera.isPaused.value) engine.camera.resume() else engine.camera.pause()
+    }
 
     private val _lastSavedTrack = MutableStateFlow<File?>(null)
     val lastSavedTrack = _lastSavedTrack.asStateFlow()
@@ -266,6 +286,21 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { engine.media.delete(item) }
             refreshMedia()
+        }
+    }
+
+    /**
+     * حذف المحدَّد دفعةً واحدة. `onDone` يأخذ عدد من حُذف فعلًا لا عدد من طُلب حذفه:
+     * الشاشة تحتاجه لتقول الصدق حين يرفض بعضهم الحذف.
+     *
+     * تحديثٌ واحد بعد الجولة كلّها لا بعد كلّ ملفّ: القائمة تُقرأ من مزوّد المحتوى،
+     * وقراءتها مرّةً لكلّ ملفٍّ محذوف تُرجّ الشبكة أمام المستعمل عشرين مرّة.
+     */
+    fun deleteMediaBatch(items: List<MediaItem>, onDone: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val done = withContext(Dispatchers.IO) { engine.media.deleteAll(items) }
+            refreshMedia()
+            onDone(done)
         }
     }
 

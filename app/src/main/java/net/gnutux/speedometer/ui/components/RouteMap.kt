@@ -13,6 +13,7 @@ import android.net.NetworkCapabilities
 import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +21,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,8 +46,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +73,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.hypot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -61,7 +82,10 @@ import net.gnutux.speedometer.core.map.MapBinding
 import net.gnutux.speedometer.core.map.MapSource
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
+import net.gnutux.speedometer.core.map.OsmAndProjection
+import net.gnutux.speedometer.core.map.OsmAndShot
 import net.gnutux.speedometer.core.map.OsmAndState
+import net.gnutux.speedometer.core.settings.MapSourcePreference
 import net.gnutux.speedometer.core.trip.TrackPoint
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.theme.Accent
@@ -93,10 +117,20 @@ import org.osmdroid.views.overlay.TilesOverlay
 //   تُترك للمستعمل يظنّ التطبيق معطوبًا.
 //
 // وفوق ذلك كلّه طبقةُ ترتيبٍ للمصادر (انظر [chooseMode]) لا تمسّ مسار الأرشيف: هي
-// تقرّر أيّها يُعرض، لا كيف يُبنى.
+// تقرّر أيّها يُعرض، لا كيف يُبنى. وللمستعمل عليها تجاوزٌ صريح يُحفظ في التفضيلات.
 
 /** الزوايا مستديرة داخل المُركّب نفسه كي لا تطغى البلاطات المربّعة على أيّ موضع استعمال */
 private val MapShape = RoundedCornerShape(16.dp)
+
+/**
+ * أزرق المسار على صورة OsmAnd.
+ *
+ * **وهو اللون الوحيد في هذا الملفّ الذي لا يُقرأ من التركيب**، خلافًا للقاعدة، وعن
+ * قصد: الصورة خريطةٌ رسمها محرّك OsmAnd بألوانه هو، والخطّ عليها يجب أن يُقرأ خطَّ
+ * مسارٍ لا لونَ تمييزٍ لتطبيقنا. والفيروزيّ يذوب في المسطّحات المائيّة والمساحات
+ * الخضراء عند OsmAnd، وأزرقُه هذا هو ما يعرفه المستعمل من OsmAnd نفسه.
+ */
+private val RouteBlue = Color(0xFF1E88E5)
 
 /**
  * كلّ ما يلزم لرسم الخريطة، محسوبًا دفعةً واحدة خارج الخيط الرئيس.
@@ -141,11 +175,17 @@ private enum class MapMode {
 }
 
 /**
- * ترتيب المصادر.
+ * ترتيب المصادر، وتجاوز المستعمل له.
  *
- * عند تفضيل المحلّيّ: أرشيف بلاطاتٍ يغطّي المسار، ثمّ صورة OsmAnd، ثمّ الإنترنت، ثمّ
- * المخطَّط. والمنطق واحد: ما لا يحتاج شبكةً يسبق ما يحتاجها، والتفاعليّ يسبق الساكن
- * عند تساوي الكلفة. وعند تفضيل الإنترنت ينقلب الأوّلان وحدهما.
+ * [MapSourcePreference.AUTO] هو الترتيب المُقرّ: أرشيف بلاطاتٍ يغطّي المسار، ثمّ صورة
+ * OsmAnd، ثمّ الإنترنت، ثمّ المخطَّط. والمنطق واحد: ما لا يحتاج شبكةً يسبق ما يحتاجها،
+ * والتفاعليّ يسبق الساكن عند تساوي الكلفة. وعند تفضيل الإنترنت ينقلب الأوّلان وحدهما.
+ *
+ * وأمّا التجاوزان فحدُّهما أنّهما **تفضيلٌ لا تعبّد**:
+ * — [MapSourcePreference.OSMAND] يقدّم صورة OsmAnd ما دامت متاحة، ثمّ يسقط إلى
+ *   الترتيب المعتاد. من فضّلها لا يريد شاشةً فارغة حين لا يردّ OsmAnd.
+ * — [MapSourcePreference.TILES] **لا يسأل OsmAnd أصلًا**، لا يؤخّره: السؤال وحده
+ *   يوقظ عمليّته كاملة، ومن اختار البلاطات صراحةً لا يدفع ذلك الثمن.
  *
  * و[osmAndPending] تُعيد «انتظر» لا «تخطَّ»: قولُ «لا خريطة» ثمّ إظهارها بعد ثانيةٍ
  * وميضٌ أسوأ من انتظارٍ معلن.
@@ -153,11 +193,19 @@ private enum class MapMode {
 private fun chooseMode(
     ready: MapReady?,
     preferOffline: Boolean,
+    preference: MapSourcePreference,
     osmAndReady: Boolean,
     osmAndPending: Boolean,
 ): MapMode {
     if (ready == null) return MapMode.PENDING
     val offlineTiles = ready.binding.source == MapSource.OFFLINE
+    if (preference == MapSourcePreference.TILES) {
+        return if (offlineTiles || ready.network) MapMode.TILES else MapMode.SKETCH
+    }
+    if (preference == MapSourcePreference.OSMAND) {
+        if (osmAndReady) return MapMode.OSMAND
+        if (osmAndPending) return MapMode.PENDING
+    }
     // الأرشيف لا يُبنى إلّا حين يغطّي المسار فعلًا، فوجوده هنا يعني خريطةً كاملة.
     if (offlineTiles) return MapMode.TILES
     if (!preferOffline && ready.network) return MapMode.TILES
@@ -165,6 +213,26 @@ private fun chooseMode(
     if (osmAndPending) return MapMode.PENDING
     if (ready.network) return MapMode.TILES
     return MapMode.SKETCH
+}
+
+/**
+ * المصادر التي يجوز أن يبدّل بينها **في هذه الرحلة**.
+ *
+ * لا تُعرض قائمةٌ من ثلاثة يخيب اثنان منها: من لا خرائط عنده ولا اتّصال لا يُعرض
+ * عليه «بلاطات»، ومن لم يأذن له OsmAnd لا يُعرض عليه «OsmAnd». وحين لا يبقى إلّا
+ * خيارٌ واحد لا يُعرض الزرّ رأسًا.
+ */
+private fun switchableSources(
+    ready: MapReady?,
+    osmAndReady: Boolean,
+): List<MapSourcePreference> {
+    if (ready == null) return emptyList()
+    val sources = mutableListOf(MapSourcePreference.AUTO)
+    if (osmAndReady) sources += MapSourcePreference.OSMAND
+    if (ready.binding.source == MapSource.OFFLINE || ready.network) {
+        sources += MapSourcePreference.TILES
+    }
+    return if (sources.size > 1) sources else emptyList()
 }
 
 /**
@@ -185,6 +253,9 @@ private fun hasNetwork(context: Context): Boolean = runCatching {
  * @param points نقاط المسار كما قرأها [net.gnutux.speedometer.core.trip.GpxReader].
  * @param invertTiles قلب ألوان البلاطات؛ يليق بالسمة الداكنة ويُتعب العين في الفاتحة.
  * @param preferOffline تفضيل الأرشيف المحلّيّ على الإنترنت متى غطّى موضع الرحلة.
+ * @param mapSource تجاوز المستعمل لترتيب المصادر؛ يُقرأ من التفضيلات ويُمرَّر كما
+ *   يُمرَّر [invertTiles]: هذا مُركّب عرضٍ لا يقرأ المخزن بنفسه.
+ * @param onMapSourceChange يكتب اختيار زرّ التبديل في التفضيل، فيبقى بعد الخروج.
  * @param gpxFile ملفّ الرحلة إن كان عند المُستدعي. يُمرَّر إلى OsmAnd كما هو، وغيابه
  *   لا يُعطّل شيئًا: نكتب حينها نسخةً مصغَّرة في المخبأ من النقاط نفسها.
  * @param noticeVisible هل يُسمح بإظهار ملاحظة الخرائط المحلّيّة الآن؟ القرار عند
@@ -199,6 +270,8 @@ fun RouteMap(
     invertTiles: Boolean,
     preferOffline: Boolean,
     modifier: Modifier = Modifier,
+    mapSource: MapSourcePreference = MapSourcePreference.AUTO,
+    onMapSourceChange: (MapSourcePreference) -> Unit = {},
     gpxFile: File? = null,
     noticeVisible: Boolean = false,
     onDismissNotice: () -> Unit = {},
@@ -264,25 +337,28 @@ fun RouteMap(
     // فشلُ OsmAnd يُحفظ لهذه الرحلة: بلا هذا نُعاود سؤاله مع كلّ إعادة تركيب، فنقف
     // ثماني ثوانٍ في كلّ مرّة على جوابٍ نعلم أنّه لن يأتي.
     var osmAndFailed by remember(points) { mutableStateOf(false) }
+    val osmAndReady = osmAndStatus.usable && !osmAndFailed
     val mode = chooseMode(
         ready = current,
         preferOffline = preferOffline,
-        osmAndReady = osmAndStatus.usable && !osmAndFailed,
+        preference = mapSource,
+        osmAndReady = osmAndReady,
         osmAndPending = osmAndStatus.state == OsmAndState.CHECKING,
     )
+    val switchable = switchableSources(current, osmAndReady)
 
     // مقاس الصورة يُطلب بالبكسل، ولا يُعرف قبل أوّل تخطيط. نأخذه من التخطيط نفسه
     // بدل `BoxWithConstraints` كي لا تُقرأ خصائص مُستقبِلٍ ضمنيّ من لامدا متداخلة.
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     val screenDensity = LocalDensity.current.density
-    val trackColor = Accent.toArgb()
+    val trackColor = RouteBlue.toArgb()
 
-    val osmAndImage by produceState<Bitmap?>(null, mode, boxSize, current, gpxFile, trackColor) {
+    val osmAndShot by produceState<OsmAndShot?>(null, mode, boxSize, current, gpxFile, trackColor) {
         value = null
         if (mode != MapMode.OSMAND || boxSize.width <= 0 || boxSize.height <= 0) {
             return@produceState
         }
-        val bitmap = if (gpxFile != null) {
+        val shot = if (gpxFile != null) {
             osmAnd.renderGpx(gpxFile, boxSize.width, boxSize.height, screenDensity, trackColor)
         } else {
             val positions = withContext(Dispatchers.IO) {
@@ -291,7 +367,7 @@ fun RouteMap(
             osmAnd.renderTrack(positions, boxSize.width, boxSize.height, screenDensity, trackColor)
         }
         // الفشل ليس فراغًا: نُسقط الرتبة إلى ما بعدها في الترتيب بدل صندوقٍ أبيض.
-        if (bitmap == null) osmAndFailed = true else value = bitmap
+        if (shot == null) osmAndFailed = true else value = shot
     }
 
     // من لم يستلمه `MapView` لا مالك له. الشرط لا يُقلب: تحريرٌ مزدوج يغلق قواعد
@@ -343,14 +419,12 @@ fun RouteMap(
             }
 
             mode == MapMode.OSMAND -> {
-                val image = osmAndImage
-                if (image != null) {
-                    Image(
-                        bitmap = image.asImageBitmap(),
-                        contentDescription = stringResource(R.string.map_source_osmand),
-                        // الصورة تُطلب بمقاس الصندوق نفسه، والاقتصاص احتياطٌ لو
-                        // أعادها OsmAnd بمقاسٍ مخالف: إطارٌ أسود أسوأ من حافّةٍ مقصوصة.
-                        contentScale = ContentScale.Crop,
+                val shot = osmAndShot
+                if (shot != null) {
+                    OsmAndCanvas(
+                        shot = shot,
+                        points = points,
+                        frame = boxSize,
                         modifier = Modifier.matchParentSize(),
                     )
                 } else {
@@ -384,6 +458,22 @@ fun RouteMap(
             }
         }
 
+        if (switchable.size > 1) {
+            MapControlButton(
+                icon = Icons.Filled.Layers,
+                label = R.string.map_source_switch,
+                onClick = {
+                    // دورةٌ لا قائمة: الخيارات ثلاثةٌ على الأكثر، وحوارٌ لأجلها فوق
+                    // خريطةٍ يقودها المستعمل بيدٍ واحدة ثمنٌ أعلى من فائدته.
+                    val at = switchable.indexOf(mapSource)
+                    onMapSourceChange(switchable[(at + 1).mod(switchable.size)])
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp),
+            )
+        }
+
         if (notice != MapNotice.NONE) {
             OfflineMapNote(
                 notice = notice,
@@ -400,6 +490,325 @@ fun RouteMap(
                     .padding(8.dp),
             )
         }
+    }
+}
+
+// ————————————————————————— صورة OsmAnd —————————————————————————
+
+/**
+ * صورة OsmAnd معروضةً: تُلاءم الإطار أوّلًا، وتُقرَّب ويُتنقَّل فيها بعد ذلك.
+ *
+ * ثلاثة قرارات تفسّر شكلها:
+ *
+ * — **الصورة تُطلب بأضعاف مقاس الإطار** (انظر `OsmAndBridge.detailFactor`) لأنّ
+ *   واجهة OsmAnd لا تقبل مركزًا ولا تقريبًا: لا سبيل إلى تقريبٍ حقيقيّ إلّا أن نملك
+ *   بكسلاتٍ زائدة نقرّب إليها. فحدُّ التقريب الأعلى هو عامل التضعيف نفسه: ما بعده
+ *   تمديدٌ يُهرِّئ الصورة، لا تقريب.
+ *
+ * — **الطبقة الثانية خارج تحويل الصورة**. الصورة تُحوَّل بـ`graphicsLayer`، وأمّا
+ *   الخطّ والعلامتان والأسهم فتُرسم في [androidx.compose.foundation.Canvas] يطبّق
+ *   التحويل بنفسه على المواضع وحدها. ولذلك يبقى سمك الخطّ ومقاس العلامة ثابتَين
+ *   مهما قُرِّب — وهو ما تفعله الخرائط الحقيقيّة، بخلاف صورةٍ تُكبَّر بما فيها.
+ *
+ * — **الإزاحة محصورة** في [clampPan]: بلا حصرٍ ينزلق الإصبع بالصورة خارج الإطار
+ *   فيبقى فراغٌ من لون السطح، ولا يعرف المستعمل أضاع الخريطة أم تعطّل التطبيق.
+ */
+@Composable
+private fun OsmAndCanvas(
+    shot: OsmAndShot,
+    points: List<TrackPoint>,
+    frame: IntSize,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val strokePx = with(density) { 4.dp.toPx() }
+    val arrowPx = with(density) { 7.dp.toPx() }
+    val arrowStrokePx = with(density) { 2.dp.toPx() }
+    val arrowSpacingPx = with(density) { 76.dp.toPx() }
+    val startRadiusPx = with(density) { 11.5f.dp.toPx() }
+    val endRadiusPx = with(density) { 13.dp.toPx() }
+    val haloPx = with(density) { 2.dp.toPx() }
+
+    // الألوان تُرفع قبل `DrawScope`: هو ليس تركيبًا ولا يقرأ [Bg] ولا [Accent].
+    val startColor = Accent
+    val endColor = Danger
+    val haloColor = Bg
+
+    // نسبة بكسل الصورة إلى بكسل الإطار. لا تُشتقّ من `shot.detail` وحده: لو ردّ
+    // OsmAnd صورةً بمقاسٍ غير المطلوب لبقي الإسقاط صحيحًا والنسبةُ خاطئة.
+    val toFrame = if (shot.widthPx > 0) frame.width.toFloat() / shot.widthPx else 0f
+
+    // الإسقاط والمسار يُحسبان مرّةً لكلّ (صورة × مقاس): إسقاط آلاف النقاط ستّين مرّةً
+    // في الثانية أثقل ما في هذه الشاشة، وهو يقع أثناء الإيماءة نفسها.
+    val overlay = remember(shot, points, toFrame, arrowSpacingPx) {
+        val projection: OsmAndProjection? =
+            shot.projection(points.map { it.latitude to it.longitude })
+        if (projection == null || toFrame <= 0f) {
+            null
+        } else {
+            buildOverlay(points, projection, toFrame, arrowSpacingPx)
+        }
+    }
+
+    var scale by remember(shot) { mutableStateOf(1f) }
+    var pan by remember(shot) { mutableStateOf(Offset.Zero) }
+    val maxScale = shot.detail.toFloat().coerceAtLeast(1f)
+
+    Box(
+        modifier.pointerInput(shot, frame) {
+            detectTransformGestures { centroid, drag, zoom, _ ->
+                val next = (scale * zoom).coerceIn(1f, maxScale)
+                // النقطة التي تحت الإصبعين تبقى تحتهما: بلا هذا يقفز المشهد إلى
+                // مركز الإطار مع كلّ قرصة.
+                val anchored = (centroid - pan) / scale
+                scale = next
+                pan = clampPan(centroid + drag - anchored * next, next, frame)
+            }
+        }
+    ) {
+        Image(
+            bitmap = shot.bitmap.asImageBitmap(),
+            contentDescription = stringResource(R.string.map_source_osmand),
+            // الصورة تُطلب بنسبة الإطار نفسها، والاقتصاص احتياطٌ لو أعادها OsmAnd
+            // بمقاسٍ مخالف: إطارٌ أسود أسوأ من حافّةٍ مقصوصة.
+            contentScale = ContentScale.Crop,
+            // `Medium` لا `None`: الصورة تُصغَّر إلى ثلث مقاسها عند الملاءمة، وبلا
+            // ترشيحٍ تظهر أسنانٌ على كلّ حرفٍ وخطّ.
+            filterQuality = FilterQuality.Medium,
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    // المبدأ في الزاوية لا في المركز، فيوافق حساب [clampPan] حرفيًّا.
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    translationX = pan.x
+                    translationY = pan.y
+                },
+        )
+
+        if (overlay != null) {
+            androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+                withTransform({
+                    translate(pan.x, pan.y)
+                    scale(scale, scale, pivot = Offset.Zero)
+                }) {
+                    // السمك مقسومٌ على التقريب فيخرج ثابتًا على الشاشة بعد التحويل.
+                    drawPath(
+                        path = overlay.path,
+                        color = RouteBlue,
+                        style = Stroke(width = strokePx / scale),
+                    )
+                }
+                for (arrow in overlay.arrows) {
+                    drawDirectionArrow(
+                        at = arrow.at * scale + pan,
+                        dirX = arrow.dirX,
+                        dirY = arrow.dirY,
+                        color = haloColor,
+                        length = arrowPx,
+                        strokeWidth = arrowStrokePx,
+                    )
+                }
+                // النهاية بعد البداية: في رحلةٍ دائريّة يقع الطرفان على موضعٍ واحد،
+                // والأحدث أولى بأن يُرى — كما في [RouteSketch] سواءً بسواء.
+                drawRingMarker(
+                    overlay.start * scale + pan,
+                    startColor,
+                    haloColor,
+                    startRadiusPx,
+                    haloPx,
+                )
+                if (overlay.hasLine) {
+                    drawDiamondMarker(
+                        overlay.end * scale + pan,
+                        endColor,
+                        haloColor,
+                        endRadiusPx,
+                        haloPx,
+                    )
+                }
+            }
+        }
+
+        // الأزرار لازمةٌ ولو كانت الإيماءة تكفي: من يقود بيدٍ واحدة لا يقرص بإصبعين.
+        if (maxScale > 1f) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+            ) {
+                MapControlButton(
+                    icon = Icons.Filled.Add,
+                    label = R.string.map_zoom_in,
+                    onClick = {
+                        val next = (scale * ZOOM_STEP).coerceIn(1f, maxScale)
+                        pan = clampPan(zoomAtCenter(pan, scale, next, frame), next, frame)
+                        scale = next
+                    },
+                )
+                MapControlButton(
+                    icon = Icons.Filled.Remove,
+                    label = R.string.map_zoom_out,
+                    onClick = {
+                        val next = (scale / ZOOM_STEP).coerceIn(1f, maxScale)
+                        pan = clampPan(zoomAtCenter(pan, scale, next, frame), next, frame)
+                        scale = next
+                    },
+                )
+                MapControlButton(
+                    icon = Icons.Filled.FitScreen,
+                    label = R.string.map_reset_zoom,
+                    onClick = {
+                        scale = 1f
+                        pan = Offset.Zero
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** خطوة الزرّ الواحد؛ أصغر من ضعفٍ كي لا يقفز المشهد من الملاءمة إلى أقصى تقريب */
+private const val ZOOM_STEP = 1.6f
+
+/** التقريب بالزرّ يقع حول مركز الإطار: لا إصبع يدلّ على موضعٍ آخر */
+private fun zoomAtCenter(pan: Offset, from: Float, to: Float, frame: IntSize): Offset {
+    val center = Offset(frame.width / 2f, frame.height / 2f)
+    val anchored = (center - pan) / from
+    return center - anchored * to
+}
+
+/**
+ * حصر الإزاحة داخل حدود الصورة.
+ *
+ * الصورة بعد التحويل تشغل `مقاس الإطار × التقريب` ومبدؤها عند [pan]. فكي لا يظهر
+ * فراغٌ يجب أن يبقى المبدأ في السالب أو الصفر، وأن يبلغ طرفها الآخر حافّة الإطار على
+ * الأقلّ. وعند تقريبٍ يساوي واحدًا يلتقي الحدّان عند الصفر فتُشلّ الإزاحة من نفسها.
+ */
+private fun clampPan(pan: Offset, scale: Float, frame: IntSize): Offset = Offset(
+    pan.x.coerceIn(frame.width * (1f - scale), 0f),
+    pan.y.coerceIn(frame.height * (1f - scale), 0f),
+)
+
+/** سهم اتّجاهٍ واحد: رأسُ سهمٍ مفتوح عند النقطة، جناحاه إلى الخلف */
+private fun DrawScope.drawDirectionArrow(
+    at: Offset,
+    dirX: Float,
+    dirY: Float,
+    color: Color,
+    length: Float,
+    strokeWidth: Float,
+) {
+    // جناحان بزاوية ‎±35°‎ عن اتّجاه السير، محسوبان بدوران المتّجه لا بحساب مثلّثات:
+    // الاتّجاه معياريٌّ سلفًا، فالدوران ضربٌ وجمعٌ لا أكثر.
+    val cosine = 0.819f
+    val sine = 0.574f
+    val backX = -dirX * length
+    val backY = -dirY * length
+    val leftX = backX * cosine - backY * sine
+    val leftY = backX * sine + backY * cosine
+    val rightX = backX * cosine + backY * sine
+    val rightY = -backX * sine + backY * cosine
+    drawLine(color, at, Offset(at.x + leftX, at.y + leftY), strokeWidth)
+    drawLine(color, at, Offset(at.x + rightX, at.y + rightY), strokeWidth)
+}
+
+/** طبقة المسار فوق الصورة: خطٌّ وطرفاه وأسهم اتّجاهه، بإحداثيّات الإطار لا الصورة */
+private class RouteOverlay(
+    val path: androidx.compose.ui.graphics.Path,
+    val start: Offset,
+    val end: Offset,
+    val arrows: List<DirectionArrow>,
+    /** مسارٌ من نقطةٍ واحدة أو نقاطٍ متطابقة: علامةُ بدايةٍ وحدها ولا خطّ ولا نهاية */
+    val hasLine: Boolean,
+)
+
+private class DirectionArrow(val at: Offset, val dirX: Float, val dirY: Float)
+
+/**
+ * بناء الطبقة مرّةً واحدة.
+ *
+ * والتخفيف مقصود: نقطتان متجاورتان أقرب من بكسلٍ ونصف على الشاشة لا تضيفان إلى
+ * الخطّ شيئًا، وقد تبلغان في رحلةٍ طويلة عشرات الآلاف. وهو تخفيفٌ في الرسم وحده،
+ * فصندوق الإسقاط محسوبٌ من كلّ النقاط قبله.
+ */
+private fun buildOverlay(
+    points: List<TrackPoint>,
+    projection: OsmAndProjection,
+    toFrame: Float,
+    arrowSpacing: Float,
+): RouteOverlay? {
+    if (points.isEmpty()) return null
+    fun at(index: Int): Offset {
+        val point = points[index]
+        return Offset(
+            projection.xOf(point.longitude) * toFrame,
+            projection.yOf(point.latitude) * toFrame,
+        )
+    }
+
+    val path = androidx.compose.ui.graphics.Path()
+    val start = at(0)
+    path.moveTo(start.x, start.y)
+    var previous = start
+    var last = start
+    var drawn = false
+    val arrows = mutableListOf<DirectionArrow>()
+    // نصفُ المسافة في البداية: أوّل سهمٍ لا يقع فوق علامة البداية فيحجبها.
+    var since = arrowSpacing * 0.5f
+
+    for (index in 1 until points.size) {
+        val here = at(index)
+        last = here
+        val stepX = here.x - previous.x
+        val stepY = here.y - previous.y
+        val step = hypot(stepX, stepY)
+        if (step < MIN_SEGMENT_PX) continue
+        path.lineTo(here.x, here.y)
+        drawn = true
+        previous = here
+        since += step
+        if (since >= arrowSpacing) {
+            since = 0f
+            arrows += DirectionArrow(here, stepX / step, stepY / step)
+        }
+    }
+    // آخر نقطةٍ خُفّفت لا تُترك خارج الخطّ: طرفُ المسار هو موضع علامة النهاية.
+    if (drawn && last != previous) path.lineTo(last.x, last.y)
+
+    return RouteOverlay(path, start, last, arrows, drawn)
+}
+
+/** أقلّ ما يستحقّ ضلعًا في الخطّ، بالبكسل على الشاشة */
+private const val MIN_SEGMENT_PX = 1.5f
+
+/**
+ * زرّ فوق الخريطة: مساحة اللمس ‎56dp‎ (قاعدة 6) والأيقونة ‎24dp‎ داخلها.
+ *
+ * وخلفيّته مصمتةٌ لا شفّافة: الأيقونة فوق خريطةٍ متبدّلة الألوان لا تُرى إلّا بقرصٍ
+ * تحتها، وهذا موضعٌ يُضغط أثناء القيادة.
+ */
+@Composable
+private fun MapControlButton(
+    icon: ImageVector,
+    @StringRes label: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(56.dp)
+            .clip(CircleShape)
+            .background(Surface, CircleShape),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = stringResource(label),
+            tint = Accent,
+            modifier = Modifier.size(24.dp),
+        )
     }
 }
 

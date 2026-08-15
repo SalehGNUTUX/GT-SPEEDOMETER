@@ -47,7 +47,14 @@ fun GpsStatusBar(info: GnssInfo, modifier: Modifier = Modifier) {
                 .background(color, CircleShape)
         )
         Text(
-            text = if (info.hasFix) "GPS" else stringResource(R.string.gps_none),
+            // «تقريبيّ» بدل «لا إشارة» حين يكون عندنا موضعٌ من الشبكة: الخبران
+            // مختلفان، والأوّل يقول للراكب إنّ التطبيق يعمل وينتظر أقمارًا، لا إنّه
+            // أعمى. ولا يُكتب «GPS» عليه بحال — تلك كذبةٌ في أداة قياس.
+            text = when {
+                info.hasFix -> "GPS"
+                info.hasCoarse -> stringResource(R.string.gps_coarse)
+                else -> stringResource(R.string.gps_none)
+            },
             style = MaterialTheme.typography.labelLarge.copy(color = color),
         )
         Text(

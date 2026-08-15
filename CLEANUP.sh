@@ -53,12 +53,13 @@ PROBLEMS=0
 DELETABLE=()
 
 # ---------------------------------------------------------------------------
-#  بيان الإصدار 0.7.0-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#  بيان الإصدار 0.8.0-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
 # ---------------------------------------------------------------------------
 MANIFEST="MainActivity.kt
 SpeedoApp.kt
 core/TripEngine.kt
 core/alert/SpeedAlert.kt
+core/DeviceTier.kt
 core/camera/CameraSession.kt
 core/camera/HudMetrics.kt
 core/camera/VideoOverlayPainter.kt

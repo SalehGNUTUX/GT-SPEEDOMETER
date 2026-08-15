@@ -71,6 +71,9 @@ class LocationEngine(private val context: Context) {
     private val gpsListener = object : LocationListenerCompat {
         override fun onLocationChanged(location: Location) {
             lastGpsFixMs = SystemClock.elapsedRealtime()
+            // أوّل قمرٍ يُنهي عهد التقريب. هنا لا في [onFix]: تلك قد ترفض العيّنة
+            // لسوء دقّتها، والرفض لا ينفي أنّ الأقمار قد ثُبّتت.
+            retireCoarse()
             onFix(location, SpeedSample.PROVIDER_GPS)
         }
 
@@ -119,6 +122,61 @@ class LocationEngine(private val context: Context) {
 
     private var lastFixMs = 0L
 
+    /**
+     * تثبيتُ موقعٍ سريع: موضعٌ تقريبيّ يُعرض ريثما تُثبَّت الأقمار.
+     *
+     * يُضبط قبل [start]. على جهازٍ محدود قد يبلغ انتظارُ أوّل قمرٍ دقيقةً، وشاشةٌ
+     * صفريّة صامتة طوالها تُقرأ «معطوب» لا «ينتظر».
+     */
+    var fastFirstFix: Boolean = true
+
+    /** يُطفأ مع أوّل عيّنةِ أقمارٍ حقيقيّة، فينسحب المزوّد التقريبيّ من تلقاء نفسه */
+    private var coarseActive = false
+
+    private val _coarse = MutableStateFlow<Pair<Double, Double>?>(null)
+
+    /** آخر موضعٍ تقريبيّ، أو `null` — للعرض وحده لا للقياس */
+    val coarsePosition = _coarse.asStateFlow()
+
+    /**
+     * لا يمسّ مسار الرحلة ولا السرعة ولا المسافة: [onFix] لا تُنادى من هنا بحال.
+     * دقّة الشبكة مئات الأمتار، وإدخالها في المسافة يزيدها كيلومتراتٍ وهميّة.
+     */
+    private val coarseListener = LocationListenerCompat { location ->
+        if (!running || !coarseActive) return@LocationListenerCompat
+        _coarse.value = location.latitude to location.longitude
+        _gnss.value = _gnss.value.copy(hasCoarse = true)
+    }
+
+    /**
+     * آخر موقعٍ معروف من النظام، إن كان حديثًا بما يكفي.
+     *
+     * `getLastKnownLocation` تعود فورًا بلا انتظار أقمار: هو موقعٌ خزّنه النظام من
+     * تطبيقٍ آخر أو من جلسةٍ سابقة. والحدّ الزمنيّ لازم — موقعُ مدينةٍ غادرها
+     * المستعمل أمس أسوأ من لا شيء.
+     */
+    @SuppressLint("MissingPermission")
+    private fun seedFromLastKnown() {
+        for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+            val last = runCatching { lm.getLastKnownLocation(p) }.getOrNull() ?: continue
+            val ageMs = SystemClock.elapsedRealtime() - last.elapsedRealtimeNanos / 1_000_000L
+            if (ageMs in 0..LAST_KNOWN_MAX_AGE_MS) {
+                _coarse.value = last.latitude to last.longitude
+                _gnss.value = _gnss.value.copy(hasCoarse = true)
+                return
+            }
+        }
+    }
+
+    /** ينسحب المزوّد التقريبيّ عند أوّل تثبيتٍ حقيقيّ: بقاؤه استهلاكٌ بلا فائدة */
+    private fun retireCoarse() {
+        if (!coarseActive) return
+        coarseActive = false
+        runCatching { lm.removeUpdates(coarseListener) }
+        _coarse.value = null
+        _gnss.value = _gnss.value.copy(hasCoarse = false)
+    }
+
     @SuppressLint("MissingPermission")
     fun start(): Boolean {
         if (running) return true
@@ -127,6 +185,8 @@ class LocationEngine(private val context: Context) {
         previous = null
         lastFixMs = 0L
         lastGpsFixMs = 0L
+        coarseActive = false
+        _coarse.value = null
         intervals.clear()
         runCatching {
             lm.requestLocationUpdates(
@@ -152,6 +212,21 @@ class LocationEngine(private val context: Context) {
                 )
             }
         }
+        // بعد طلب الأقمار لا قبله: لو سبقه لَبَقيت رايةُ «تقريبيّ» مرفوعةً لحظةً بلا
+        // داعٍ على جهازٍ يملك تثبيتًا حاضرًا أصلًا.
+        if (fastFirstFix) {
+            coarseActive = true
+            seedFromLastKnown()
+            runCatching {
+                lm.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    COARSE_MIN_TIME_MS,
+                    0f,
+                    coarseListener,
+                    Looper.getMainLooper(),
+                )
+            }
+        }
         handler.postDelayed(staleWatcher, 1_000)
         return true
     }
@@ -159,6 +234,7 @@ class LocationEngine(private val context: Context) {
     fun stop() {
         if (!running) return
         running = false
+        retireCoarse()
         handler.removeCallbacks(staleWatcher)
         runCatching { lm.removeUpdates(gpsListener) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -231,5 +307,14 @@ class LocationEngine(private val context: Context) {
         const val RATE_WINDOW = 10
         const val STALE_MS = 4_000L
         const val FUSED_TAKEOVER_MS = 10_000L
+
+        /** أقصى عمرٍ لآخر موقعٍ معروف يُقبل: خمس دقائق، وما فوقها مدينةٌ أخرى ربّما */
+        const val LAST_KNOWN_MAX_AGE_MS = 5 * 60 * 1_000L
+
+        /**
+         * المزوّد التقريبيّ يُسأل كلّ ثانيتين لا ‎0‎: هو أبراج الشبكة والواي‑فاي، وهو
+         * ينسحب عند أوّل قمر، فلا معنى لاستنزاف البطّاريّة عليه.
+         */
+        const val COARSE_MIN_TIME_MS = 2_000L
     }
 }

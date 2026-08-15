@@ -224,4 +224,47 @@
     <string name="settings_speed_alert_note">صفيرةٌ لحظة تخطّي الحدّ، فإن دام التجاوز صار الصفير متكرّرًا</string>
     <string name="speed_limit_value">%1$s كم/س</string>
     <string name="speed_over_limit">تجاوزتَ الحدّ</string>
+
+    <!-- 0.8.0 — جسر OsmAnd -->
+    <string name="settings_osmand_denied">OsmAnd مثبَّت لكنّه لم يأذن لنا بعد. افتحه ← الإعدادات ← التطبيقات المتّصلة، وفعّل GT-SPEEDOMETER. تُمنح مرّةً واحدة، ثمّ تعمل الخريطة وهو مغلق.</string>
+    <string name="settings_osmand_denied_short">لم يأذن OsmAnd بعد</string>
+    <string name="map_source_switch">بدّل مصدر الخريطة</string>
+    <string name="map_source_internet_label">إنترنت</string>
+    <string name="map_zoom_in">تكبير</string>
+    <string name="map_zoom_out">تصغير</string>
+    <string name="map_reset_zoom">إعادة الضبط</string>
+
+    <!-- 0.8.0 — الكاميرا -->
+    <string name="camera_pause">إيقاف مؤقّت</string>
+    <string name="camera_resume">استئناف</string>
+    <string name="camera_paused_badge">موقوف</string>
+    <string name="camera_scene_title">وضع التصوير</string>
+    <string name="camera_scene_auto">تلقائيّ</string>
+    <string name="camera_scene_day">نهار</string>
+    <string name="camera_scene_night">ليل</string>
+    <string name="camera_scene_note">الوضع التلقائيّ يتبع ساعتَي النهار والليل في المظهر</string>
+    <string name="camera_scene_unsupported">لا يدعم هذا الجهاز ضبط الإضاءة يدويًّا</string>
+    <string name="settings_section_camera">الكاميرا</string>
+
+    <!-- 0.8.0 — الوسائط: تحديد متعدّد -->
+    <string name="media_select">تحديد</string>
+    <string name="media_select_all">تحديد الكلّ</string>
+    <string name="media_select_none">إلغاء التحديد</string>
+    <string name="media_selected_count">حُدّد %1$s</string>
+    <string name="media_delete_many_title">حذف الملفّات المحدّدة؟</string>
+    <string name="media_delete_many_body">سيُحذف %1$s من الملفّات نهائيًّا.</string>
+    <string name="media_share_many">مشاركة</string>
+    <string name="media_exit_selection">إنهاء التحديد</string>
+
+    <!-- 0.8.0 — الأجهزة الضعيفة -->
+    <string name="settings_section_lowend">الأجهزة المحدودة</string>
+    <string name="settings_lite_mode">الوضع المخفَّف</string>
+    <string name="settings_lite_mode_note">دقّة فيديو أقلّ، وطبقةٌ محروقة مطفأة، ومسارٌ مبسَّط على الخريطة — لجهازٍ محدود الذاكرة</string>
+    <string name="settings_lite_detected">جهازٌ محدود الذاكرة — فُعّل الوضع المخفَّف تلقائيًّا</string>
+    <string name="settings_lite_manual">جهازك ليس محدودًا؛ الوضع المخفَّف اختيارك أنت</string>
+    <string name="settings_fast_fix">تثبيت موقعٍ سريع</string>
+    <string name="settings_fast_fix_note">يُظهر رقمًا تقريبيًّا من الشبكة وآخر موقعٍ معروف ريثما تُثبَّت الأقمار</string>
+    <string name="gps_coarse">تقريبيّ</string>
+    <string name="lite_on">مفعَّل</string>
+    <string name="lite_off">معطَّل</string>
 </resources>

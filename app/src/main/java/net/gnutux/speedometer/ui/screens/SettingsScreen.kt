@@ -47,11 +47,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.DeviceTier
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndState
 import net.gnutux.speedometer.core.profile.VehicleProfile
 import net.gnutux.speedometer.core.settings.AppSettings
+import net.gnutux.speedometer.core.settings.CameraScene
+import net.gnutux.speedometer.core.settings.LiteMode
 import net.gnutux.speedometer.core.settings.ThemeMode
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
@@ -100,6 +103,12 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     // ولا يُنشأ في `SpeedoApp` كي لا يوقظ عمليّة OsmAnd عند كلّ إقلاع.
     val osmAndBridge = remember(context) { OsmAndBridge.of(context) }
     val osmAnd by osmAndBridge.status.collectAsStateWithLifecycle()
+
+    val cameraScene by s.cameraScene.collectAsStateWithLifecycle()
+    val liteMode by s.liteMode.collectAsStateWithLifecycle()
+    val fastFix by s.fastFirstFix.collectAsStateWithLifecycle()
+    // رايةُ النظام ثابتةٌ لعمر الجهاز، فتُقرأ مرّةً لا مع كلّ إعادة تركيب
+    val lowRam = remember(context) { DeviceTier.isLowRamDevice(context) }
 
     Column(modifier.fillMaxSize()) {
         SettingsHeader(onClose)
@@ -345,6 +354,11 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                                 stringResource(R.string.settings_osmand_missing)
                             OsmAndState.UNREACHABLE ->
                                 stringResource(R.string.settings_osmand_unreachable)
+                            // «لم يأذن» ليست «لا تستجيب»: الأولى فعلٌ ينتظر المستعمل
+                            // في تطبيقٍ آخر، والثانية عطبٌ لا يملك له شيئًا. وخلطهما
+                            // كان يترك من عليه خطوةٌ واحدة يظنّ أنّ لا سبيل.
+                            OsmAndState.DENIED ->
+                                stringResource(R.string.settings_osmand_denied)
                             OsmAndState.READY ->
                                 stringResource(R.string.settings_osmand_ready)
                         },
@@ -365,6 +379,62 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                             onClick = osmAndBridge::recheck,
                         )
                     }
+                }
+            }
+
+            // ===== الكاميرا =====
+            //
+            // الوضع يُختار من شاشة الكاميرا أيضًا، وهذا الموضع للاطّلاع والضبط
+            // البارد: من يعدّ جهازه قبل الركوب لا يفتح المعاينة لضبطها.
+            item { SectionTitle(stringResource(R.string.settings_section_camera)) }
+            item {
+                SettingCard {
+                    RowLabel(
+                        title = stringResource(R.string.camera_scene_title),
+                        note = stringResource(R.string.camera_scene_note),
+                    )
+                    ChoiceRow(
+                        options = listOf(
+                            stringResource(R.string.camera_scene_auto),
+                            stringResource(R.string.camera_scene_day),
+                            stringResource(R.string.camera_scene_night),
+                        ),
+                        selectedIndex = CameraScene.entries.indexOf(cameraScene)
+                            .coerceAtLeast(0),
+                        onSelect = { s.setCameraScene(CameraScene.entries[it]) },
+                    )
+                }
+            }
+
+            // ===== الأجهزة المحدودة =====
+            item { SectionTitle(stringResource(R.string.settings_section_lowend)) }
+            item {
+                SettingCard {
+                    RowLabel(
+                        title = stringResource(R.string.settings_lite_mode),
+                        note = stringResource(R.string.settings_lite_mode_note),
+                    )
+                    ChoiceRow(
+                        options = LiteMode.entries.map { liteLabel(it) },
+                        selectedIndex = LiteMode.entries.indexOf(liteMode).coerceAtLeast(0),
+                        onSelect = { s.setLiteMode(LiteMode.entries[it]) },
+                    )
+                    // «ما الذي وقع فعلًا» لا «ما الذي اخترتَه»: مع [LiteMode.AUTO]
+                    // لا يعرف المستعمل أيّهما جرى، وتخفيفٌ صامتٌ يُقرأ عطبًا في
+                    // الجودة لا خدمةً في السرعة.
+                    RowLabel(
+                        title = if (lowRam) {
+                            stringResource(R.string.settings_lite_detected)
+                        } else {
+                            stringResource(R.string.settings_lite_manual)
+                        },
+                    )
+                    SwitchRow(
+                        title = stringResource(R.string.settings_fast_fix),
+                        note = stringResource(R.string.settings_fast_fix_note),
+                        checked = fastFix,
+                        onChange = s::setFastFirstFix,
+                    )
                 }
             }
 
@@ -414,6 +484,14 @@ private fun undoLabel(seconds: Int): String =
     } else {
         stringResource(R.string.settings_undo_seconds, Fmt.count(seconds))
     }
+
+/** «تلقائيّ» يُعرض بنصّ الوضع التلقائيّ نفسه الذي في السمة، فلا يتعلّم المستعمل اسمين لمعنًى */
+@Composable
+private fun liteLabel(mode: LiteMode): String = when (mode) {
+    LiteMode.AUTO -> stringResource(R.string.camera_scene_auto)
+    LiteMode.ON -> stringResource(R.string.lite_on)
+    LiteMode.OFF -> stringResource(R.string.lite_off)
+}
 
 /** صفرٌ ليس سرعةً بل غيابُ حدٍّ، فله نصُّه لا الرقم «0 كم/س» */
 @Composable

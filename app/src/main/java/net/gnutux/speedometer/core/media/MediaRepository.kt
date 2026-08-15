@@ -201,6 +201,16 @@ class MediaRepository(private val context: Context) {
         }
     }.getOrDefault(false)
 
+    /**
+     * حذفٌ جماعيّ يتجاوز الفاشل ويرجع عدد من حُذف فعلًا.
+     *
+     * الملفّات تُحذف واحدًا واحدًا لا بنداءٍ واحد إلى `delete` بشرط `IN (…)`: المستعمل
+     * اختارهم جميعًا قصدًا، وملفٌّ يرفض الحذف — بطاقةُ ذاكرةٍ نُزعت، أو صفٌّ في
+     * `MediaStore` يملكه تطبيقٌ آخر — لا يجوز أن يُبطل حذف الباقي. و`delete` ملفوفٌ
+     * بـ`runCatching` سلفًا فلا يُسقط الجولة استثناءٌ من مزوّد المحتوى.
+     */
+    fun deleteAll(items: List<MediaItem>): Int = items.count { delete(it) }
+
     fun thumbnail(item: MediaItem, sizePx: Int = 320): Bitmap? = runCatching {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && item.file == null) {
             context.contentResolver.loadThumbnail(item.uri, Size(sizePx, sizePx), null)

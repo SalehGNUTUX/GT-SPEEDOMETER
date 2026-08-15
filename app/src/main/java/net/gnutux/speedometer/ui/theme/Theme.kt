@@ -147,7 +147,13 @@ private fun isNightNow(dayStartHour: Int, nightStartHour: Int): Boolean {
     return night
 }
 
-private fun computeNight(dayStartHour: Int, nightStartHour: Int): Boolean {
+/**
+ * ليست خاصّةً بالسمة بعد 0.8.0: وضع تصوير الكاميرا التلقائيّ يتبع الساعتين
+ * نفسَيهما، فيستدعي هذه الدالّة بعينها ([net.gnutux.speedometer.core.camera.CameraSession]).
+ * نسخةٌ ثانية من الشرط كانت ستنحرف عن هذه بعد أوّل تعديل، فتختلف سمةُ الشاشة عن
+ * إضاءة العدسة في اللحظة نفسها.
+ */
+internal fun computeNight(dayStartHour: Int, nightStartHour: Int): Boolean {
     // ساعتان متساويتان تعنيان «لا ليل ولا نهار»؛ بلا هذا الحارس يصير الشرط
     // صادقًا دائمًا فيُقفل التطبيق على الوضع الداكن بلا سببٍ ظاهر للمستعمل
     if (dayStartHour == nightStartHour) return false

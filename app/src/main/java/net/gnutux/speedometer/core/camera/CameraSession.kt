@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.StringRes
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -27,16 +28,28 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.media.MediaRepository
+import net.gnutux.speedometer.core.DeviceTier
 import net.gnutux.speedometer.core.settings.AppSettings
+import net.gnutux.speedometer.core.settings.CameraScene
+import net.gnutux.speedometer.ui.theme.computeNight
 import java.lang.ref.WeakReference
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * جلسة الكاميرا. تعيش خارج التركيب (Composition) عمدًا.
@@ -65,6 +78,14 @@ import java.util.Locale
  *   ويُنهى التسجيل بـ `SOURCE_INACTIVE`. الجلسة الآن تتبع المضيف في الأحوال
  *   العاديّة، وتُثبّت سجلّها عند RESUMED ما دام تسجيلٌ قائمًا، ثمّ تُحرّر العدسة
  *   حقًّا حين ينتهي التسجيل ولا شاشة تنتظرها.
+ *
+ * جديد في 0.8.0:
+ * - **إيقافٌ مؤقّت للفيديو وحده** ([pause]/[resume]). مداه مقرَّر: الملفّ يتوقّف
+ *   والرحلة تمضي. من يقف عند إشارةٍ يريد توفير القرص لا إفساد إحصاءاته، وملفّ
+ *   المسار يبقى متّصلًا لأنّه لم يُمسّ أصلًا.
+ * - **وضع تصويرٍ ليليّ/نهاريّ** عبر تعويض الإضاءة على `CameraControl`. اختير هذا
+ *   الطريق لأنّه **لا يستلزم إعادة ربط**، فتبديل الوضع لا يقتل تسجيلًا جاريًا —
+ *   بخلاف الحرق الذي يُعيد بناء `UseCaseGroup` ولذلك يُقفل أثناء التصوير.
  */
 class CameraSession(
     private val context: Context,
@@ -76,6 +97,16 @@ class CameraSession(
     private var preview: Preview? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
+
+    /** هل يعمل التخفيف الآن؟ يُسأل عند بناء المسجّل لا في كلّ إطار */
+    private fun liteActive(): Boolean =
+        DeviceTier.liteActive(context, settings.liteMode.value)
+
+    /**
+     * الكاميرا التي أعادها آخر ربطٍ ناجح. منها وحدها يُقرأ `CameraInfo` ويُضبط
+     * `CameraControl`، ولا معنى لأيّ منهما قبل الربط أو بعد التحرير.
+     */
+    private var boundCamera: Camera? = null
 
     private var overlayEffect: OverlayEffect? = null
 
@@ -98,6 +129,16 @@ class CameraSession(
     private val _isRecording = MutableStateFlow(false)
     val isRecording = _isRecording.asStateFlow()
 
+    /**
+     * الفيديو موقوفٌ مؤقّتًا والجلسة قائمة.
+     *
+     * لا يُخفض [isRecording] معه عمدًا: ذاك يعني «جلسة ترميزٍ قائمة» وعليه يُبنى
+     * ظهور زرّ الإيقاف نفسه وحبّة الشريط العلويّ، فلو أطفأناه لاختفى الزرّ الذي
+     * يُستأنف به. والفرق بين الحالين يقوله [isPaused] وحده.
+     */
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused = _isPaused.asStateFlow()
+
     private val _isReady = MutableStateFlow(false)
     val isReady = _isReady.asStateFlow()
 
@@ -106,6 +147,9 @@ class CameraSession(
 
     /** طول المقطع بالدقائق كما هو مضبوط الآن؛ الشاشة تعرضه ليعلم الراكب أنّ الملفّ سيُلَفّ */
     val segmentMinutes: StateFlow<Int> = settings.videoSegmentMinutes
+
+    /** وضع التصوير مُفوَّضٌ إلى التفضيلات كالحرق: مصدرُ حقيقةٍ واحد لا نسخةٌ ثانية */
+    val cameraScene: StateFlow<CameraScene> = settings.cameraScene
 
     /** آخر رسالة للمستخدم: مصير التسجيل، لا رمزُ خطأٍ عارٍ */
     private val _message = MutableStateFlow<Message?>(null)
@@ -133,6 +177,13 @@ class CameraSession(
 
         /** الجهاز لا يدعم حرق الطبقة، وقد رُبطت الكاميرا نظيفة */
         data object BurnUnsupported : Message
+
+        /**
+         * الجهاز لا يقبل تعويض إضاءةٍ يدويًّا، فوضع التصوير لا أثر له عليه.
+         * يُقال عند لمسة الاختيار وحدها لا عند كلّ إعادة تقييم: تكرارُه مع كلّ
+         * دقيقةٍ في الوضع التلقائيّ إزعاجٌ بلا خبرٍ جديد.
+         */
+        data object SceneUnsupported : Message
     }
 
     fun consumeMessage() {
@@ -304,6 +355,12 @@ class CameraSession(
         runCatching { preview?.setSurfaceProvider(null) }
         cameraOwner?.registry?.currentState = Lifecycle.State.DESTROYED
         cameraOwner = null
+        // لا كاميرا ⇒ لا معنى لمراقبة وضع التصوير: المراقبة تُوقظ الخيط كلّ دقيقة
+        // في الوضع التلقائيّ، وإبقاؤها بعد إغلاق العدسة استنزافٌ بلا مقابل
+        sceneJob?.cancel()
+        sceneJob = null
+        boundCamera = null
+        appliedExposureIndex = null
         runCatching { provider?.unbindAll() }
         // `OverlayEffect` يملك خيط GL وقائمة إطارات، وهو `AutoCloseable` نملك عمره.
         // تركُه مفتوحًا بعد فكّ الارتباط يُبقي سياق GL حيًّا طول عمر العمليّة.
@@ -338,7 +395,13 @@ class CameraSession(
                     Recorder.Builder()
                         .setQualitySelector(
                             QualitySelector.from(
-                                Quality.FHD,
+                                // الوضع المخفَّف يُنزل الدقّة إلى ‎720p‎: المرمِّز
+                                // العتاديّ على جهازٍ محدود يُسقط إطاراتٍ عند ‎1080p‎
+                                // فيخرج الملفّ متقطّعًا، و‎720p‎ سليمةٌ خيرٌ من ‎1080p‎
+                                // متعثّرة. ويُقرأ القرار مرّةً عند بناء المسجّل:
+                                // تبديله يوجب إعادة ربط، وهو إعدادٌ لا يُقلَب في
+                                // الطريق فلا يُدفع ثمنُ متابعته لحظةً بلحظة.
+                                if (liteActive()) Quality.HD else Quality.FHD,
                                 FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
                             )
                         )
@@ -366,10 +429,12 @@ class CameraSession(
                             if (burn) builder.addEffect(obtainOverlayEffect())
                         }
                         .build()
-                    cameraProvider.bindToLifecycle(
-                        sessionOwner,
-                        CameraSelector.DEFAULT_BACK_CAMERA,
-                        group,
+                    adoptCamera(
+                        cameraProvider.bindToLifecycle(
+                            sessionOwner,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            group,
+                        )
                     )
                     boundWithBurn = burn
                 }.onFailure {
@@ -377,11 +442,13 @@ class CameraSession(
                     // نسجّل نظيفًا ونُخبر، لا أن نترك الشاشة سوداء.
                     runCatching {
                         cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            sessionOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            preview,
-                            videoCapture,
+                        adoptCamera(
+                            cameraProvider.bindToLifecycle(
+                                sessionOwner,
+                                CameraSelector.DEFAULT_BACK_CAMERA,
+                                preview,
+                                videoCapture,
+                            )
                         )
                         boundWithBurn = false
                         // يُحفظ الارتداد لا لتُعاد المحاولة عند كلّ إقلاع: الجهاز الذي
@@ -398,7 +465,20 @@ class CameraSession(
             // بعد الربط لا قبله: الحالة هي ما يفتح العدسة، والربط على سجلٍّ ساكن
             // ثمّ رفعُه هو الترتيب الذي يضمن ألّا تُفتح العدسة قبل اكتمال المجموعة
             syncLifecycle()
+            // وضع التصوير يُطبَّق بعد أن تصير كاميرا: `CameraControl` لا يوجد قبلها
+            applyScene()
+            watchScene()
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    /**
+     * ارتباطٌ جديد يعني `CameraControl` جديدًا وتعويض إضاءةٍ عاد إلى الصفر، فالفهرس
+     * المطبَّق سابقًا لم يعد يصف الجهاز. تصفيرُه هنا يمنع أن تظنّ [applyScene] أنّ
+     * ما تريده مضبوطٌ أصلًا فتسكت وقد عادت العدسة إلى إضاءة النهار.
+     */
+    private fun adoptCamera(camera: Camera) {
+        boundCamera = camera
+        appliedExposureIndex = null
     }
 
     /**
@@ -433,6 +513,108 @@ class CameraSession(
         effect.setOnDrawListener { frame -> painter.onDraw(frame) }
         overlayEffect = effect
         return effect
+    }
+
+    // ===== وضع التصوير: ليل / نهار =====
+
+    /**
+     * نطاقٌ صغير للمراقبة وحدها، رئيسُ الخيط لأنّ `CameraControl` وحالة الجلسة
+     * كلّها تُمسّ من الخيط الرئيس. لا يُلغى أبدًا — الجلسة تعيش بعمر التطبيق —
+     * وإنّما تُلغى مهمّتُه عند تحرير العدسة.
+     */
+    private val sceneScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var sceneJob: Job? = null
+
+    /**
+     * آخر فهرس تعويضٍ ضُبط فعلًا على هذه الكاميرا. المقارنة به تمنع نداءً إلى
+     * `CameraControl` كلّ دقيقةٍ بالقيمة نفسها، وكلّ نداءٍ منها طلبُ التقاطٍ جديد.
+     */
+    private var appliedExposureIndex: Int? = null
+
+    /**
+     * يتابع الوضع المختار وساعتَي النهار والليل، ويعيد التقييم كلّ دقيقة في الوضع
+     * التلقائيّ وحده: من يقود عند الغروب يجب أن تتبدّل إضاءة عدسته وهو سائر لا عند
+     * إعادة تشغيل التطبيق. والوضع الصريح (نهار/ليل) لا يتبدّل بالساعة فلا نبضة له.
+     */
+    private fun watchScene() {
+        if (sceneJob != null) return
+        sceneJob = sceneScope.launch {
+            combine(
+                settings.cameraScene,
+                settings.dayStartHour,
+                settings.nightStartHour,
+            ) { scene, _, _ -> scene }.collectLatest { scene ->
+                while (true) {
+                    applyScene(scene)
+                    if (scene != CameraScene.AUTO) break
+                    delay(SCENE_RECHECK_MS)
+                }
+            }
+        }
+    }
+
+    /**
+     * اختيار المستعمل. لا إعادة ربط هنا ولا تأجيل إلى المقطع التالي: التعويض يُضبط
+     * على `CameraControl` لكاميرا قائمة، فيسري وسط تسجيلٍ جارٍ بلا أن يمسّه.
+     *
+     * والتطبيق فوريّ من القيمة المطلوبة لا من المحفوظة: كتابة DataStore غير
+     * متزامنة، وانتظارها كان سيؤخّر أثر اللمسة على الصورة دورةً كاملة.
+     */
+    fun setCameraScene(scene: CameraScene) {
+        if (settings.cameraScene.value != scene) settings.setCameraScene(scene)
+        if (exposureSupported() == false) {
+            _message.value = Message.SceneUnsupported
+            return
+        }
+        applyScene(scene)
+    }
+
+    /**
+     * `null` تعني «لا كاميرا فلا رأي»: قبل الربط لا يُسأل الجهاز ولا يُتّهم بأنّه
+     * لا يدعم شيئًا.
+     */
+    private fun exposureSupported(): Boolean? {
+        val camera = boundCamera ?: return null
+        return runCatching { camera.cameraInfo.exposureState.isExposureCompensationSupported }
+            .getOrNull()
+    }
+
+    /**
+     * ترجمة الوضع إلى فهرس تعويض إضاءة.
+     *
+     * **الزيادة تُحسب بالـEV لا برقمٍ ثابت**: خطوة التعويض تختلف بين الأجهزة
+     * (‎1/3‎ EV أو ‎1/6‎ EV أو غيرهما)، فالفهرس ‎+3‎ يعني ‎+1‎ EV على جهازٍ و‎+0.5‎ EV
+     * على آخر. نقسم الزيادة المطلوبة على الخطوة المعلَنة فيخرج الأثر البصريّ نفسه
+     * على الجهازين، ثمّ نحصر الناتج في المدى الذي يعلنه الجهاز.
+     */
+    private fun applyScene(scene: CameraScene = settings.cameraScene.value) {
+        val camera = boundCamera ?: return
+        val state = runCatching { camera.cameraInfo.exposureState }.getOrNull() ?: return
+        if (!state.isExposureCompensationSupported) return
+        val step = state.exposureCompensationStep
+        // خطوةٌ صفريّة أو شاذّة تعني قسمةً على صفر؛ الجهاز الذي يعلنها لا تعويض له
+        if (!step.isFinite || step.isZero) return
+        val ev = if (nightNow(scene)) NIGHT_EV else DAY_EV
+        val range = state.exposureCompensationRange
+        val index = (ev / step.toFloat()).roundToInt().coerceIn(range.lower, range.upper)
+        if (index == appliedExposureIndex) return
+        // النداء يعبر حدود الجهاز، وقد يُلغى بربطٍ جديد يقع في اللحظة نفسها
+        runCatching { camera.cameraControl.setExposureCompensationIndex(index) }
+            .onSuccess { appliedExposureIndex = index }
+    }
+
+    /**
+     * التلقائيّ يتبع ساعتَي النهار والليل نفسَيهما اللتين تتبعهما السمة، ويستدعي
+     * دالّتها بعينها: نسختان من الشرط تنحرف إحداهما عن الأخرى بعد أوّل تعديل،
+     * فتصير الشاشة ليلًا والعدسة نهارًا في اللحظة ذاتها.
+     */
+    private fun nightNow(scene: CameraScene): Boolean = when (scene) {
+        CameraScene.DAY -> false
+        CameraScene.NIGHT -> true
+        CameraScene.AUTO -> computeNight(
+            settings.dayStartHour.value,
+            settings.nightStartHour.value,
+        )
     }
 
     /**
@@ -515,6 +697,7 @@ class CameraSession(
         }
         segmentIndex = 0
         sessionActive = true
+        _isPaused.value = false
         _sessionFirstFile.value = null
 
         // التثبيت قبل الإقلاع لا بعده: `prepareRecording` نفسها قد تجد المصدر
@@ -527,6 +710,49 @@ class CameraSession(
             endSessionHold()
             _message.value = Message.Failed(R.string.rec_err_recorder)
         }
+    }
+
+    /**
+     * إيقافٌ مؤقّت **للفيديو وحده**.
+     *
+     * المدى مقرَّر: الرحلة تمضي — المسار والمسافة والزمن — ولا يمسّها هذا الزرّ.
+     * من يقف عند إشارةٍ يريد توفير مساحة القرص لا إفساد إحصاءات رحلته، وملفّ
+     * المسار يبقى متّصلًا لأنّ المسجّل لم يُخطَر بشيء.
+     *
+     * و`Recording.pause` ترمي `IllegalStateException` على بعض الأجهزة عند التكرار
+     * أو في لحظة `Finalize` (المسجّل انتقل ولمّا يصلنا حدثه)، فهي ملفوفة: إيقافٌ
+     * مؤقّت متعثّر لا يستحقّ إسقاط التطبيق.
+     */
+    fun pause() {
+        if (_isPaused.value) return
+        val current = recording ?: return
+        runCatching { current.pause() }.onSuccess { _isPaused.value = true }
+    }
+
+    fun resume() {
+        if (!_isPaused.value) return
+        val current = recording
+        if (current == null) {
+            // لا مسجّل يُستأنف: العلم كذبٌ الآن مهما كان سببه، وتركُه مرفوعًا يُبقي
+            // شارة «موقوف» على شاشةٍ لا تسجّل شيئًا
+            _isPaused.value = false
+            return
+        }
+        runCatching { current.resume() }.onSuccess { _isPaused.value = false }
+    }
+
+    /**
+     * لفّةٌ وقعت والتصوير موقوف: المقطع التالي يبدأ **جاريًا** لأنّ `Recording`
+     * جديدة، فيُعاد إيقافه فور بدئه وإلّا سجّل الجهازُ ما ظنّ الراكب أنّه لن يُسجَّل.
+     *
+     * ولا يقع هذا في المعتاد: سقف المدّة يقيسه المسجّل على المدّة المرمَّزة، وهي لا
+     * تتقدّم والتسجيل موقوف — وذاك هو المطلوب أصلًا («مؤقّت المقطع لا يمضي وهو
+     * ساكن»). هذا حارسٌ للجهاز الذي يخالف، لا مسارٌ متوقَّع.
+     */
+    private fun reapplyPause() {
+        if (!_isPaused.value) return
+        val current = recording ?: return
+        runCatching { current.pause() }
     }
 
     fun stopRecording() {
@@ -543,6 +769,7 @@ class CameraSession(
             // يُغلق العدسة والذيل (moov) لم يُكتب بعد، فيخرج ملفٌّ لا يفتحه مشغّل.
             if (!finalizePending) {
                 _isRecording.value = false
+                _isPaused.value = false
                 endSessionHold()
             }
             return
@@ -587,6 +814,7 @@ class CameraSession(
                         // وتكذب على ما قبله.
                         if (segmentIndex == 1) onStarted()
                         _isRecording.value = true
+                        reapplyPause()
                     }
 
                     is VideoRecordEvent.Finalize -> onFinalize(event, capture, requested, onStarted)
@@ -621,13 +849,16 @@ class CameraSession(
         val rolling = event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED &&
             sessionActive
         if (rolling) {
-            // `_isRecording` يبقى مرفوعًا عبر اللفّة كي لا يومض زرّ التسجيل بين ملفّين
+            // `_isRecording` يبقى مرفوعًا عبر اللفّة كي لا يومض زرّ التسجيل بين ملفّين.
+            // و[_isPaused] كذلك: [reapplyPause] عند بدء المقطع التالي يُنزل عليه
+            // حالةَ الإيقاف نفسها، فلا يستأنف التصوير من تلقائه بلفّةِ ملفّ
             _message.value = Message.Segment(name)
             if (beginSegment(capture, onStarted)) return
             // تعثّرت اللفّة: نُنهي الجلسة بدل محاولةٍ تلو أخرى بلا نهاية
             sessionActive = false
             segmentLimitMs = null
             _isRecording.value = false
+            _isPaused.value = false
             endSessionHold()
             _message.value = Message.Failed(R.string.rec_err_recorder)
             return
@@ -636,6 +867,7 @@ class CameraSession(
         sessionActive = false
         segmentLimitMs = null
         _isRecording.value = false
+        _isPaused.value = false
         // هنا وحدها تُفكّ قبضة الجلسة على العدسة: الملفّ أُغلق فعلًا. والمُنفّذ رئيسٌ
         // (`getMainExecutor`) فالانتقال يقع على خيطه المسموح
         endSessionHold()
@@ -710,5 +942,20 @@ class CameraSession(
     private companion object {
         const val STAMP_PATTERN = "yyyyMMdd-HHmmss"
         const val MILLIS_PER_MINUTE = 60_000L
+
+        /**
+         * زيادة الإضاءة ليلًا بوحدة EV، لا بفهرسٍ ثابت (الخطوة تختلف بين الأجهزة).
+         *
+         * ‎+1.5 EV‎ تضاعف الضوء الداخل نحو ثلاث مرّات، وهو حدٌّ محسوب: ما دونه لا
+         * يُرى أثره على طريقٍ مُنار، وما فوقه يُشبع مصابيح المركبات المقابلة فتصير
+         * لطخًا بيضاء تبتلع لوحاتِها — وهي بالضبط ما يُصوَّر من أجله.
+         */
+        const val NIGHT_EV = 1.5f
+
+        /** النهار هو ما ضبطه المصنّع: الحسّاس يقيس المشهد، ولا نُملي عليه شيئًا */
+        const val DAY_EV = 0f
+
+        /** نبضة إعادة التقييم في الوضع التلقائيّ — دقيقةٌ كنبضة السمة نفسها */
+        const val SCENE_RECHECK_MS = 60_000L
     }
 }
