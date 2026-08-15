@@ -11,10 +11,16 @@
 الشبكة خطًّا ولا نصًّا برمجيًّا ولا صورة. وهذا مقصود — الصفحة تُفتح من القرص كما
 تُفتح من الخادم، ومن يحفظها يحفظها كاملة.
 
-## إضافة إصدار
-سطرٌ واحد في رأس [RELEASES]. رقم الإصدار الحاليّ يُقرأ من `app/build.gradle.kts`
-ويُقابَل بأوّل سطرٍ في القائمة، فإن اختلفا نبّه المولّد — كي لا تُنشر صفحةٌ تعلن
-إصدارًا غير الذي في الشجرة.
+## إضافة إصدار — لا شيء
+جدول التنزيل يُقرأ من `CHANGELOG.md` آليًّا: كلّ عنوانٍ `## vX.Y.Z` يصير سطرًا،
+و«أبرز ما فيه» هي العناوين العريضة من بنود «### أُضيف». فاكتب سجلّ التغييرات
+كعادتك وشغّل هذا الملفّ، ولا قائمةَ ثانية تُحدَّث.
+
+ورقمُ الإصدار في `app/build.gradle.kts` يُقابَل بأحدث ما في السجلّ، فإن اختلفا
+نبّه المولّد ولم يتوقّف — كي لا تُنشر صفحةٌ تعلن إصدارًا غير الذي في الشجرة.
+
+أمّا قسم **الخصائص** فيبقى محرَّرًا باليد في [FEATURES]: سجلّ التغييرات يقول ما
+**تغيّر** في إصدار، والصفحة تقول ما **في التطبيق** اليوم — وهما سؤالان مختلفان.
 
 ## الأيقونة
 تُؤخذ من `art/gt-speedometer-icon.png` إن كانت Pillow مثبَّتة: تُقتطع خلفيّتها
@@ -40,16 +46,88 @@ GNUTUX = "https://salehgnutux.github.io/gnutux/"
 BLOG = "https://gnutuxblog.wordpress.com/"
 DEVELOPER = "https://github.com/SalehGNUTUX"
 
-# الأحدث أوّلًا. الوسم يُشتقّ آليًّا: v{النسخة}-beta
-RELEASES: list[tuple[str, str]] = [
-    ("0.8.0", "خريطة OsmAnd وهو مغلق · تقريبٌ وتنقّل · إيقافٌ مؤقّت · وضع ليل/نهار · تحديدٌ متعدّد · دعم Android Go"),
+# ---------------------------------------------------------------------------
+#  الإصدارات — تُقرأ من CHANGELOG.md آليًّا، ولا تُكتب هنا
+#
+#  مصدرُ حقيقةٍ واحد: ما دمتَ تكتب سجلّ التغييرات مع كلّ إصدار (وأنت تكتبه)،
+#  فلا حاجة إلى قائمةٍ ثانية تُنسى فتكذب الصفحةُ على القارئ. تُؤخذ العناوين
+#  العريضة من بنود «### أُضيف» — وهي بالضبط «أبرز ما فيه».
+#
+#  والقائمة أدناه احتياطٌ لا أصل: تُستعمل إن غاب CHANGELOG.md أو تعذّر تحليله.
+# ---------------------------------------------------------------------------
+
+CHANGELOG = Path("CHANGELOG.md")
+
+#: أقصى عددٍ من العناوين يُعرض في عمود «أبرز ما فيه»؛ ما زاد لا يُقرأ في سطرين
+HIGHLIGHTS = 4
+
+#: الأقسام التي تُؤخذ منها العناوين، بترتيب الأفضليّة
+HIGHLIGHT_SECTIONS = ("أُضيف", "أُصلح")
+
+FALLBACK_RELEASES: list[tuple[str, str]] = [
+    ("0.9.0", "الكشّاف · تبديل العدسة أثناء التسجيل · التصوير بالكاميرتين في ملفٍّ واحد"),
+    ("0.8.0", "خريطة OsmAnd وهو مغلق · تقريبٌ وتنقّل · إيقافٌ مؤقّت · تحديدٌ متعدّد · دعم Android Go"),
     ("0.7.0", "خريطة الرحلة من خرائط OsmAnd المحلّيّة · مسارٌ بلا خريطة أساس · سرعةٌ قصوى وتنبيهٌ صوتيّ"),
-    ("0.6.0", "متوسّط السرعة في الطبقة · منطقةٌ آمنة للمحروق · الوسائط قسمان · علامتا بداية ونهاية"),
+    ("0.6.0", "متوسّط السرعة في الطبقة · منطقةٌ آمنة للمحروق · الوسائط قسمان"),
     ("0.5.0", "الخريطة المحلّيّة أوّلًا · طول المقطع من شاشة الكاميرا"),
     ("0.4.0", "التسجيل لا ينقطع · نافذة عائمة · إعداداتٌ شاملة · أربعة أوضاع للسمة"),
     ("0.3.0", "حرق العدّاد داخل الفيديو · سجلّ الرحلات وخريطة المسار"),
     ("0.2.0", "السرعة في شريط الحالة · مربّع الإعدادات السريعة · قسم الوسائط"),
 ]
+
+_HEADING = re.compile(r"^##\s+v?(\d+\.\d+\.\d+)")
+_SUBHEADING = re.compile(r"^###\s+(.+?)\s*$")
+#: بندٌ يبدأ بعنوانٍ عريض: «- **العنوان** بقيّة الكلام» أو «- **العنوان.** …»
+_BULLET_LEAD = re.compile(r"^-\s+\*\*(.+?)\*\*")
+
+
+def parse_changelog() -> list[tuple[str, str]]:
+    """(النسخة، أبرز ما فيها) لكلّ إصدارٍ في سجلّ التغييرات، الأحدث أوّلًا."""
+    if not CHANGELOG.exists():
+        return []
+
+    #: {النسخة: {القسم: [عناوين]}}
+    found: list[tuple[str, dict[str, list[str]]]] = []
+    version: str | None = None
+    section = ""
+    for line in CHANGELOG.read_text(encoding="utf-8").splitlines():
+        head = _HEADING.match(line)
+        if head:
+            version = head.group(1)
+            section = ""
+            found.append((version, {}))
+            continue
+        if version is None:
+            continue
+        sub = _SUBHEADING.match(line)
+        if sub:
+            section = sub.group(1)
+            continue
+        lead = _BULLET_LEAD.match(line)
+        if lead and section:
+            # النقطة في آخر العنوان العريض جزءٌ من الجملة لا من الاسم
+            found[-1][1].setdefault(section, []).append(lead.group(1).rstrip(" .،:"))
+
+    out: list[tuple[str, str]] = []
+    for ver, sections in found:
+        heads: list[str] = []
+        for name in HIGHLIGHT_SECTIONS:
+            heads.extend(sections.get(name, []))
+            if len(heads) >= HIGHLIGHTS:
+                break
+        if heads:
+            out.append((ver, " · ".join(heads[:HIGHLIGHTS])))
+    return out
+
+
+def releases() -> list[tuple[str, str]]:
+    parsed = parse_changelog()
+    if parsed:
+        return parsed
+    print("• تعذّرت قراءة CHANGELOG.md — استُعملت القائمة الاحتياطيّة في build.py",
+          file=sys.stderr)
+    return FALLBACK_RELEASES
+
 
 # (عنوان المجموعة، معرّفها، [(عنوان البطاقة، شرحها)])
 FEATURES: list[tuple[str, str, list[tuple[str, str]]]] = [
@@ -258,9 +336,9 @@ def apk_url(version: str, kind: str) -> str:
     return f"{REPO}/releases/download/{tag}/GT-SPEEDOMETER-{version}-beta-{kind}.apk"
 
 
-def release_rows() -> str:
+def release_rows(items: list[tuple[str, str]]) -> str:
     out = []
-    for i, (version, note) in enumerate(RELEASES):
+    for i, (version, note) in enumerate(items):
         newest = i == 0
         cls = ' class="latest"' if newest else ""
         badge = '<span class="tag">الأحدث</span>' if newest else ""
@@ -435,9 +513,9 @@ CSS = """
 """
 
 
-def build() -> str:
+def build(items: list[tuple[str, str]]) -> str:
     icon = icon_data_uri()
-    newest = RELEASES[0][0]
+    newest = items[0][0]
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -529,7 +607,7 @@ def build() -> str:
           <tr><th scope="col">الإصدار</th><th scope="col">أبرز ما فيه</th><th scope="col">الحزم</th></tr>
         </thead>
         <tbody>
-{release_rows()}
+{release_rows(items)}
         </tbody>
       </table>
     </div>
@@ -584,18 +662,24 @@ def main() -> None:
     if not Path("app/build.gradle.kts").exists():
         sys.exit("شغّله من جذر المشروع (لم أجد app/build.gradle.kts).")
 
+    items = releases()
+    if not items:
+        sys.exit("لا إصدارَ واحدًا: CHANGELOG.md فارغٌ أو غير مفهوم، والقائمة "
+                 "الاحتياطيّة فارغة أيضًا.")
+
     gradle = gradle_version()
-    newest = RELEASES[0][0]
+    newest = items[0][0]
     if gradle and gradle != newest:
-        # تنبيهٌ لا توقّف: قد تُبنى الصفحة قبل نشر الإصدار عمدًا
-        print(f"! أحدث ما في RELEASES هو {newest} بينما build.gradle.kts يقول "
-              f"{gradle}. أضف سطرًا للإصدار الجديد إن كنتَ قد نشرته.", file=sys.stderr)
+        # تنبيهٌ لا توقّف: قد تُبنى الصفحة قبل كتابة قسم الإصدار في السجلّ
+        print(f"! أحدث ما في CHANGELOG.md هو {newest} بينما build.gradle.kts يقول "
+              f"{gradle}. اكتب قسم «## v{gradle}» في السجلّ ثمّ أعِد التوليد.",
+              file=sys.stderr)
 
     out = Path("index.html")
-    out.write_text(build(), encoding="utf-8")
+    out.write_text(build(items), encoding="utf-8")
     kb = out.stat().st_size / 1024
-    print(f"✓ {out} — {kb:.0f} ك.ب · {len(RELEASES)} إصدارًا · "
-          f"{sum(len(items) for _, _, items in FEATURES)} خاصّية")
+    cards = sum(len(cards) for _, _, cards in FEATURES)
+    print(f"✓ {out} — {kb:.0f} ك.ب · {len(items)} إصدارًا · {cards} خاصّية")
 
 
 if __name__ == "__main__":
