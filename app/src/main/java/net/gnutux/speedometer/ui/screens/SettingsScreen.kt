@@ -53,7 +53,9 @@ import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndState
 import net.gnutux.speedometer.core.profile.VehicleProfile
 import net.gnutux.speedometer.core.settings.AppSettings
+import net.gnutux.speedometer.core.settings.CameraLens
 import net.gnutux.speedometer.core.settings.CameraScene
+import net.gnutux.speedometer.core.settings.DualLayout
 import net.gnutux.speedometer.core.settings.LiteMode
 import net.gnutux.speedometer.core.settings.ThemeMode
 import net.gnutux.speedometer.ui.Fmt
@@ -105,6 +107,15 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val osmAnd by osmAndBridge.status.collectAsStateWithLifecycle()
 
     val cameraScene by s.cameraScene.collectAsStateWithLifecycle()
+    val lens by s.cameraLens.collectAsStateWithLifecycle()
+    val dual by s.dualCamera.collectAsStateWithLifecycle()
+    val dualLayout by s.dualLayout.collectAsStateWithLifecycle()
+    val dualPrimary by s.dualPrimary.collectAsStateWithLifecycle()
+    val screenFlash by s.screenFlash.collectAsStateWithLifecycle()
+    // من الجلسة لا من التفضيلات: قدرةُ الجهاز حقيقةٌ يقولها CameraX، والتسجيلُ
+    // الجاري حالةٌ لحظيّة يُقفل عليها نصف هذا القسم
+    val dualSupported by vm.camera.dualSupported.collectAsStateWithLifecycle()
+    val recording by vm.camera.isRecording.collectAsStateWithLifecycle()
     val liteMode by s.liteMode.collectAsStateWithLifecycle()
     val fastFix by s.fastFirstFix.collectAsStateWithLifecycle()
     // رايةُ النظام ثابتةٌ لعمر الجهاز، فتُقرأ مرّةً لا مع كلّ إعادة تركيب
@@ -402,6 +413,88 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                         selectedIndex = CameraScene.entries.indexOf(cameraScene)
                             .coerceAtLeast(0),
                         onSelect = { s.setCameraScene(CameraScene.entries[it]) },
+                    )
+                }
+            }
+
+            // ===== الكاميرتان معًا =====
+            //
+            // الصفوف كلّها مقفلةٌ أثناء التسجيل، كما يُقفل توگل الحرق: كلٌّ منها
+            // يستلزم إعادة ربطٍ تقتل جلسة الترميز، فتُلَفّ المقاطع. وقفلُها أصدق من
+            // مفتاحٍ يقلبه المستعمل فيجد ملفّه انقسم بلا أن يطلب ذلك.
+            item { SectionTitle(stringResource(R.string.settings_section_dual)) }
+            item {
+                SettingCard {
+                    RowLabel(
+                        title = if (dualSupported) {
+                            stringResource(R.string.camera_dual_supported)
+                        } else {
+                            stringResource(R.string.camera_dual_unsupported)
+                        },
+                        note = stringResource(R.string.camera_dual_note),
+                    )
+                    // بلا دعمٍ من الجهاز لا يُعرض المفتاح أصلًا: مفتاحٌ لا يفعل
+                    // شيئًا أسوأ من غيابه، والسطر أعلاه قال السبب.
+                    if (dualSupported) {
+                        SwitchRow(
+                            title = stringResource(R.string.camera_dual),
+                            note = if (recording) {
+                                stringResource(R.string.camera_switch_rolls)
+                            } else {
+                                stringResource(R.string.camera_dual_note)
+                            },
+                            checked = dual,
+                            onChange = { if (!recording) s.setDualCamera(it) },
+                        )
+                        if (dual) {
+                            RowLabel(title = stringResource(R.string.camera_dual_layout))
+                            ChoiceRow(
+                                options = listOf(
+                                    stringResource(R.string.camera_dual_pip),
+                                    stringResource(R.string.camera_dual_split),
+                                ),
+                                selectedIndex = DualLayout.entries.indexOf(dualLayout)
+                                    .coerceAtLeast(0),
+                                onSelect = {
+                                    if (!recording) s.setDualLayout(DualLayout.entries[it])
+                                },
+                            )
+                            ChoiceRow(
+                                options = listOf(
+                                    stringResource(R.string.camera_dual_primary_back),
+                                    stringResource(R.string.camera_dual_primary_front),
+                                ),
+                                selectedIndex = if (dualPrimary == CameraLens.FRONT) 1 else 0,
+                                onSelect = {
+                                    if (!recording) {
+                                        s.setDualPrimary(
+                                            if (it == 1) CameraLens.FRONT else CameraLens.BACK
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    // العدسة المفردة تبقى معروضةً في الوضعين: هي التي تعمل حين
+                    // يُطفأ المزدوج، ومن يضبطها الآن لا يريد أن يعود ليضبطها بعده.
+                    if (!dual) {
+                        RowLabel(title = stringResource(R.string.camera_switch))
+                        ChoiceRow(
+                            options = listOf(
+                                stringResource(R.string.camera_lens_back),
+                                stringResource(R.string.camera_lens_front),
+                            ),
+                            selectedIndex = if (lens == CameraLens.FRONT) 1 else 0,
+                            onSelect = {
+                                s.setCameraLens(if (it == 1) CameraLens.FRONT else CameraLens.BACK)
+                            },
+                        )
+                    }
+                    SwitchRow(
+                        title = stringResource(R.string.camera_screen_flash),
+                        note = stringResource(R.string.camera_screen_flash_note),
+                        checked = screenFlash,
+                        onChange = s::setScreenFlash,
                     )
                 }
             }

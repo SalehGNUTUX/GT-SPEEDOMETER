@@ -35,7 +35,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FlashlightOff
+import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -56,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -143,6 +148,35 @@ private val PICKER_MAX_WIDTH = 320.dp
  * الأفقيّ، وهو وضع التثبيت على الزجاج، على نصوصه كاملة.
  */
 private val COMPACT_WIDTH = 430.dp
+
+/**
+ * عمود التحكّم الجانبيّ: الكشّاف والتبديل والمبادلة.
+ *
+ * على الحافّة اليمنى **المطلقة** لا المنطقيّة، كسائر ما في هذه الشاشة: القرص في أقصى
+ * اليسار ولوح الإحصاءات في أقصى اليمين وكلاهما مثبَّتٌ بإحداثيّات، ولو تبع هذا العمود
+ * اتّجاهَ الكتابة لقفز فوق القرص على جهازٍ لغته لاتينيّة. وهو في المنتصف رأسيًّا
+ * فلا يزاحم الشريطين العلويّ والسفليّ.
+ *
+ * ولم يُوضع في الشريط العلويّ لأنّ حبّاته صارت خمسًا، ولا في صفّ الأزرار السفليّ
+ * لأنّه أثلاثٌ متساوية يقع زرّ التسجيل في وسطها بالبناء — وإقحام رابعٍ يزيح الوسط.
+ */
+private val SIDE_GAP = 10.dp
+
+/** عرض سطر «لا مصباح»: جملةٌ قصيرة على سطرين، ولا تتمدّد فتحجب المشهد */
+private val SIDE_NOTE_WIDTH = 150.dp
+
+/** مهلة السطر التعليميّ عن لفّ المقطع — كمهلة رسائل المصير نفسها تقريبًا */
+private const val SWITCH_HINT_MS = 4_500L
+
+/**
+ * سماكة إطار وميض الشاشة، نسبةً إلى الضلع الأقصر.
+ *
+ * إطارٌ لا حجاب: تغطية المعاينة بأبيضَ كامل تُعمي المصوِّر عمّا يصوّره. و‎%16‎ من
+ * الضلع تعطي على هاتفٍ متوسّط مساحةً بيضاء تقارب ثلث الشاشة، وهي ما يكفي لإضاءة
+ * وجهٍ على مسافة ذراع. وهي نسبةٌ لا رقم ثابت كي يتساوى أثرها على الهاتف واللوح —
+ * وليست من عقد `HudMetrics` لأنّها ليست ممّا يُحرق في الملفّ أصلًا.
+ */
+private const val FLASH_RING_OF_SHORT_SIDE = 0.16f
 
 /**
  * تباعدُ الحروف صفرٌ في نصوص الطبقة المحروقة.
@@ -280,12 +314,18 @@ fun CameraScreen(
     val burnOverlay by vm.burnOverlay.collectAsStateWithLifecycle()
     val segmentMinutes by vm.camera.segmentMinutes.collectAsStateWithLifecycle()
     val scene by vm.cameraScene.collectAsStateWithLifecycle()
+    val torchOn by vm.camera.torchOn.collectAsStateWithLifecycle()
+    val hasTorch by vm.camera.hasTorch.collectAsStateWithLifecycle()
+    val screenFlashOn by vm.camera.screenFlashOn.collectAsStateWithLifecycle()
+    val screenFlashEnabled by vm.camera.screenFlashEnabled.collectAsStateWithLifecycle()
+    val dualActive by vm.camera.dualActive.collectAsStateWithLifecycle()
 
     var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var captureTick by remember { mutableIntStateOf(0) }
     var hideControls by remember { mutableStateOf(false) }
     var scenePickerOpen by remember { mutableStateOf(false) }
+    var switchHint by remember { mutableStateOf(false) }
 
     // COMPATIBLE يفرض TextureView: SurfaceView لا يظهر في PixelCopy لنافذة التطبيق،
     // فكانت اللقطة تخرج بمستطيل أسود مكان المعاينة.
@@ -337,6 +377,9 @@ fun CameraScreen(
             CameraSession.Message.SceneUnsupported ->
                 toast = context.getString(R.string.camera_scene_unsupported)
 
+            // خبرٌ عن الكاميرا لا عن الملفّ: يُعرض كما هو بلا «تعذّر حفظ التسجيل»
+            is CameraSession.Message.Notice -> toast = context.getString(m.text)
+
             null -> return@LaunchedEffect
         }
         delay(3500)
@@ -346,6 +389,18 @@ fun CameraScreen(
         // معلّقة على الشاشة إلى الأبد. ووصولُ رسالةٍ جديدة أثناء الانتظار يُعيد
         // تشغيل الأثر قبل الاستهلاك، فلا تضيع رسالة.
         vm.consumeCameraMessage()
+    }
+
+    // السطر التعليميّ عن لفّ المقطع: مرّةً واحدة مع بدء كلّ تسجيل. المفتاح هو
+    // [isRecording] وهو لا يُخفض بين مقطعين، فلا يتكرّر السطر مع كلّ لفّة ملفّ.
+    LaunchedEffect(isRecording) {
+        if (!isRecording) {
+            switchHint = false
+            return@LaunchedEffect
+        }
+        switchHint = true
+        delay(SWITCH_HINT_MS)
+        switchHint = false
     }
 
     LaunchedEffect(captureTick) {
@@ -404,6 +459,80 @@ fun CameraScreen(
                 .matchParentSize()
                 .pointerInput(Unit) { detectTapGestures { onPreviewTap() } }
         )
+
+        // ===== وميض الشاشة =====
+        //
+        // إطارٌ أبيض **حول** المعاينة لا فوقها: هو مصدرُ ضوءٍ يقوم مقام مصباحٍ لا
+        // تملكه العدسة الأماميّة، ومن يستعمله يريد أن يرى ما يصوّره في الوقت نفسه.
+        // ورفعُ سطوع النافذة إلى أقصاه يقع في `MainActivity` لأنّه صفةٌ للنافذة لا
+        // للتركيب، ويُعاد إلى ما كان في كلّ مسارات الخروج.
+        //
+        // ولا يُلتقط بالحجاب في اللقطة: `Modifier.border` طلاءٌ في حدود الصندوق نفسه،
+        // فيظهر في `PixelCopy` كما يراه المصوِّر — وهذا مقصود، الضوء جزءٌ من المشهد.
+        if (screenFlashOn) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .border(shortSide * FLASH_RING_OF_SHORT_SIDE, Color.White)
+            )
+        }
+
+        // ===== عمود التحكّم الجانبيّ =====
+        //
+        // يختفي مع سائر الأزرار قبل اللقطة: هو تحكّمٌ لا مشهد.
+        if (!hideControls) {
+            Column(
+                modifier = Modifier
+                    // مطلقٌ لا منطقيّ، كعقد هذه الشاشة كلّه
+                    .align(AbsoluteAlignment.CenterRight)
+                    .padding(end = dim.margin),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(SIDE_GAP),
+            ) {
+                // الزرّ يظهر إن كان ثمّة ما يُضيء: مصباحٌ حقيقيّ، أو شاشةٌ أذن
+                // المستعمل بأن تقوم مقامه. وإلّا فسطرٌ يقول لماذا لا زرّ هنا، فغيابُ
+                // الزرّ بلا تفسير يُقرأ عطبًا
+                if (hasTorch || screenFlashEnabled) {
+                    TorchButton(
+                        on = torchOn,
+                        screenFlash = !hasTorch,
+                        onClick = vm::toggleTorch,
+                    )
+                } else {
+                    SideNote(dim, stringResource(R.string.camera_torch_none))
+                }
+
+                // في الوضع المزدوج لا معنى لتبديل العدسة — كلتاهما تعمل — وإنّما
+                // لمبادلة الكبيرة بالمصغَّرة
+                if (dualActive) {
+                    SideButton(
+                        icon = Icons.Filled.FlipCameraAndroid,
+                        label = stringResource(R.string.camera_dual_swap),
+                        onClick = vm::swapDualPrimary,
+                    )
+                } else {
+                    SideButton(
+                        icon = Icons.Filled.Cameraswitch,
+                        label = stringResource(R.string.camera_switch),
+                        onClick = vm::switchLens,
+                    )
+                }
+            }
+        }
+
+        // السطر التعليميّ: التبديل أثناء التسجيل يُغلق المقطع ويبدأ آخر. يُقال مرّةً
+        // لأنّ الراكب يظنّ أوّل مرّةٍ أنّ التسجيل انقطع، ولا يحتاج أن يُقال بعدها
+        if (switchHint && !hideControls) {
+            Text(
+                text = stringResource(R.string.camera_switch_rolls),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .widthIn(max = PICKER_MAX_WIDTH)
+                    .background(PANEL, RoundedCornerShape(dim.corner))
+                    .padding(horizontal = dim.panelPadH, vertical = dim.panelPadV),
+                style = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+            )
+        }
 
         // ===== الشريط العلويّ: صفٌّ واحد، حبّاتٌ متساوية =====
         Row(
@@ -846,6 +975,78 @@ private fun PauseButton(paused: Boolean, onClick: () -> Unit) {
             // نفسه الذي تحمله شارة «موقوف» أعلى الشاشة فيقرأ الاثنين خبرًا واحدًا
             tint = if (paused) HUD_WARN else Color.White,
             modifier = Modifier.size(28.dp),
+        )
+    }
+}
+
+/**
+ * زرّ العمود الجانبيّ: دائرةٌ داكنة بمساحة لمسٍ كاملة.
+ *
+ * `contentDescription` هو النصّ نفسه لا `null`: هذه أزرارٌ بلا كلمات، وقارئ الشاشة
+ * لا يملك عنها خبرًا سواه.
+ */
+@Composable
+private fun SideButton(
+    icon: ImageVector,
+    label: String,
+    tint: Color = Color.White,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(TOUCH_MIN)
+            .background(PANEL, CircleShape)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(26.dp),
+        )
+    }
+}
+
+/**
+ * الكشّاف.
+ *
+ * @param screenFlash الإضاءة ستكون بالشاشة لا بمصباح. يُلوَّن حينها بلون التحذير:
+ *   الحال ليست عطبًا، لكنّها ليست ما يتوقّعه من ضغط «كشّافًا» — ولها ثمنٌ في عين
+ *   من تقابله الكاميرا. اللون وحده يقول ذلك بلا كلمةٍ تحجب المشهد.
+ */
+@Composable
+private fun TorchButton(on: Boolean, screenFlash: Boolean, onClick: () -> Unit) {
+    SideButton(
+        icon = if (on) Icons.Filled.FlashlightOn else Icons.Filled.FlashlightOff,
+        label = stringResource(
+            if (on) R.string.camera_torch_on else R.string.camera_torch_off
+        ),
+        tint = when {
+            on && screenFlash -> HUD_WARN
+            on -> HUD_ACCENT
+            else -> Color.White.copy(alpha = 0.85f)
+        },
+        onClick = onClick,
+    )
+}
+
+/** سطرُ خبرٍ في العمود الجانبيّ: عرضٌ للحالة لا لمس فيه، فلا تسري عليه قاعدة اللمس */
+@Composable
+private fun SideNote(dim: HudDim, text: String) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        Text(
+            text = text,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .widthIn(max = SIDE_NOTE_WIDTH)
+                .background(PANEL, RoundedCornerShape(dim.corner))
+                .padding(horizontal = CHIP_PAD_H, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium.copy(
+                color = Color.White.copy(alpha = HudMetrics.LABEL_ALPHA),
+            ),
         )
     }
 }

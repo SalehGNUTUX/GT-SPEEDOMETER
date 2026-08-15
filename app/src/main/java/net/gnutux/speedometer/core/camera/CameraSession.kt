@@ -11,6 +11,8 @@ import androidx.annotation.StringRes
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ConcurrentCamera
+import androidx.camera.core.LayoutSettings
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.effects.OverlayEffect
@@ -43,7 +45,9 @@ import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.media.MediaRepository
 import net.gnutux.speedometer.core.DeviceTier
 import net.gnutux.speedometer.core.settings.AppSettings
+import net.gnutux.speedometer.core.settings.CameraLens
 import net.gnutux.speedometer.core.settings.CameraScene
+import net.gnutux.speedometer.core.settings.DualLayout
 import net.gnutux.speedometer.ui.theme.computeNight
 import java.lang.ref.WeakReference
 import java.text.SimpleDateFormat
@@ -86,6 +90,20 @@ import kotlin.math.roundToInt
  * - **وضع تصويرٍ ليليّ/نهاريّ** عبر تعويض الإضاءة على `CameraControl`. اختير هذا
  *   الطريق لأنّه **لا يستلزم إعادة ربط**، فتبديل الوضع لا يقتل تسجيلًا جاريًا —
  *   بخلاف الحرق الذي يُعيد بناء `UseCaseGroup` ولذلك يُقفل أثناء التصوير.
+ *
+ * جديد في 0.9.0:
+ * - **خطّة ربطٍ واحدة** ([BindPlan]) تجمع كلّ ما يستلزم إعادة الربط: الحرق والعدسة
+ *   والازدواج وتخطيطه وأيّهما الكبيرة. كانت راية `boundWithBurn` وحدها تكفي حين لم
+ *   يكن يتبدّل إلّا الحرق؛ ومع خمسة مدخلات تحتاج المقارنة إلى قيمةٍ واحدة تُقارَن
+ *   بالمساواة، وإلّا نسي أحدُ المسارات مدخلًا فبقيت الكاميرا على حالٍ لم تعد مطلوبة.
+ * - **لفُّ المقطع عند إعادة الربط**: تبديل العدسة (وكذلك مبادلة الكبيرة بالمصغَّرة
+ *   في الوضع المزدوج) يستلزم `unbindAll` وربطًا جديدًا، وذلك يهدم سطح المسجّل. القرار
+ *   المُقَرّ أن يُغلق المقطع الجاري سليمًا ثمّ يبدأ التالي بالعدسة الجديدة، بآليّة
+ *   التقسيم نفسها. الرحلة ومسار GPX لا يُمسّان لأنّهما لا يعرفان بالمسجّل شيئًا.
+ * - **الكاميرتان في ملفٍّ واحد** عبر مسار التركيب (composition) في CameraX: تيّاران
+ *   يُمزجان في تيّارٍ واحد يذهب إلى `Preview` و`VideoCapture` معًا، لا معاينتان
+ *   منفصلتان بملفّين. شروط ذلك المسار مشروحةٌ عند [bindConcurrent].
+ * - **الكشّاف**، ووميضُ الشاشة بديلًا عنه على عدسةٍ بلا مصباح.
  */
 class CameraSession(
     private val context: Context,
@@ -111,18 +129,44 @@ class CameraSession(
     private var overlayEffect: OverlayEffect? = null
 
     /**
-     * قيمة `burnOverlay` التي جرى الربط عليها فعلًا. `null` تعني «الربط لم يعد
-     * موثوقًا»: إمّا لم يحدث بعد، أو بدّل المستخدم التوگل فوجب إعادة بناء
-     * `UseCaseGroup` لأنّ التأثيرات لا تُضاف ولا تُنزع من ارتباطٍ قائم.
+     * كلّ ما يستلزم تبديلُه إعادةَ ربط، في قيمةٍ واحدة تُقارَن بالمساواة.
+     *
+     * التأثيرات لا تُضاف ولا تُنزع من ارتباطٍ قائم، ولا العدسة تُبدَّل، ولا تخطيط
+     * التركيب يُعدَّل (فهو حقلٌ نهائيّ في `CameraUseCaseAdapter` يُمرَّر إلى مُركِّب
+     * التيّارين عند بنائه). فما دام هذا الوصف مطابقًا لِما رُبط فعلًا، لا نمسّ الربط.
      */
-    private var boundWithBurn: Boolean? = null
+    private data class BindPlan(
+        val burn: Boolean,
+        val lens: CameraLens,
+        val dual: Boolean,
+        val layout: DualLayout,
+        val primary: CameraLens,
+    ) {
+        /**
+         * الوصف لا الطلب: في الوضع المفرد لا يدخل التخطيط ولا «أيّهما الكبيرة» في
+         * الربط بشيء، فتُحيَّد قيمتاهما. ولولا ذلك لظلّت خطّةٌ ارتدّت إلى المفرد
+         * مخالفةً للمطلوب في حقلٍ لا أثر له، فيُعاد الربط عند كلّ فتحٍ للشاشة بلا نتيجة.
+         */
+        fun normalized(): BindPlan =
+            if (dual) this else copy(layout = DualLayout.DEFAULT, primary = CameraLens.DEFAULT)
+    }
 
     /**
-     * الكتابة في DataStore غير متزامنة، فقيمة [AppSettings.burnOverlay] تتأخّر دورةً
-     * عن ضغطة المستخدم. نحتفظ بالقيمة المطلوبة حتى يلحق بها المخزن، وإلّا رُبط
-     * المشهد على القيمة القديمة فبدا التوگل كأنّه لا يفعل شيئًا.
+     * الخطّة التي جرى الربط عليها فعلًا. `null` تعني «الربط لم يعد موثوقًا»: إمّا لم
+     * يحدث بعد، أو حُرّرت العدسة.
+     */
+    private var boundPlan: BindPlan? = null
+
+    /**
+     * الكتابة في DataStore غير متزامنة، فقيم [AppSettings] تتأخّر دورةً عن ضغطة
+     * المستخدم. نحتفظ بالمطلوب حتى يلحق به المخزن، وإلّا رُبط المشهد على القيمة
+     * القديمة فبدا الزرّ كأنّه لا يفعل شيئًا — أو أسوأ: ارتدّت الخطّة إلى ما فشل
+     * لتوّه فدارت إعادة الربط بلا نهاية.
      */
     private var pendingBurn: Boolean? = null
+    private var pendingLens: CameraLens? = null
+    private var pendingDual: Boolean? = null
+    private var pendingPrimary: CameraLens? = null
 
     private val painter = VideoOverlayPainter()
 
@@ -151,6 +195,61 @@ class CameraSession(
     /** وضع التصوير مُفوَّضٌ إلى التفضيلات كالحرق: مصدرُ حقيقةٍ واحد لا نسخةٌ ثانية */
     val cameraScene: StateFlow<CameraScene> = settings.cameraScene
 
+    /** العدسة المختارة كما في التفضيلات؛ في الوضع المزدوج لا معنى لها */
+    val cameraLens: StateFlow<CameraLens> = settings.cameraLens
+
+    /** أيّ العدستين تملأ الإطار الآن في الوضع المزدوج */
+    val dualPrimary: StateFlow<CameraLens> = settings.dualPrimary
+
+    /** راية التفضيل لا الواقع؛ الواقع في [dualActive] */
+    val dualRequested: StateFlow<Boolean> = settings.dualCamera
+
+    /** وميض الشاشة مسموحٌ به في التفضيلات؛ لا أنّه مضاءٌ الآن */
+    val screenFlashEnabled: StateFlow<Boolean> = settings.screenFlash
+
+    // ===== الكشّاف =====
+
+    /**
+     * الكشّاف مضاءٌ الآن — سواءٌ أكان مصباحًا حقيقيًّا أم وميضَ شاشة.
+     *
+     * حالةٌ نملكها نحن لا نقرؤها من `CameraInfo.torchState`: الأخيرة `LiveData` تصل
+     * متأخّرةً عن اللمسة، ولا وجود لها أصلًا في مسار وميض الشاشة. وهي **تُصفَّر
+     * حتمًا** عند كلّ ارتباطٍ جديد وعند التحرير، لأنّ `CameraControl` الجديد لا يرث
+     * كشّافَ سابقه — وحالةٌ باقيةٌ عندها كذبٌ صريح على المستعمل.
+     */
+    private val _torchOn = MutableStateFlow(false)
+    val torchOn = _torchOn.asStateFlow()
+
+    /** هل في الكاميرا المربوطة مصباح؟ يُسأل عند الربط لا عند كلّ لمسة */
+    private val _hasTorch = MutableStateFlow(false)
+    val hasTorch = _hasTorch.asStateFlow()
+
+    /**
+     * الشاشة تُضاء بيضاءَ بديلًا عن مصباحٍ لا تملكه العدسة.
+     *
+     * تقرؤها الشاشة (طبقةٌ بيضاء) والنشاط (رفع سطوع النافذة إلى ‎1f‎). فصلُها عن
+     * [torchOn] مقصود: من يقرأ السطوع لا يعنيه المصباح العتاديّ في شيء.
+     */
+    private val _screenFlashOn = MutableStateFlow(false)
+    val screenFlashOn = _screenFlashOn.asStateFlow()
+
+    // ===== الكاميرتان معًا =====
+
+    /**
+     * هل يدعم الجهاز تشغيل الكاميرتين معًا (أماميّة وخلفيّة)؟
+     *
+     * شرطان مجتمعان: ميزةُ النظام، **و**زوجٌ فعليّ في
+     * `getAvailableConcurrentCameraInfos` يجمع الجهتين. الأولى وحدها لا تكفي: جهازٌ
+     * قد يعلن الميزة ثمّ لا يعرض إلّا أزواجًا من جهةٍ واحدة (عدستان خلفيّتان)، وذاك
+     * ليس ما نطلبه. `false` قبل وصول المزوّد، لأنّ السؤال لا جواب له قبله.
+     */
+    private val _dualSupported = MutableStateFlow(false)
+    val dualSupported = _dualSupported.asStateFlow()
+
+    /** الكاميرتان مربوطتان فعلًا الآن. الشاشة تعرض زرّ المبادلة عليها لا على التفضيل */
+    private val _dualActive = MutableStateFlow(false)
+    val dualActive = _dualActive.asStateFlow()
+
     /** آخر رسالة للمستخدم: مصير التسجيل، لا رمزُ خطأٍ عارٍ */
     private val _message = MutableStateFlow<Message?>(null)
     val message = _message.asStateFlow()
@@ -175,6 +274,14 @@ class CameraSession(
         /** لا ملفّ؛ [reason] موردُ نصٍّ لا رمزٌ رقميّ، فالرقم لا يعني للمستخدم شيئًا */
         data class Failed(@StringRes val reason: Int) : Message
 
+        /**
+         * خبرٌ عن الكاميرا لا عن الملفّ، يُعرض كما هو.
+         *
+         * [Failed] تُغلَّف بـ«تعذّر حفظ التسجيل: …» وهي جملةٌ كاذبة حين يكون الخبر
+         * «تعذّر تبديل الكاميرا» أو «لا مصباح في هذه الكاميرا»: لا تسجيلَ ضاع.
+         */
+        data class Notice(@StringRes val text: Int) : Message
+
         /** الجهاز لا يدعم حرق الطبقة، وقد رُبطت الكاميرا نظيفة */
         data object BurnUnsupported : Message
 
@@ -198,9 +305,13 @@ class CameraSession(
     fun setBurnOverlay(enabled: Boolean) {
         // تغيير التأثير يستلزم إعادة الربط، وإعادة الربط أثناء التسجيل تقتله.
         // والعبرة بالجلسة لا بالترميز: ذيل الملفّ يُكتب بعد انطفاء [isRecording]
+        //
+        // **ولا يُلَفّ المقطع من أجله** كما يُلَفّ لتبديل العدسة: التبديل خدمةٌ يطلبها
+        // الراكب وهو ينظر إلى الطريق فلا بديل عنها، والحرق إعدادُ إخراجٍ يُضبط قبل
+        // الانطلاق — وشقُّ الملفّ نصفين ليحمل نصفُه عدّادًا ونصفُه لا شيء عبثٌ.
         if (_sessionHolding.value || _isRecording.value || requestedBurn() == enabled) return
         persistBurn(enabled)
-        boundWithBurn = null
+        requestRebind()
     }
 
     /** القيمة المطلوبة الآن: ما طلبه المستخدم إن لم يلحق به القرص بعد، وإلّا المحفوظة */
@@ -216,6 +327,48 @@ class CameraSession(
         pendingBurn = enabled
         settings.setBurnOverlay(enabled)
     }
+
+    private fun requestedLens(): CameraLens {
+        val stored = settings.cameraLens.value
+        if (pendingLens == stored) pendingLens = null
+        return pendingLens ?: stored
+    }
+
+    private fun persistLens(lens: CameraLens) {
+        pendingLens = lens
+        settings.setCameraLens(lens)
+    }
+
+    private fun requestedDual(): Boolean {
+        val stored = settings.dualCamera.value
+        if (pendingDual == stored) pendingDual = null
+        return pendingDual ?: stored
+    }
+
+    private fun persistDual(enabled: Boolean) {
+        pendingDual = enabled
+        settings.setDualCamera(enabled)
+    }
+
+    private fun requestedPrimary(): CameraLens {
+        val stored = settings.dualPrimary.value
+        if (pendingPrimary == stored) pendingPrimary = null
+        return pendingPrimary ?: stored
+    }
+
+    private fun persistPrimary(lens: CameraLens) {
+        pendingPrimary = lens
+        settings.setDualPrimary(lens)
+    }
+
+    /** ما ينبغي أن يكون مربوطًا الآن، من التفضيلات وما لم يلحق بها القرص بعد */
+    private fun desiredPlan(): BindPlan = BindPlan(
+        burn = requestedBurn(),
+        lens = requestedLens(),
+        dual = requestedDual(),
+        layout = settings.dualLayout.value,
+        primary = requestedPrimary(),
+    ).normalized()
 
     /**
      * جيل الربط. `ProcessCameraProvider.getInstance` غير متزامن، وقد يغادر المستعمل
@@ -359,14 +512,22 @@ class CameraSession(
         // في الوضع التلقائيّ، وإبقاؤها بعد إغلاق العدسة استنزافٌ بلا مقابل
         sceneJob?.cancel()
         sceneJob = null
+        planJob?.cancel()
+        planJob = null
         boundCamera = null
         appliedExposureIndex = null
+        // لا عدسة ⇒ لا كشّاف ولا وميض. وهذا أحد «مسارات الخروج» التي يجب أن يُعاد
+        // فيها سطوعُ النافذة إلى ما كان، والنشاط يفعل ذلك متابعًا لهذه الراية
+        _torchOn.value = false
+        _screenFlashOn.value = false
+        _hasTorch.value = false
+        _dualActive.value = false
         runCatching { provider?.unbindAll() }
         // `OverlayEffect` يملك خيط GL وقائمة إطارات، وهو `AutoCloseable` نملك عمره.
         // تركُه مفتوحًا بعد فكّ الارتباط يُبقي سياق GL حيًّا طول عمر العمليّة.
         runCatching { overlayEffect?.close() }
         overlayEffect = null
-        boundWithBurn = null
+        boundPlan = null
         _isReady.value = false
     }
 
@@ -388,6 +549,9 @@ class CameraSession(
                 return@addListener
             }
             provider = cameraProvider
+            // يُسأل مرّةً عند وصول المزوّد: الجواب صفةُ جهازٍ لا حالةٌ تتبدّل، وقسم
+            // الإعدادات يقرأ الراية فور فتحه
+            probeDualSupport(cameraProvider)
 
             if (preview == null) preview = Preview.Builder().build()
             if (videoCapture == null) {
@@ -412,54 +576,15 @@ class CameraSession(
             // الصورة إلى الشاشة بلا ربطٍ جديد، وإعادة الربط تقتل التسجيل الجاري
             applySurface()
 
-            val burn = requestedBurn()
-            val sessionOwner = obtainOwner()
-            val alreadyBound = boundWithBurn == burn &&
+            obtainOwner()
+            val alreadyBound = boundPlan == desiredPlan() &&
                 cameraProvider.isBound(preview!!) &&
                 cameraProvider.isBound(videoCapture!!)
 
             // الشرط الثاني هو صمّام الأمان: لا نفكّ ارتباطًا يحمل تسجيلًا جاريًا
-            if (!alreadyBound && !_sessionHolding.value) {
-                runCatching {
-                    cameraProvider.unbindAll()
-                    val group = UseCaseGroup.Builder()
-                        .addUseCase(preview!!)
-                        .addUseCase(videoCapture!!)
-                        .also { builder ->
-                            if (burn) builder.addEffect(obtainOverlayEffect())
-                        }
-                        .build()
-                    adoptCamera(
-                        cameraProvider.bindToLifecycle(
-                            sessionOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            group,
-                        )
-                    )
-                    boundWithBurn = burn
-                }.onFailure {
-                    // أجهزة كثيرة لا تدعم CameraEffect على مسار الفيديو. الأولى أن
-                    // نسجّل نظيفًا ونُخبر، لا أن نترك الشاشة سوداء.
-                    runCatching {
-                        cameraProvider.unbindAll()
-                        adoptCamera(
-                            cameraProvider.bindToLifecycle(
-                                sessionOwner,
-                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                preview,
-                                videoCapture,
-                            )
-                        )
-                        boundWithBurn = false
-                        // يُحفظ الارتداد لا لتُعاد المحاولة عند كلّ إقلاع: الجهاز الذي
-                        // رفض التأثير مرّة سيرفضه دائمًا، وتكرار الرسالة إزعاجٌ بلا فائدة
-                        persistBurn(false)
-                        _message.value = Message.BurnUnsupported
-                    }.onFailure {
-                        onFailure()
-                        return@addListener
-                    }
-                }
+            if (!alreadyBound && !_sessionHolding.value && !applyBinding()) {
+                onFailure()
+                return@addListener
             }
             _isReady.value = true
             // بعد الربط لا قبله: الحالة هي ما يفتح العدسة، والربط على سجلٍّ ساكن
@@ -468,7 +593,357 @@ class CameraSession(
             // وضع التصوير يُطبَّق بعد أن تصير كاميرا: `CameraControl` لا يوجد قبلها
             applyScene()
             watchScene()
+            watchPlan()
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    // ===== الربط: الخطّة وارتداداتها =====
+
+    /**
+     * محاولةُ ربطٍ واحدة بخطّةٍ بعينها. لا ارتداد فيها ولا رسائل: هي اللبنة، والقرار
+     * في [applyBinding].
+     *
+     * `unbindAll` قبل كلّ محاولة لا مرّةً واحدة: المزوّد يرفض ربطًا مفردًا وهو في وضع
+     * الكاميرتين ويرفض العكس، ويرمي `UnsupportedOperationException` صريحة تقول «فُكّ
+     * أوّلًا». وهي كذلك ما يمحو قائمة الكاميرات المتزامنة النشطة، فيجوز بعدها أن
+     * نُعيد الربط بترتيبٍ مقلوب حين يبادل المستعمل الكبيرة بالمصغَّرة.
+     */
+    private fun tryBind(cameraProvider: ProcessCameraProvider, requested: BindPlan): Boolean {
+        val plan = requested.normalized()
+        val previewCase = preview ?: return false
+        val captureCase = videoCapture ?: return false
+        val owner = cameraOwner ?: return false
+        // لا نطلب من الجهاز ما أعلن أنّه لا يملكه: الفشل هنا مسارٌ متوقَّع لا خطأ
+        if (plan.dual && !_dualSupported.value) return false
+        // **حالتا استعمالٍ اثنتان لا غير**: مسار التركيب يشترط ذلك (انظر
+        // [bindConcurrent])، والمفرد لا يضرّه
+        val group = UseCaseGroup.Builder()
+            .addUseCase(previewCase)
+            .addUseCase(captureCase)
+            .also { builder -> if (plan.burn) builder.addEffect(obtainOverlayEffect()) }
+            .build()
+        return runCatching {
+            cameraProvider.unbindAll()
+            adoptCamera(
+                if (plan.dual) {
+                    bindConcurrent(cameraProvider, owner, group, plan)
+                } else {
+                    cameraProvider.bindToLifecycle(owner, selectorOf(plan.lens), group)
+                }
+            )
+            boundPlan = plan
+            _dualActive.value = plan.dual
+        }.isSuccess
+    }
+
+    /**
+     * الربط بما هو مطلوب، وإلّا فبأقربِ ما يُقبل — ولا تُترك الجلسة بلا ربطٍ أبدًا.
+     *
+     * الارتدادات مرتّبةٌ من الأقلّ خسارةً إلى الأكثر، وكلٌّ منها يحفظ ما ارتدّ إليه في
+     * التفضيلات: الجهاز الذي رفض شيئًا مرّة سيرفضه دائمًا، وإعادة المحاولة عند كلّ
+     * إقلاع تعني تكرار الرسالة نفسها إلى الأبد.
+     */
+    private fun applyBinding(): Boolean {
+        val cameraProvider = provider ?: return false
+        if (cameraOwner == null) return false
+        val previous = boundPlan
+        val plan = desiredPlan()
+
+        if (tryBind(cameraProvider, plan)) return true
+
+        // 1) الحرق: أجهزة كثيرة لا تدعم `CameraEffect` على مسار الفيديو. الأولى أن
+        //    نسجّل نظيفًا ونُخبر، لا أن نترك الشاشة سوداء
+        if (plan.burn && tryBind(cameraProvider, plan.copy(burn = false))) {
+            persistBurn(false)
+            _message.value = Message.BurnUnsupported
+            return true
+        }
+        // 2) الازدواج: المطلوب كاميرتان ولم يقبلهما الجهاز — عدسةٌ واحدة بهدوء
+        if (plan.dual && tryBind(cameraProvider, plan.copy(dual = false))) {
+            persistDual(false)
+            _message.value = Message.Notice(R.string.camera_dual_unsupported)
+            return true
+        }
+        if (plan.dual && plan.burn && tryBind(cameraProvider, plan.copy(dual = false, burn = false))) {
+            persistDual(false)
+            persistBurn(false)
+            _message.value = Message.Notice(R.string.camera_dual_unsupported)
+            return true
+        }
+        // 3) العدسة الجديدة هي ما رُفض: عودةٌ إلى ما كان يعمل قبل قليل
+        if (previous != null && previous != plan && tryBind(cameraProvider, previous)) {
+            persistLens(previous.lens)
+            persistDual(previous.dual)
+            persistPrimary(previous.primary)
+            persistBurn(previous.burn)
+            _message.value = Message.Notice(R.string.camera_switch_failed)
+            return true
+        }
+        // 4) آخر ما يملكه جهازٌ فيه كاميرا: خلفيّةٌ مفردة نظيفة. أبشعُ من ذلك شاشةٌ سوداء
+        val bare = BindPlan(
+            burn = false,
+            lens = CameraLens.BACK,
+            dual = false,
+            layout = DualLayout.DEFAULT,
+            primary = CameraLens.DEFAULT,
+        )
+        if (bare != plan && tryBind(cameraProvider, bare)) {
+            persistBurn(false)
+            persistLens(CameraLens.BACK)
+            persistDual(false)
+            _message.value = Message.Notice(R.string.camera_switch_failed)
+            return true
+        }
+        _dualActive.value = false
+        boundPlan = null
+        return false
+    }
+
+    /**
+     * الكاميرتان في تيّارٍ واحد — أي في **ملفٍّ واحد**.
+     *
+     * `bindToLifecycle(List)` في CameraX ‎1.4.1‎ له ثلاثة مسارات، وما نريده أضيقُها:
+     * مسار **التركيب** (composition) الذي يمزج التيّارين في تيّارٍ واحد ثمّ يوزّعه على
+     * حالات الاستعمال. قرأتُ شروطه من بايتكود `ProcessCameraProvider` لا من التوثيق
+     * (وهي أدقّ ممّا في الوثائق، فالصنف `LayoutSettings` لا وجود له في سطح الواجهة
+     * المُعلَن أصلًا):
+     *
+     * 1. القائمة **عنصران بالضبط** — أقلّ أو أكثر يرمي.
+     * 2. `lensFacing` **مختلف** بين العنصرين. لو تساوى لسلك مسارَ العدستين
+     *    الفيزيائيّتين من جهةٍ واحدة (`physicalCameraId`)، وهو شيءٌ آخر تمامًا.
+     * 3. ميزةُ النظام `FEATURE_CAMERA_CONCURRENT`، وإلّا رمى.
+     * 4. **قائمتا حالات الاستعمال متساويتان** (`Objects.equals`)، وطولُهما **اثنان**،
+     *    وهما `Preview` و`VideoCapture` لا غير. وهذا هو الشرط الذي يفرّق بين تيّارٍ
+     *    واحد وتيّارين، ولذلك نُمرّر **كائن `UseCaseGroup` نفسه** إلى العنصرين: قائمةٌ
+     *    واحدة بعينها لا نسختان متساويتان بالمصادفة، ومعها يتطابق `ViewPort`
+     *    والتأثيرات ودورة الحياة بلا عناء.
+     *
+     * وإن اختلّ شرطٌ من الأربعة رُبطت كلّ كاميرا وحدها بمعاينتها وملفّها — وهو
+     * بالضبط ما لا نريد، ولا يرمي استثناءً يُنبّهنا. فلا يُضاف إلى المجموعة حالةُ
+     * استعمالٍ ثالثة أبدًا.
+     *
+     * الترتيب حاملُ المعنى: العنصر الأوّل هو **الأساس** ويُرسم أوّلًا، والثاني يُرسم
+     * فوقه بمزجٍ شفّاف. فالمصغَّرة يجب أن تكون الثانية وإلّا غطّاها الأساسُ الكبير.
+     */
+    @Suppress("RestrictedApi")
+    private fun bindConcurrent(
+        cameraProvider: ProcessCameraProvider,
+        owner: LifecycleOwner,
+        group: UseCaseGroup,
+        plan: BindPlan,
+    ): Camera {
+        val configs = listOf(
+            ConcurrentCamera.SingleCameraConfig(
+                selectorOf(plan.primary),
+                group,
+                layoutOf(plan.layout, primary = true),
+                owner,
+            ),
+            ConcurrentCamera.SingleCameraConfig(
+                selectorOf(plan.primary.other),
+                group,
+                layoutOf(plan.layout, primary = false),
+                owner,
+            ),
+        )
+        val concurrent = cameraProvider.bindToLifecycle(configs)
+        // مسار التركيب يعيد كاميرا واحدة (التيّار المركَّب). القائمة الفارغة تعني أنّ
+        // شيئًا تغيّر تحتنا، وهي فشلٌ يلتقطه `runCatching` في [tryBind]
+        return concurrent.cameras.first()
+    }
+
+    /**
+     * تخطيط أحد التيّارين داخل الإطار.
+     *
+     * **افتراض المحاور — مقروءٌ من `DualOpenGlRenderer` لا مُخمَّن:** المصفوفة المبنيّة
+     * هناك تجعل الشكل يشغل من إحداثيّات الجهاز المُسوّاة `[offset - size, offset + size]`
+     * في كلّ محور. أي أنّ:
+     * - `width`/`height` **نسبةٌ من ضلع الإطار** (‎1‎ = الإطار كلّه)، ومداها ‎0..1‎.
+     * - `offsetX`/`offsetY` **مركزُ الشكل** في مدى ‎‎-1..+1‎‎ لا ‎0..1‎، والصفر هو المركز.
+     * - `x` يزداد يمينًا و`y` يزداد **أعلى** (اصطلاح OpenGL، وهو ما يوافق مثال
+     *   Google الرسميّ إذ يضع المصغَّرة أسفل اليمين بـ`y` سالبة).
+     *
+     * ولم أجرّبه على جهاز. فإن خرجت المصغَّرة أسفلَ اليسار بدل أعلاه فالمحور الرأسيّ
+     * مقلوب، والإصلاح كلُّه سالبٌ واحد على [PIP_CENTER] هنا.
+     *
+     * و[DualLayout.SPLIT] يملأ العرض ويناصف الارتفاع، فتُضغط كلُّ صورةٍ رأسيًّا إلى
+     * النصف. هذا ثمن «مناصفةً فوق وتحت» في واجهةٍ لا تملك قصًّا: البديل شريطان
+     * أسودان على الجانبين، وهو أسوأ في مسجّل طريق.
+     */
+    @Suppress("RestrictedApi")
+    private fun layoutOf(layout: DualLayout, primary: Boolean): LayoutSettings {
+        val builder = LayoutSettings.Builder().setAlpha(1f)
+        return when {
+            layout == DualLayout.SPLIT -> builder
+                .setOffsetX(0f)
+                .setOffsetY(if (primary) SPLIT_HALF else -SPLIT_HALF)
+                .setWidth(1f)
+                .setHeight(SPLIT_HALF)
+                .build()
+
+            primary -> builder
+                .setOffsetX(0f)
+                .setOffsetY(0f)
+                .setWidth(1f)
+                .setHeight(1f)
+                .build()
+
+            // المصغَّرة أعلى اليسار: `x` سالبة (يسارًا) و`y` موجبة (أعلى)
+            else -> builder
+                .setOffsetX(-PIP_CENTER)
+                .setOffsetY(PIP_CENTER)
+                .setWidth(PIP_SCALE)
+                .setHeight(PIP_SCALE)
+                .build()
+        }
+    }
+
+    private fun selectorOf(lens: CameraLens): CameraSelector = when (lens) {
+        CameraLens.BACK -> CameraSelector.DEFAULT_BACK_CAMERA
+        CameraLens.FRONT -> CameraSelector.DEFAULT_FRONT_CAMERA
+    }
+
+    /**
+     * `FEATURE_CAMERA_CONCURRENT` نصٌّ ثابت يُدمج وقت الترجمة، فسؤاله على جهازٍ دون
+     * أندرويد ‎11‎ لا يرمي بل يعيد `false` — وهو الجواب الصحيح هناك على كلّ حال.
+     *
+     * والميزة وحدها لا تكفي: نطلب زوجًا يجمع أماميّةً وخلفيّة بعينه، فجهازٌ لا يتيح
+     * إلّا عدستين خلفيّتين معًا يعلن الميزة ولا يخدم غرضنا.
+     */
+    private fun probeDualSupport(cameraProvider: ProcessCameraProvider) {
+        val feature = runCatching {
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_CONCURRENT)
+        }.getOrDefault(false)
+        _dualSupported.value = feature && runCatching {
+            cameraProvider.availableConcurrentCameraInfos.any { combo ->
+                combo.any { it.lensFacing == CameraSelector.LENS_FACING_BACK } &&
+                    combo.any { it.lensFacing == CameraSelector.LENS_FACING_FRONT }
+            }
+        }.getOrDefault(false)
+    }
+
+    // ===== تبديل العدسة والمبادلة =====
+
+    /**
+     * مهمّةُ متابعة التفضيلات التي يستلزم تبديلُها إعادة ربط.
+     *
+     * متابعةٌ لا دوالُّ ضبطٍ فقط: قسم الإعدادات يكتب في [AppSettings] مباشرةً، ولو
+     * بنينا إعادة الربط على نداءٍ من الشاشة وحدها لبقيت الكاميرا على حالها حين
+     * يبدّل المستعمل التخطيط من الإعدادات — وهو أوّل ما سيفعله.
+     */
+    private var planJob: Job? = null
+
+    private fun watchPlan() {
+        if (planJob != null) return
+        planJob = sceneScope.launch {
+            combine(
+                settings.cameraLens,
+                settings.dualCamera,
+                settings.dualLayout,
+                settings.dualPrimary,
+            ) { _, _, _, _ -> Unit }.collectLatest { requestRebind() }
+        }
+    }
+
+    /**
+     * «ما هو مربوطٌ لم يعد ما هو مطلوب».
+     *
+     * خارج التسجيل إعادةُ ربطٍ بسيطة. وأثناءه **لفُّ مقطع**: يُغلق الجاري سليمًا ثمّ
+     * يُعاد الربط ثمّ يبدأ التالي — بآليّة التقسيم نفسها الموجودة سلفًا، لا بآليّةٍ
+     * ثانية. علّةُ ذلك أنّ التخطيط والعدسة حقول نهائيّة في مُهيّئ حالات الاستعمال،
+     * فتبديلها يهدم سطح المسجّل حتمًا، وأنظفُ ما يُصنع بملفٍّ سيُقطع أن يُختم أوّلًا.
+     *
+     * والرحلة ومسار GPX لا يُمسّان: هما لا يعرفان بالمسجّل شيئًا أصلًا.
+     */
+    private fun requestRebind() = onMain {
+        if (!_isReady.value || provider == null || cameraOwner == null) return@onMain
+        if (desiredPlan() == boundPlan) return@onMain
+        if (_sessionHolding.value) {
+            val current = recording
+            // ثلاث حالاتٍ لا يُلَفّ فيها شيء، ويُؤجَّل الربط إلى [endSessionHold]:
+            // جلسةٌ ممسكةٌ بلا مسجّل (بين طلب التوقّف وكتابة الذيل)، ولفّةٌ منتظرةٌ
+            // أصلًا، وترميزٌ لم يبدأ بعد — والأخيرة أهمّها: قطعُ مقطعٍ قبل حدث `Start`
+            // يُنتج ملفًّا فارغًا يصير هو مرساةَ المزامنة في GPX، فيكذب على المسار كلّه
+            if (!sessionActive || current == null || rebindPending || !_isRecording.value) {
+                return@onMain
+            }
+            rebindPending = true
+            runCatching { current.stop() }.onFailure { rebindPending = false }
+            return@onMain
+        }
+        if (!applyBinding()) {
+            _isReady.value = false
+            _message.value = Message.Notice(R.string.camera_switch_failed)
+        }
+    }
+
+    /** إعادةُ ربطٍ منتظرة تُنفَّذ في `Finalize` بين مقطعين */
+    private var rebindPending = false
+
+    /**
+     * تبديل العدسة. لا يُعطَّل أثناء التسجيل — بخلاف الحرق — لأنّ الحاجة إليه تقع
+     * والراكب على الطريق: يريد وجهه أو الطريق خلفه في اللحظة التي يقع فيها ما يستحقّ
+     * التصوير، ولا يُعقل أن يُطالَب بإيقاف التسجيل أوّلًا.
+     */
+    fun switchLens() {
+        if (_dualActive.value) return
+        persistLens(requestedLens().other)
+        requestRebind()
+    }
+
+    /**
+     * مبادلة الكبيرة بالمصغَّرة في الوضع المزدوج.
+     *
+     * **تلُفّ المقطع كتبديل العدسة**: كان الظنّ أنّها تغييرُ تركيبٍ لا إعادةُ ربط،
+     * والبايتكود يقول غيره — `LayoutSettings` حقلٌ نهائيّ في `CameraUseCaseAdapter`
+     * يُمرَّر إلى مُركِّب التيّارين عند بنائه، ولا سبيل إلى تبديله بعده إلّا ببناء
+     * مُهيّئٍ جديد، أي `unbindAll` وربطٍ جديد.
+     */
+    fun swapDualPrimary() {
+        if (!_dualActive.value) return
+        persistPrimary(requestedPrimary().other)
+        requestRebind()
+    }
+
+    // ===== الكشّاف =====
+
+    fun toggleTorch() = setTorch(!_torchOn.value)
+
+    /**
+     * الكشّاف: مصباحٌ حقيقيّ إن وُجد، وإلّا فوميضُ شاشةٍ إن أذن به المستعمل، وإلّا فخبر.
+     *
+     * ووميض الشاشة مطفأٌ افتراضًا بقرارٍ سابق: الكاميرا الأماميّة في مسجّل طريقٍ
+     * موجَّهةٌ إلى وجه السائق، وشاشةٌ بيضاء بإضاءةٍ قصوى في وجهه ليلًا خطرٌ لا ميزة.
+     */
+    fun setTorch(on: Boolean) {
+        val camera = boundCamera
+        if (camera != null && _hasTorch.value) {
+            // النداء يعبر حدود الجهاز وقد يُرفض؛ ولا نرفع الحالة إلّا إن قُبل الطلب
+            runCatching { camera.cameraControl.enableTorch(on) }
+                .onSuccess {
+                    _torchOn.value = on
+                    _screenFlashOn.value = false
+                }
+            return
+        }
+        if (settings.screenFlash.value) {
+            _torchOn.value = on
+            _screenFlashOn.value = on
+            return
+        }
+        _message.value = Message.Notice(R.string.camera_torch_none)
+    }
+
+    /**
+     * إطفاءٌ قسريّ لوميض الشاشة من خارج الجلسة.
+     *
+     * يناديه النشاط عند مغادرة المقدّمة: سطوع النافذة صفةٌ للنافذة لا للجلسة، وإعادتُه
+     * عند `onStop` بلا إطفاء الراية كانت ستُبقي الطبقة البيضاء على شاشةٍ عادت بلا سطوع.
+     */
+    fun clearScreenFlash() {
+        if (!_screenFlashOn.value) return
+        _screenFlashOn.value = false
+        _torchOn.value = false
     }
 
     /**
@@ -479,6 +954,11 @@ class CameraSession(
     private fun adoptCamera(camera: Camera) {
         boundCamera = camera
         appliedExposureIndex = null
+        // `CameraControl` جديد لا يرث كشّاف سابقه: المصباح انطفأ فعلًا مع فكّ
+        // الارتباط، وإبقاء الحالة مرفوعةً يجعل الزرّ يقول «مضاء» وليس في الطريق ضوء
+        _torchOn.value = false
+        _screenFlashOn.value = false
+        _hasTorch.value = runCatching { camera.cameraInfo.hasFlashUnit() }.getOrDefault(false)
     }
 
     /**
@@ -627,6 +1107,9 @@ class CameraSession(
      */
     fun detach() {
         attached = false
+        // وميض الشاشة شيءٌ يخصّ شاشةً تُعرض؛ ولا شاشة الآن. وهو أحد مسارات الخروج
+        // التي يجب أن يُعاد فيها السطوع، فلا يُترك على ‎1f‎ في تبويبٍ آخر
+        _screenFlashOn.value = false
         applySurface()
         // متابعةُ مضيفٍ لا شاشة لنا فيه بلا معنى، وهي تسريبُ نشاطٍ إن دامت
         forgetHost()
@@ -789,6 +1272,9 @@ class CameraSession(
         syncLifecycle()
         // العودة إلى تتبّع المضيف قد تعني عودةَ المعاينة أيضًا
         applySurface()
+        // تفضيلٌ تبدّل والجلسة ممسكةٌ بالعدسة يُؤجَّل حتى تُفلتها: من بدّل التخطيط
+        // من الإعدادات أثناء التصوير يجد أثره الآن بلا أن يُعاد فتح الشاشة
+        requestRebind()
     }
 
     /**
@@ -846,9 +1332,27 @@ class CameraSession(
         // أوّل ملفّ في الجلسة هو ما يُذكر في GPX، لأنّ مرساته هي المثبَّتة
         if (_sessionFirstFile.value == null) _sessionFirstFile.value = name
 
-        val rolling = event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED &&
-            sessionActive
+        // إعادةُ ربطٍ كانت تنتظر إغلاق الملفّ. تُستهلك هنا مهما كان مصير المقطع، وإلّا
+        // بقيت معلّقةً تلُفّ المقطع التالي بلا سبب
+        val rebindRequested = rebindPending
+        rebindPending = false
+
+        val rolling = sessionActive &&
+            (rebindRequested || event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED)
         if (rolling) {
+            // الربط الجديد **بين** المقطعين: بعد إغلاق الملفّ سليمًا وقبل فتح التالي.
+            // فشلُه يعني أنّ آخر ارتدادٍ أيضًا سقط ولا كاميرا البتّة، فلا معنى لمقطعٍ
+            // تالٍ — نُنهي الجلسة بخبرٍ صريح بدل مسجّلٍ ينتظر سطحًا لن يأتي
+            if (rebindRequested && !applyBinding()) {
+                sessionActive = false
+                segmentLimitMs = null
+                _isRecording.value = false
+                _isPaused.value = false
+                _isReady.value = false
+                endSessionHold()
+                _message.value = Message.Notice(R.string.camera_switch_failed)
+                return
+            }
             // `_isRecording` يبقى مرفوعًا عبر اللفّة كي لا يومض زرّ التسجيل بين ملفّين.
             // و[_isPaused] كذلك: [reapplyPause] عند بدء المقطع التالي يُنزل عليه
             // حالةَ الإيقاف نفسها، فلا يستأنف التصوير من تلقائه بلفّةِ ملفّ
@@ -957,5 +1461,23 @@ class CameraSession(
 
         /** نبضة إعادة التقييم في الوضع التلقائيّ — دقيقةٌ كنبضة السمة نفسها */
         const val SCENE_RECHECK_MS = 60_000L
+
+        /**
+         * ضلع المصغَّرة نسبةً إلى ضلع الإطار.
+         *
+         * ‎%30‎: ما دونه لا يُميّز وجهًا في ملفٍّ بدقّة ‎1080‎، وما فوقه يبتلع من الطريق
+         * أكثر ممّا يستحقّ شاهدٌ على الزاوية.
+         */
+        const val PIP_SCALE = 0.3f
+
+        /**
+         * مركز المصغَّرة في المحورين، بالقيمة المطلقة. الشكل يشغل
+         * `[offset - size, offset + size]`، فالالتصاق بالحافّة عند `1 - size`
+         * وننقص منه هامشًا صغيرًا كي لا تُقصّ حافّتُها على شاشةٍ منحنية.
+         */
+        const val PIP_CENTER = 1f - PIP_SCALE - 0.04f
+
+        /** نصفُ الإطار رأسيًّا: مركز النصف العلويّ عند ‎+0.5‎ وارتفاعه ‎0.5‎ */
+        const val SPLIT_HALF = 0.5f
     }
 }

@@ -49,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -103,6 +104,12 @@ private const val PAGE_CAMERA = 2
  */
 private const val CHROME_REVEAL_MS = 4_000L
 
+/** أقصى سطوعٍ للنافذة وحدها، لا للجهاز: التجاوز يزول بزوال النافذة */
+private const val MAX_BRIGHTNESS = 1f
+
+/** «لا تجاوز» — النافذة تعود إلى سطوع النظام */
+private const val NO_BRIGHTNESS_OVERRIDE = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+
 class MainActivity : ComponentActivity() {
 
     /**
@@ -149,6 +156,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // وميض الشاشة: طبقتُه البيضاء ترسمها شاشة الكاميرا، وسطوعُ النافذة
+            // صفةٌ في معاملاتها لا حالةَ تركيب — فيُضبط هنا وحده.
+            //
+            // و`onDispose` ليس ترفًا: تفكيك التركيب (هدم النشاط، أو تبديل السمة الذي
+            // يُعيد بناءه) يقع بلا أن تُخفض الراية، وتركُ التجاوز على ‎1f‎ يعني نافذةً
+            // بأقصى سطوع بعد أن غاب سببه. ومعه `onStop` للمسار الثالث: الذهاب إلى
+            // الخلفيّة، وهناك تُطفأ الراية نفسها كي لا تعود الطبقة بلا سطوع.
+            val screenFlashOn by vm.camera.screenFlashOn.collectAsStateWithLifecycle()
+            DisposableEffect(screenFlashOn) {
+                applyScreenBrightness(if (screenFlashOn) MAX_BRIGHTNESS else NO_BRIGHTNESS_OVERRIDE)
+                onDispose { applyScreenBrightness(NO_BRIGHTNESS_OVERRIDE) }
+            }
+
             // الدخول التلقائيّ (أندرويد 12 فما فوق) ليس نداءً بل صفةٌ في معاملات
             // النافذة، فلا بدّ من تحديثها كلّما تبدّل الشرط. والقراءات الثلاث هنا هي
             // اشتراك التركيب، والقرار نفسه يُتَّخذ في `isPipArmed` كي لا يتفرّق الشرط
@@ -175,6 +195,29 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * السطوع تجاوزٌ على مستوى النافذة، ولا يُترك معلَّقًا بعد زوال سببه.
+     *
+     * `window.attributes` تُعيد الكائن الحيّ نفسه، فالتعديل عليه ثمّ إعادة إسناده هو
+     * الطريق الوحيد لإخطار النظام. والنداء ملفوف: نافذةٌ في طور الهدم ترمي.
+     */
+    private fun applyScreenBrightness(value: Float) {
+        runCatching {
+            window.attributes = window.attributes.apply { screenBrightness = value }
+        }
+    }
+
+    /**
+     * الخلفيّة مسارُ خروجٍ كسائر المسارات: يُعاد السطوع، **وتُطفأ الراية معه**.
+     * لو أُعيد السطوع وحده لعاد المستعمل إلى طبقةٍ بيضاء لا تُضيء شيئًا، ولا زرَّ
+     * فيها يقول إنّها مشتعلة.
+     */
+    override fun onStop() {
+        super.onStop()
+        vm.camera.clearScreenFlash()
+        applyScreenBrightness(NO_BRIGHTNESS_OVERRIDE)
     }
 
     /**

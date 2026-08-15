@@ -267,4 +267,32 @@
     <string name="gps_coarse">تقريبيّ</string>
     <string name="lite_on">مفعَّل</string>
     <string name="lite_off">معطَّل</string>
+
+    <!-- 0.9.0 — الكشّاف -->
+    <string name="camera_torch">الكشّاف</string>
+    <string name="camera_torch_on">إطفاء الكشّاف</string>
+    <string name="camera_torch_off">تشغيل الكشّاف</string>
+    <string name="camera_torch_none">لا مصباح في هذه الكاميرا</string>
+    <string name="camera_screen_flash">وميض الشاشة</string>
+    <string name="camera_screen_flash_note">لا مصباح في الكاميرا الأماميّة، فتُضاء الشاشة بيضاءَ بدلًا منه. تنبيه: يُبهِر عين السائق ليلًا.</string>
+
+    <!-- 0.9.0 — تبديل الكاميرا -->
+    <string name="camera_switch">تبديل الكاميرا</string>
+    <string name="camera_lens_back">خلفيّة</string>
+    <string name="camera_lens_front">أماميّة</string>
+    <string name="camera_switch_rolls">التبديل أثناء التسجيل يُغلق المقطع الجاري ويبدأ مقطعًا جديدًا</string>
+    <string name="camera_switch_failed">تعذّر تبديل الكاميرا</string>
+
+    <!-- 0.9.0 — الكاميرتان معًا -->
+    <string name="settings_section_dual">الكاميرتان معًا</string>
+    <string name="camera_dual">تصويرٌ بالكاميرتين</string>
+    <string name="camera_dual_note">تُدمج الصورتان في ملفٍّ واحد: واحدةٌ تملأ الإطار والأخرى مصغَّرة فيه</string>
+    <string name="camera_dual_unsupported">لا يدعم هذا الجهاز تشغيل الكاميرتين معًا</string>
+    <string name="camera_dual_supported">الجهاز يدعم تشغيل الكاميرتين معًا</string>
+    <string name="camera_dual_layout">التخطيط</string>
+    <string name="camera_dual_pip">مصغَّرة داخل الكبيرة</string>
+    <string name="camera_dual_split">مناصفةً فوق وتحت</string>
+    <string name="camera_dual_swap">مبادلة الكبيرة بالمصغَّرة</string>
+    <string name="camera_dual_primary_back">الخلفيّة هي الكبيرة</string>
+    <string name="camera_dual_primary_front">الأماميّة هي الكبيرة</string>
 </resources>

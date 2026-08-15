@@ -77,6 +77,18 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     fun setCameraScene(scene: CameraScene) = engine.camera.setCameraScene(scene)
 
     /**
+     * الكشّاف وتبديل العدسة والمبادلة: تمريرٌ محض إلى الجلسة.
+     *
+     * الحالات نفسها تُقرأ من `vm.camera` مباشرةً في شاشة الكاميرا كما يُقرأ
+     * `segmentMinutes`؛ هنا الأفعال وحدها كي لا تُمسك الشاشة بالجلسة لتُبدّل حالها.
+     */
+    fun toggleTorch() = engine.camera.toggleTorch()
+
+    fun switchLens() = engine.camera.switchLens()
+
+    fun swapDualPrimary() = engine.camera.swapDualPrimary()
+
+    /**
      * توگل الإيقاف المؤقّت. يُنادى من صفّ أزرار الكاميرا وحده، ولا أثر له على
      * الرحلة: من أراد إيقاف الرحلة فزرّها قائمٌ في شاشتها.
      */

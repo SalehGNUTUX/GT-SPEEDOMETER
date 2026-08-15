@@ -173,6 +173,43 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     fun setCameraScene(scene: CameraScene) = put(KEY_CAMERA_SCENE, scene.id)
 
+    /** العدسة المختارة حين تعمل واحدةٌ فقط */
+    val cameraLens: StateFlow<CameraLens> =
+        data.map { CameraLens.from(it[KEY_LENS]) }
+            .stateIn(scope, SharingStarted.Eagerly, CameraLens.DEFAULT)
+
+    fun setCameraLens(lens: CameraLens) = put(KEY_LENS, lens.id)
+
+    /**
+     * طلبُ تشغيل الكاميرتين معًا. **طلبٌ لا إخبار**: الجهاز قد لا يدعمه، والقرار
+     * الفعليّ في `CameraSession` بعد سؤال `getAvailableConcurrentCameraInfos`.
+     */
+    val dualCamera: StateFlow<Boolean> = pref(KEY_DUAL, false)
+    fun setDualCamera(enabled: Boolean) = put(KEY_DUAL, enabled)
+
+    val dualLayout: StateFlow<DualLayout> =
+        data.map { DualLayout.from(it[KEY_DUAL_LAYOUT]) }
+            .stateIn(scope, SharingStarted.Eagerly, DualLayout.DEFAULT)
+
+    fun setDualLayout(layout: DualLayout) = put(KEY_DUAL_LAYOUT, layout.id)
+
+    /** أيّ العدستين تملأ الإطار في الوضع المزدوج؛ الأخرى تُصغَّر أو تُناصف */
+    val dualPrimary: StateFlow<CameraLens> =
+        data.map { CameraLens.from(it[KEY_DUAL_PRIMARY]) }
+            .stateIn(scope, SharingStarted.Eagerly, CameraLens.BACK)
+
+    fun setDualPrimary(lens: CameraLens) = put(KEY_DUAL_PRIMARY, lens.id)
+
+    /**
+     * وميض الشاشة بديلًا عن مصباحٍ أماميّ لا تملكه أغلب الهواتف.
+     *
+     * مطفأٌ افتراضًا وبتحذير: الكاميرا الأماميّة في مسجّل طريقٍ موجَّهةٌ إلى وجه
+     * السائق، وشاشةٌ بيضاء بإضاءةٍ قصوى في وجهه ليلًا خطرٌ لا ميزة. من أراده
+     * لتصويرٍ داخل المركبة وهي واقفة فله ذلك، ولا يُفرض على أحد.
+     */
+    val screenFlash: StateFlow<Boolean> = pref(KEY_SCREEN_FLASH, false)
+    fun setScreenFlash(enabled: Boolean) = put(KEY_SCREEN_FLASH, enabled)
+
     // ===== الأجهزة المحدودة =====
 
     val liteMode: StateFlow<LiteMode> =
@@ -229,6 +266,41 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_MAP_SOURCE = stringPreferencesKey("map_source_preference")
         private val KEY_LITE_MODE = stringPreferencesKey("lite_mode")
         private val KEY_FAST_FIX = booleanPreferencesKey("fast_first_fix")
+        private val KEY_LENS = stringPreferencesKey("camera_lens")
+        private val KEY_DUAL = booleanPreferencesKey("dual_camera")
+        private val KEY_DUAL_LAYOUT = stringPreferencesKey("dual_layout")
+        private val KEY_DUAL_PRIMARY = stringPreferencesKey("dual_primary_lens")
+        private val KEY_SCREEN_FLASH = booleanPreferencesKey("screen_flash")
+    }
+}
+
+/** العدسة المستعمَلة. القيمة تُحفظ فيعود التطبيق إلى ما تركه المستعمل عليه. */
+enum class CameraLens(val id: String) {
+    BACK("back"),
+    FRONT("front");
+
+    /** الأخرى — التبديل سؤالٌ ثنائيّ فلا يحتاج أكثر من هذا */
+    val other: CameraLens get() = if (this == BACK) FRONT else BACK
+
+    companion object {
+        val DEFAULT = BACK
+        fun from(id: String?): CameraLens = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * تخطيط الكاميرتين حين تعملان معًا.
+ *
+ * [PIP] هو الافتراض لمسجّل طريق: الطريق هو الموضوع ووجه السائق شاهدٌ عليه، فلا
+ * يُعطى نصف الإطار. و[SPLIT] لمن أراد الاثنين بالقدر نفسه.
+ */
+enum class DualLayout(val id: String) {
+    PIP("pip"),
+    SPLIT("split");
+
+    companion object {
+        val DEFAULT = PIP
+        fun from(id: String?): DualLayout = entries.firstOrNull { it.id == id } ?: DEFAULT
     }
 }
 
