@@ -386,7 +386,44 @@ default_branch() {
   printf '%s' "$b"
 }
 
+# ---------- حالة git، قبل كلّ شيء ----------
+#
+# عمليّةُ دمجٍ أو نقلٍ لم تنتهِ تُبقي حالتها في `.git` وتترك الشجرة على **رأسٍ
+# منفصل**. وكلّ ما بعدها يفشل بأخطاءٍ لا تدلّ على سببها: `git pull --rebase` يشكو
+# من «rebase-merge موجودٌ سلفًا»، والدفع يُرفض بـ non-fast-forward. وأسوأ من ذلك
+# أنّ الاعتماد يقع على رأسٍ لا فرع له، فييتم بلا أن يُنبَّه صاحبه. فالفحص هنا
+# **قبل** فحص الإصدار وقبل البناء: ساعةُ بناءٍ فوق شجرةٍ معطوبة ضائعة.
+GIT_DIR_PATH="$(git rev-parse --git-dir 2>/dev/null || printf '.git')"
+PENDING_OP=""
+if [[ -d "${GIT_DIR_PATH}/rebase-merge" || -d "${GIT_DIR_PATH}/rebase-apply" ]]; then
+  PENDING_OP="نقل اعتمادات (rebase)"
+elif [[ -f "${GIT_DIR_PATH}/MERGE_HEAD" ]]; then
+  PENDING_OP="دمج (merge)"
+elif [[ -f "${GIT_DIR_PATH}/CHERRY_PICK_HEAD" ]]; then
+  PENDING_OP="انتقاء اعتماد (cherry-pick)"
+elif [[ -f "${GIT_DIR_PATH}/REVERT_HEAD" ]]; then
+  PENDING_OP="نقض اعتماد (revert)"
+fi
+if [[ -n "$PENDING_OP" ]]; then
+  warn "عمليّة ${PENDING_OP} لم تنتهِ بعد، ولا يصحّ بناءٌ ولا دفعٌ فوقها."
+  printf '%s\n' "  أنهِها بواحدٍ من هذه ثمّ أعِد تشغيلي:"
+  printf '%s\n' "    git rebase --continue     # إن حللتَ التعارض"
+  printf '%s\n' "    git rebase --abort        # للرجوع إلى ما قبلها"
+  printf '%s\n' "    git rebase --quit         # لتركها وإبقاء الشجرة كما هي الآن"
+  die "توقّفتُ قبل أن أُفسد شيئًا."
+fi
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
+# رأسٌ منفصل: الاعتماد عليه لا ينتمي إلى فرع، فمن دفعه لا يجده غدًا إلّا في
+# `git reflog`. نعرض المخرج بدل أن نمضي.
+if [[ "$BRANCH" == "HEAD" ]]; then
+  warn "أنت على رأسٍ منفصل (detached HEAD) لا على فرع."
+  printf '%s\n' "  الاعتماد هنا لا ينتمي إلى فرعٍ ويضيع عند أوّل تبديل. المخرج:"
+  printf '%s\n' "    git checkout -B ${ARG_BRANCH:-main} HEAD   # يجعل الفرع يشير إلى ما أنت عليه"
+  die "توقّفتُ قبل أن أُفسد شيئًا."
+fi
+
 TARGET_BRANCH="${ARG_BRANCH:-$(default_branch)}"
 if [[ "$BRANCH" != "$TARGET_BRANCH" ]]; then
   # الدفع إلى فرعٍ غير الافتراضيّ هو ما يجعل GitHub يعرض «افتح طلب مساهمة».
