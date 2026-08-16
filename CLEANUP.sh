@@ -53,7 +53,7 @@ PROBLEMS=0
 DELETABLE=()
 
 # ---------------------------------------------------------------------------
-#  بيان الإصدار 0.9.1-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#  بيان الإصدار 0.9.2-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
 # ---------------------------------------------------------------------------
 MANIFEST="MainActivity.kt
 SpeedoApp.kt
@@ -68,6 +68,7 @@ core/location/LocationEngine.kt
 core/location/SpeedFilter.kt
 core/location/SpeedSample.kt
 core/map/MapApps.kt
+core/map/MapDownloader.kt
 core/map/OfflineMaps.kt
 core/map/OsmAndBridge.kt
 core/media/MediaRepository.kt

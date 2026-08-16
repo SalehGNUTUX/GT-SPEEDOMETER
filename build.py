@@ -418,9 +418,18 @@ CSS = """
     border-bottom:1px solid var(--track);
   }
   .bar { display:flex; align-items:center; gap:14px; height:62px; }
-  .bar img { width:34px; height:34px; border-radius:9px; }
-  .bar b { font-size:1.02rem; letter-spacing:.02em; }
-  nav { margin-inline-start:auto; display:flex; gap:20px; font-size:.93rem; }
+  /* الشعار في أعلى **اليسار** والقائمة يمينه: يُدفع إلى الطرف بهامشٍ تلقائيّ
+     منطقيّ (`inline-start`) لا بـ`left`، فيبقى صحيحًا لو صارت الصفحة يومًا LTR */
+  .brand {
+    order:2; margin-inline-start:auto;
+    display:flex; align-items:center; gap:12px;
+    color:inherit; border-radius:11px; padding:4px 6px;
+  }
+  .brand:hover { text-decoration:none; background:var(--surface); }
+  .brand:active { transform:scale(.97); }
+  .brand img { width:34px; height:34px; border-radius:9px; }
+  .brand b { font-size:1.02rem; letter-spacing:.02em; }
+  nav { order:1; display:flex; gap:20px; font-size:.93rem; }
   nav a { color:var(--muted); }
   nav a:hover { color:var(--text); text-decoration:none; }
   @media (max-width:680px) { nav { display:none; } }
@@ -535,8 +544,11 @@ def build(items: list[tuple[str, str]]) -> str:
 
 <header>
   <div class="wrap bar">
-    <img src="{icon}" alt="أيقونة GT-SPEEDOMETER">
-    <b>GT-SPEEDOMETER</b>
+    <a class="brand" href="#top" id="brand" title="إلى أعلى الصفحة وإنعاشها"
+       aria-label="إلى أعلى الصفحة وإنعاشها">
+      <img src="{icon}" alt="أيقونة GT-SPEEDOMETER">
+      <b>GT-SPEEDOMETER</b>
+    </a>
     <nav>
       <a href="#features">الخصائص</a>
       <a href="#download">التنزيل</a>
@@ -652,6 +664,18 @@ def build(items: list[tuple[str, str]]) -> str:
     <p>Copyright © 2026 SalehGNUTUX</p>
   </div>
 </footer>
+
+<script>
+  /* نقرُ الشعار: إلى أعلى الصفحة ثمّ إنعاشها.
+     القفزُ قبل الإنعاش لا بعده: الإنعاش يُعيد بناء الصفحة فيُلغي أيّ حركةٍ جارية،
+     ولو انسللنا (`smooth`) لرآها الزائر مبتورة. و`href="#top"` يبقى عاملًا بلا
+     نصٍّ برمجيّ أصلًا — فمن عطّله وصل إلى الأعلى ولم يُنعش، وهو نصفُ الفعل لا لا شيء. */
+  document.getElementById('brand').addEventListener('click', function (e) {{
+    e.preventDefault();
+    window.scrollTo(0, 0);
+    location.reload();
+  }});
+</script>
 
 </body>
 </html>

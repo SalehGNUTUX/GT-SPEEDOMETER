@@ -176,6 +176,15 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
     fun setMapAppPackage(pkg: String) = put(KEY_MAP_APP, pkg)
 
     /**
+     * حصرُ تنزيل أرشيف الخرائط على الواي‑فاي.
+     *
+     * مفعَّلٌ افتراضًا: الأرشيف يُقاس بمئات الميغابايت، وتنزيلُه على بيانات الجوّال
+     * بلا سؤالٍ يستنزف حزمةً دفع صاحبها ثمنها. ومن أراد غير ذلك يُطفئه بلمسة.
+     */
+    val mapDownloadWifiOnly: StateFlow<Boolean> = pref(KEY_DL_WIFI, true)
+    fun setMapDownloadWifiOnly(enabled: Boolean) = put(KEY_DL_WIFI, enabled)
+
+    /**
      * آخر قسمٍ فُتح في شاشة الإعدادات.
      *
      * يُحفظ لا يُنسى مع إغلاق الشاشة: من يضبط حدَّ سرعته ثمّ يخرج ليجرّبه ثمّ يعود
@@ -292,6 +301,7 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_SCREEN_FLASH = booleanPreferencesKey("screen_flash")
         private val KEY_MAP_APP = stringPreferencesKey("map_app_package")
         private val KEY_OPEN_SECTION = stringPreferencesKey("settings_open_section")
+        private val KEY_DL_WIFI = booleanPreferencesKey("map_download_wifi_only")
     }
 }
 

@@ -63,8 +63,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.DeviceTier
+import net.gnutux.speedometer.core.map.DownloadState
 import net.gnutux.speedometer.core.map.MapAppInfo
 import net.gnutux.speedometer.core.map.MapApps
+import net.gnutux.speedometer.core.map.MapDownloader
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndState
@@ -118,6 +120,14 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val context = LocalContext.current
     val offlineMaps = remember(context) { OfflineMaps.of(context) }
     val offlineLibrary by offlineMaps.library.collectAsStateWithLifecycle()
+
+    // المُنزِّل نسخةٌ واحدة بعمر العمليّة، فطيُّ القسم أو الخروج من الشاشة لا يقطع نقلًا
+    // جاريًا؛ والحقل محفوظٌ هنا لا داخل بطاقة القائمة الكسولة، وإلّا ضاع ما كتبه
+    // المستعمل بمجرّد أن يمرّر القسم خارج الشاشة.
+    val downloader = remember(context) { MapDownloader.of(context) }
+    val downloadState by downloader.state.collectAsStateWithLifecycle()
+    val downloadWifiOnly by s.mapDownloadWifiOnly.collectAsStateWithLifecycle()
+    var downloadUrl by remember { mutableStateOf("") }
 
     // فتحُ الإعدادات أحد الموضعين اللذين يُوقظان جسر OsmAnd؛ والآخر فتحُ رحلة.
     // ولا يُنشأ في `SpeedoApp` كي لا يوقظ عمليّة OsmAnd عند كلّ إقلاع.
@@ -423,6 +433,26 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                         ActionRow(
                             label = stringResource(R.string.settings_offline_rescan),
                             onClick = offlineMaps::rescan,
+                        )
+                    }
+                }
+                // بطاقةٌ ثانية لا أسطرٌ تُلحَق بالأولى: تلك تقول «ماذا عندك»، وهذه فعلٌ
+                // يجلب شيئًا جديدًا. وخلطُهما يجعل حقل الرابط يبدو جزءًا من حالة المسح.
+                item(key = "offline-2") {
+                    SettingCard {
+                        MapDownloadRows(
+                            state = downloadState,
+                            url = downloadUrl,
+                            onUrlChange = {
+                                downloadUrl = it
+                                // نتيجةٌ سابقة فوق رابطٍ تبدّل تكذب: خطأُ الرابط القديم
+                                // يزول مع أوّل حرفٍ يُكتب، كما يزول تحذير حدّ السرعة
+                                downloader.clear()
+                            },
+                            onStart = { downloader.start(downloadUrl, downloadWifiOnly) },
+                            onCancel = downloader::cancel,
+                            wifiOnly = downloadWifiOnly,
+                            onWifiOnlyChange = s::setMapDownloadWifiOnly,
                         )
                     }
                 }
@@ -1328,3 +1358,190 @@ private fun HourRow(selected: Int, onSelect: (Int) -> Unit) {
         }
     }
 }
+
+/**
+ * أسطر تنزيل أرشيف الخرائط.
+ *
+ * ثلاثة قرارات تفسّر شكلها:
+ *
+ * — **الحقل والزرّ يختفيان أثناء النقل**: تنزيلان لا يجتمعان (المُنزِّل يرفض الثاني
+ *   صامتًا)، وزرٌّ يُضغط فلا يقع شيء أسوأ من زرٍّ غائب. فما دام النقل جاريًا فالمكان
+ *   للتقدّم والإلغاء وحدهما.
+ *
+ * — **الشريط بلا تعبئة حين يُجهل الطول**: خادمٌ بلا `Content-Length` لا يُعرف منه
+ *   نصيبٌ من مئة، ونسبةٌ مخترَعة تُوهم المستعمل بقرب النهاية. فيُعرض المسار فارغًا
+ *   ويقول النصّ ما نُزّل فعلًا (`mapdl_progress_unknown`).
+ *
+ * — **سطر الخلفيّة أثناء النقل وحده**: «أبقِ التطبيق مفتوحًا» تحذيرٌ لا معنى له قبل
+ *   أن يبدأ شيء، وتكرارُه دائمًا يُعلّم العين تخطّيه فلا يُقرأ حين يهمّ.
+ */
+@Composable
+private fun MapDownloadRows(
+    state: DownloadState,
+    url: String,
+    onUrlChange: (String) -> Unit,
+    onStart: () -> Unit,
+    onCancel: () -> Unit,
+    wifiOnly: Boolean,
+    onWifiOnlyChange: (Boolean) -> Unit,
+) {
+    RowLabel(
+        title = stringResource(R.string.mapdl_title),
+        note = stringResource(R.string.mapdl_note),
+    )
+
+    val running = state as? DownloadState.Running
+    if (running != null) {
+        DownloadProgress(running)
+        if (running.resumed) {
+            Text(
+                text = stringResource(R.string.mapdl_resuming),
+                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+            )
+        }
+        ActionRow(label = stringResource(R.string.mapdl_cancel), onClick = onCancel)
+        Text(
+            text = stringResource(R.string.mapdl_background_note),
+            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+        )
+    } else {
+        MapUrlField(url = url, onUrlChange = onUrlChange, onStart = onStart)
+    }
+
+    SwitchRow(
+        title = stringResource(R.string.mapdl_wifi_only),
+        note = stringResource(R.string.mapdl_wifi_only_note),
+        checked = wifiOnly,
+        onChange = onWifiOnlyChange,
+    )
+
+    when (state) {
+        is DownloadState.Failed -> {
+            val arg = state.arg
+            Text(
+                // النصّ ذو المعامل والنصّ بلا معامل نداءان مختلفان: تمرير معاملٍ إلى
+                // نصٍّ لا يقبله يُلقي استثناءً في التنسيق على بعض الأجهزة
+                text = if (arg != null) {
+                    stringResource(state.reason, arg)
+                } else {
+                    stringResource(state.reason)
+                },
+                style = MaterialTheme.typography.bodySmall.copy(color = Danger),
+            )
+        }
+
+        is DownloadState.Done -> Text(
+            text = stringResource(R.string.mapdl_done, state.fileName),
+            style = MaterialTheme.typography.bodySmall.copy(color = Accent),
+        )
+
+        else -> Unit
+    }
+
+    LinkRow(
+        title = stringResource(R.string.mapdl_where),
+        url = stringResource(R.string.mapdl_where_url),
+    )
+    Text(
+        text = stringResource(R.string.mapdl_where_note),
+        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+    )
+}
+
+/** حقل الرابط وزرّ البدء؛ نفس تخطيط [ManualLimitField] كي لا تختلف حقول الشاشة الواحدة */
+@Composable
+private fun MapUrlField(url: String, onUrlChange: (String) -> Unit, onStart: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .defaultMinSize(minHeight = 56.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(SurfaceHigh)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (url.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.mapdl_url_hint),
+                    style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+                )
+            }
+            BasicTextField(
+                value = url,
+                onValueChange = onUrlChange,
+                singleLine = true,
+                // النمط أصغر من نمط حقل الحدّ: الرابط طويل، والعنوان المقصوص لا يُتحقّق منه
+                textStyle = MaterialTheme.typography.bodySmall.copy(color = TextPrimary),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                cursorBrush = SolidColor(Accent),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minHeight = 56.dp, minWidth = 56.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Accent)
+                .clickable(onClick = onStart)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(R.string.mapdl_start),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    color = Bg,
+                    fontWeight = FontWeight.Bold,
+                ),
+            )
+        }
+    }
+}
+
+/** شريط التقدّم وسطرُه. القيم تُنسَّق بـ[MapDownloader.formatBytes] فلا تختلف عن نصّ الخطأ. */
+@Composable
+private fun DownloadProgress(running: DownloadState.Running) {
+    val fraction = running.fraction
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PROGRESS_BAR_HEIGHT)
+            .clip(RoundedCornerShape(4.dp))
+            .background(SurfaceHigh),
+    ) {
+        if (fraction != null && fraction > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(PROGRESS_BAR_HEIGHT)
+                    .background(Accent),
+            )
+        }
+    }
+    val total = running.totalBytes
+    Text(
+        text = if (total != null) {
+            stringResource(
+                R.string.mapdl_progress,
+                MapDownloader.formatBytes(running.downloadedBytes),
+                MapDownloader.formatBytes(total),
+            )
+        } else {
+            stringResource(
+                R.string.mapdl_progress_unknown,
+                MapDownloader.formatBytes(running.downloadedBytes),
+            )
+        },
+        style = MaterialTheme.typography.titleSmall.copy(
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+        ),
+    )
+}
+
+/** رفيعٌ عمدًا: هو خبرٌ لا عنصر تحكّم، ولا يُلمس فلا يخضع لحدّ الـ56dp */
+private val PROGRESS_BAR_HEIGHT = 8.dp
