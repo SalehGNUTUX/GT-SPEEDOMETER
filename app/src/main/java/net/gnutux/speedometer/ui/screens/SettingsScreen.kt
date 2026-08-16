@@ -77,6 +77,8 @@ import net.gnutux.speedometer.core.settings.CameraScene
 import net.gnutux.speedometer.core.settings.DualLayout
 import net.gnutux.speedometer.core.settings.LiteMode
 import net.gnutux.speedometer.core.settings.ThemeMode
+import net.gnutux.speedometer.core.update.UpdateChecker
+import net.gnutux.speedometer.core.update.UpdateState
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.theme.Accent
@@ -86,6 +88,10 @@ import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
 import net.gnutux.speedometer.ui.theme.TextPrimary
 import net.gnutux.speedometer.ui.theme.TextSecondary
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * شاشة الإعدادات الشاملة.
@@ -166,12 +172,24 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val dualLayout by s.dualLayout.collectAsStateWithLifecycle()
     val dualPrimary by s.dualPrimary.collectAsStateWithLifecycle()
     val screenFlash by s.screenFlash.collectAsStateWithLifecycle()
+    val confirmRecording by s.confirmRecording.collectAsStateWithLifecycle()
     // من الجلسة لا من التفضيلات: قدرةُ الجهاز حقيقةٌ يقولها CameraX، والتسجيلُ
     // الجاري حالةٌ لحظيّة يُقفل عليها نصف هذا القسم
     val dualSupported by vm.camera.dualSupported.collectAsStateWithLifecycle()
     val recording by vm.camera.isRecording.collectAsStateWithLifecycle()
     val liteMode by s.liteMode.collectAsStateWithLifecycle()
     val fastFix by s.fastFirstFix.collectAsStateWithLifecycle()
+
+    // التحديث: نسخةٌ واحدة بعمر العمليّة كالمُنزِّل، فطيُّ القسم لا يقطع تنزيلًا جاريًا.
+    // والفحص اليوميّ يبدأ من هنا لا من `MainActivity`: من يفتح الإعدادات جالسٌ ينظر،
+    // ومن يفتح التطبيق قد يكون خلف المقود.
+    val updates = remember(context) { UpdateChecker.of(context) }
+    val updateState by updates.state.collectAsStateWithLifecycle()
+    val installBlocked by updates.installBlocked.collectAsStateWithLifecycle()
+    val updateNotify by s.updateNotify.collectAsStateWithLifecycle()
+    val updateBeta by s.updateBeta.collectAsStateWithLifecycle()
+    val updateLastCheck by s.updateLastCheck.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { updates.maybeCheckDaily(s) }
     // رايةُ النظام ثابتةٌ لعمر الجهاز، فتُقرأ مرّةً لا مع كلّ إعادة تركيب
     val lowRam = remember(context) { DeviceTier.isLowRamDevice(context) }
 
@@ -602,6 +620,14 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                                 .coerceAtLeast(0),
                             onSelect = { s.setCameraScene(CameraScene.entries[it]) },
                         )
+                        // موضعه هنا لا في «القيادة»: هو صفةٌ لزرّ التسجيل في شاشة
+                        // الكاميرا، ومن يبحث عنه يبحث حيث تُضبط الكاميرا
+                        SwitchRow(
+                            title = stringResource(R.string.settings_confirm_record),
+                            note = stringResource(R.string.settings_confirm_record_note),
+                            checked = confirmRecording,
+                            onChange = s::setConfirmRecording,
+                        )
                     }
                 }
             }
@@ -732,6 +758,51 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                 }
             }
 
+            // ===== تحديثات التطبيق =====
+            //
+            // قبل «عن التطبيق» لا بعده: ذاك سطرُ نسخةٍ يُقرأ، وهذا فعلٌ يُعمل.
+            settingsSection(
+                id = SECTION_UPDATES,
+                openId = openSection,
+                title = R.string.settings_section_updates,
+                onToggle = toggleSection,
+            ) {
+                item(key = "updates-1") {
+                    SettingCard {
+                        UpdateRows(
+                            state = updateState,
+                            lastCheck = updateLastCheck,
+                            installBlocked = installBlocked,
+                            onCheck = { updates.check(s) },
+                            onDownload = updates::download,
+                            onInstall = updates::install,
+                            onAllowInstall = updates::openInstallSettings,
+                        )
+                    }
+                }
+                item(key = "updates-2") {
+                    SettingCard {
+                        SwitchRow(
+                            title = stringResource(R.string.update_auto),
+                            note = stringResource(R.string.update_auto_note),
+                            checked = updateNotify,
+                            onChange = s::setUpdateNotify,
+                        )
+                        // الجواب القديم يُمحى مع تبدّل المرشِّح: «أنت على أحدث إصدار»
+                        // محسوبةً بمفتاحٍ مطفأ تكذب بمجرّد أن يُشعَل
+                        SwitchRow(
+                            title = stringResource(R.string.update_beta),
+                            note = stringResource(R.string.update_beta_note),
+                            checked = updateBeta,
+                            onChange = {
+                                s.setUpdateBeta(it)
+                                updates.clear()
+                            },
+                        )
+                    }
+                }
+            }
+
             // ===== عن التطبيق =====
             settingsSection(
                 id = SECTION_ABOUT,
@@ -852,6 +923,7 @@ private const val SECTION_MAPAPPS = "mapapps"
 private const val SECTION_CAMERA = "camera"
 private const val SECTION_DUAL = "dual"
 private const val SECTION_LOWEND = "lowend"
+private const val SECTION_UPDATES = "updates"
 private const val SECTION_ABOUT = "about"
 
 /**
@@ -872,6 +944,7 @@ private val SECTION_ORDER = listOf(
     SECTION_CAMERA,
     SECTION_DUAL,
     SECTION_LOWEND,
+    SECTION_UPDATES,
     SECTION_ABOUT,
 )
 
@@ -1391,6 +1464,7 @@ private fun MapDownloadRows(
     )
 
     val running = state as? DownloadState.Running
+    val working = state as? DownloadState.Working
     if (running != null) {
         DownloadProgress(running)
         if (running.resumed) {
@@ -1404,6 +1478,18 @@ private fun MapDownloadRows(
             text = stringResource(R.string.mapdl_background_note),
             style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
         )
+    } else if (working != null) {
+        // فكُّ الضغط بلا شريطٍ ولا نسبة (لا طول للناتج يُقاس عليه)، لكنّه ليس أقلّ
+        // من التنزيل في الطول على أرشيفٍ كبير — فيبقى الإلغاء معروضًا، ويبقى حقل
+        // الرابط غائبًا كما يغيب أثناء النقل: تنزيلان لا يجتمعان.
+        Text(
+            text = stringResource(working.label),
+            style = MaterialTheme.typography.titleSmall.copy(
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+            ),
+        )
+        ActionRow(label = stringResource(R.string.mapdl_cancel), onClick = onCancel)
     } else {
         MapUrlField(url = url, onUrlChange = onUrlChange, onStart = onStart)
     }
@@ -1545,3 +1631,141 @@ private fun DownloadProgress(running: DownloadState.Running) {
 
 /** رفيعٌ عمدًا: هو خبرٌ لا عنصر تحكّم، ولا يُلمس فلا يخضع لحدّ الـ56dp */
 private val PROGRESS_BAR_HEIGHT = 8.dp
+
+/**
+ * أسطر قسم التحديث: النسخة، وآخر فحص، ثمّ فعلٌ واحد يناسب الحالة.
+ *
+ * فعلٌ واحدٌ ظاهرٌ في كلّ لحظة عمدًا — «ابحث» أو «نزّل» أو «ثبّت» — فمن ينظر إلى
+ * البطاقة يعرف خطوته التالية بلا قراءة. وأثناء الفحص يزول الزرّ ويحلّ محلّه سطرُ
+ * حاله، فلا يُضغط مرّتين.
+ *
+ * و[installBlocked] راية منفصلة عن [UpdateState]: منعُ النظام للتثبيت لا يُلغي
+ * الحزمة المنزَّلة، فيبقى زرّ «ثبّت» قائمًا ويُضاف تحته طريقُ الإذن. ومن أذِن ثمّ عاد
+ * يضغط الزرّ نفسه فيمضي، بلا تنزيلٍ ثانٍ.
+ */
+@Composable
+private fun UpdateRows(
+    state: UpdateState,
+    lastCheck: Long,
+    installBlocked: Boolean,
+    onCheck: () -> Unit,
+    onDownload: (UpdateState.Available) -> Unit,
+    onInstall: (File) -> Unit,
+    onAllowInstall: () -> Unit,
+) {
+    RowLabel(
+        title = stringResource(R.string.settings_version),
+        note = BuildConfig.VERSION_NAME,
+    )
+    RowLabel(title = lastCheckLabel(lastCheck))
+
+    if (state is UpdateState.Checking) {
+        Text(
+            text = stringResource(R.string.update_checking),
+            style = MaterialTheme.typography.titleSmall.copy(color = TextSecondary),
+        )
+    } else {
+        ActionRow(label = stringResource(R.string.update_check), onClick = onCheck)
+    }
+
+    when (state) {
+        is UpdateState.UpToDate -> Text(
+            text = stringResource(R.string.update_current, state.current),
+            style = MaterialTheme.typography.bodySmall.copy(color = Accent),
+        )
+
+        is UpdateState.Available -> {
+            RowLabel(
+                title = stringResource(R.string.update_available, state.version),
+                // الحجم تحت العنوان: من على حزمة بيانات محدودة يقرّر قبل أن يبدأ
+                note = state.sizeBytes
+                    .takeIf { it > 0L }
+                    ?.let { MapDownloader.formatBytes(it) },
+            )
+            ActionRow(
+                label = stringResource(R.string.update_download),
+                onClick = { onDownload(state) },
+            )
+            // النصّ مقصوصٌ سلفًا في [UpdateChecker]؛ وسجلّ تغييرٍ فارغ لا يستحقّ عنوانًا
+            if (state.notes.isNotEmpty()) {
+                RowLabel(
+                    title = stringResource(R.string.update_notes),
+                    note = state.notes,
+                )
+            }
+        }
+
+        is UpdateState.Downloading -> UpdateProgress(state)
+
+        is UpdateState.Ready -> ActionRow(
+            label = stringResource(R.string.update_install),
+            onClick = { onInstall(state.file) },
+        )
+
+        is UpdateState.Failed -> Text(
+            text = stringResource(state.reason),
+            style = MaterialTheme.typography.bodySmall.copy(color = Danger),
+        )
+
+        else -> Unit
+    }
+
+    if (installBlocked) {
+        Text(
+            text = stringResource(R.string.update_err_install),
+            style = MaterialTheme.typography.bodySmall.copy(color = Danger),
+        )
+        ActionRow(
+            label = stringResource(R.string.update_allow_install),
+            onClick = onAllowInstall,
+        )
+    }
+}
+
+/** شريط تنزيل الحزمة؛ القيم بـ[MapDownloader.formatBytes] فلا يختلف رقمان في شاشةٍ واحدة */
+@Composable
+private fun UpdateProgress(state: UpdateState.Downloading) {
+    val fraction = state.fraction
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PROGRESS_BAR_HEIGHT)
+            .clip(RoundedCornerShape(4.dp))
+            .background(SurfaceHigh),
+    ) {
+        if (fraction != null && fraction > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(PROGRESS_BAR_HEIGHT)
+                    .background(Accent),
+            )
+        }
+    }
+    val total = state.total
+    val done = MapDownloader.formatBytes(state.bytes)
+    Text(
+        text = stringResource(
+            R.string.update_downloading,
+            if (total != null) "$done / ${MapDownloader.formatBytes(total)}" else done,
+        ),
+        style = MaterialTheme.typography.titleSmall.copy(
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+        ),
+    )
+}
+
+/** صفرٌ ليس تاريخًا بل غيابُ فحص، فله نصُّه لا «1970-01-01» */
+@Composable
+private fun lastCheckLabel(millis: Long): String =
+    if (millis <= 0L) {
+        stringResource(R.string.update_never)
+    } else {
+        stringResource(
+            R.string.update_last_check,
+            // التنسيق نفسه الذي تعرض به شاشة الرحلات تواريخها، وبـ[Locale.US] كسائر
+            // أرقام التطبيق (قاعدة 4)
+            SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(millis)),
+        )
+    }

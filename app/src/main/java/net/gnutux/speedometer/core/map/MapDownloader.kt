@@ -1,6 +1,7 @@
 package net.gnutux.speedometer.core.map
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.SystemClock
@@ -15,6 +16,7 @@ import java.net.URL
 import java.net.URLDecoder
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +64,18 @@ import net.gnutux.speedometer.R
  *   كلّ كتلةٍ من ‎64‎ ك.ب على وصلةٍ سريعة آلافُ الإصدارات في الثانية، وهي تجمّد الشاشة
  *   لا «تُظهر تقدّمًا سلسًا». فالإصدار كلّ [PROGRESS_INTERVAL_NANOS] أو كلّ
  *   [PROGRESS_STEP_BYTES]، أيّهما سبق.
+ *
+ * — **‎.gz‎ يُفكّ ولا يُترك**: أكثر مرايا الأرشيفات توزّع `x.mbtiles.gz`، وملفٌّ مضغوط
+ *   في مجلّد الخرائط لا يقرؤه [OfflineMaps] بحال. فالامتداد المقبول مركّبٌ يُحتكم فيه
+ *   إلى ما قبل `.gz`، والفكّ تدفّقٌ من ملفٍّ إلى ملفّ — لا في الذاكرة، فأرشيفُ دولةٍ
+ *   مفكوكًا في كومة تطبيقٍ يقتله `OutOfMemoryError` قبل أن يبلغ نصفه.
+ *
+ * — **البلاطات المتجهيّة تُرفض صراحةً**: أشهر ما يُدلّ عليه المستعمل اليوم
+ *   («OSM QA tiles») ملفّاتُ ‎.mbtiles‎ سليمةُ الرأس، لكنّ ما في جدول `tiles` بروتوبَف
+ *   MVT لا صور. قارئنا يُخرج البايتات صورةً فيفشل فكّ ترميزها **صامتًا**، فيرى
+ *   المستعمل خريطةً بيضاء ولا يعرف لماذا. فيُسأل `metadata` عن `format` قبل الاعتماد،
+ *   ويُستأنس ببايتات أوّل بلاطة حين يسكت الجدول — و«لا أدري» تعني: امضِ. منعُ أرشيفٍ
+ *   سليمٍ أسوأ من قبول واحدٍ مشكوكٍ فيه، لأنّ الأوّل خسارةٌ مؤكّدة والثاني احتمال.
  *
  * — **قيدٌ معترَفٌ به**: التنزيل يعيش في نطاق العمليّة لا في خدمةٍ أماميّة، فمغادرة
  *   التطبيق طويلًا قد يقتله النظام قبل أن يكتمل. هذا مقبولٌ هنا لأنّ ملفّ `.part` يبقى
@@ -134,7 +148,11 @@ class MapDownloader private constructor(context: Context) {
 
         // (2) الامتداد — من مسار الرابط وحده
         val name = fileNameOf(url) ?: return fail(R.string.mapdl_err_ext)
-        val extension = name.substringAfterLast('.', "").lowercase(Locale.US)
+        // `x.mbtiles.gz`: اسمُ الوجهة ما قبل `.gz`، والامتداد الذي تُقاس عليه الفحوص
+        // امتدادُ **الناتج** لا المضغوط — فالرأس والصيغة صفتان لما سيُقرأ لا لغلافه
+        val compressed = name.endsWith(GZ_SUFFIX)
+        val plainName = if (compressed) name.dropLast(GZ_SUFFIX.length) else name
+        val extension = plainName.substringAfterLast('.', "").lowercase(Locale.US)
 
         // (3) الواي‑فاي
         if (wifiOnly && !onUnmeteredTransport()) return fail(R.string.mapdl_err_wifi)
@@ -145,20 +163,26 @@ class MapDownloader private constructor(context: Context) {
         // أرشيفٍ آخر، ولخرج ملفٌّ رأسُه سليم وجوفه خليط لا يكشفه فحص الرأس.
         val stamp = Integer.toHexString(url.toString().hashCode())
         val part = File(folder, "$name.$stamp$PART_SUFFIX")
-        val target = File(folder, name)
+        // ناتج الفكّ يُكتب هو أيضًا في ملفّ `.part`: لا يبلغ اسمه النهائيّ إلّا بعد أن
+        // يجتاز فحص الرأس والصيغة، وإلّا لمسحه [OfflineMaps] نصفَ مفكوكٍ ففشل عند كلّ
+        // إقلاع. وبلا ضغطٍ الملفّان واحد، فيبقى المسار الأصليّ كما كان بلا نسخةٍ زائدة.
+        val plainPart = if (compressed) File(folder, "$plainName.$stamp$PART_SUFFIX") else part
+        val target = File(folder, plainName)
         val saved = runCatching { if (part.isFile) part.length() else 0L }.getOrDefault(0L)
 
         // حالةٌ تظهر قبل أوّل حزمة تصل: الضغطة يجب أن يُرى أثرها فورًا
         _state.value = DownloadState.Running(saved, null, resumed = saved > 0L)
-        transfer(url, folder, part, target, extension, saved)
+        transfer(url, folder, part, plainPart, target, extension, compressed, saved)
     }
 
     private suspend fun transfer(
         url: URL,
         folder: File,
         part: File,
+        plainPart: File,
         target: File,
         extension: String,
+        compressed: Boolean,
         savedBytes: Long,
     ) {
         var offset = savedBytes
@@ -227,20 +251,217 @@ class MapDownloader private constructor(context: Context) {
             return fail(R.string.mapdl_err_net)
         }
 
-        // (5) صحّة المحتوى — قبل النقل إلى موضعه النهائيّ
-        if (!headerLooksRight(part, extension)) {
+        finish(folder, part, plainPart, target, extension, compressed)
+    }
+
+    /**
+     * ما بعد آخر بايتٍ يصل: الفكّ إن لزم، ثمّ الفحوص، ثمّ النقل إلى الاسم النهائيّ.
+     *
+     * فُصلت عن [transfer] لأنّها لا تعرف عن الشبكة شيئًا — وهذا يجعل ترتيبها صريحًا:
+     * لا فحصَ على ملفٍّ مضغوط، ولا اسمَ نهائيًّا قبل الفحص.
+     */
+    private suspend fun finish(
+        folder: File,
+        part: File,
+        plainPart: File,
+        target: File,
+        extension: String,
+        compressed: Boolean,
+    ) {
+        if (compressed) {
+            _state.value = DownloadState.Working(R.string.mapdl_decompressing)
+
+            // حارس المساحة قبل أوّل بايتٍ يُكتب: القرص يمتلئ في منتصف الفكّ وإلّا،
+            // فيُعطب ما ليس لنا لا تنزيلَنا وحده. والمضغوط باقٍ أثناء الفكّ فالمطلوب
+            // مساحةٌ للاثنين — وهو محسوبٌ ضمنًا لأنّ الحرّ يُقاس والمضغوط على القرص.
+            val packed = runCatching { part.length() }.getOrDefault(0L)
+            val estimate = estimateUnpacked(part, packed)
+            val free = runCatching { folder.usableSpace }.getOrDefault(Long.MAX_VALUE)
+            if (estimate + SPACE_MARGIN_BYTES > free) {
+                runCatching { part.delete() }
+                return fail(R.string.mapdl_err_space, formatBytes(estimate))
+            }
+
+            if (!gunzip(part, plainPart)) {
+                // عطبٌ في منتصف الفكّ يترك نصفَ أرشيفٍ باسمٍ سليم؛ يُمحى الطرفان معًا
+                runCatching { part.delete() }
+                runCatching { plainPart.delete() }
+                return fail(R.string.mapdl_err_gzip)
+            }
+            // المضغوط لا يُبقى: الاستئناف انتهى، وإبقاؤه يشغل ربع حجم الأرشيف بلا فائدة
             runCatching { part.delete() }
+        }
+
+        // (5) صحّة المحتوى — على الناتج لا على المضغوط، وقبل النقل إلى موضعه النهائيّ
+        if (!headerLooksRight(plainPart, extension)) {
+            runCatching { plainPart.delete() }
             return fail(R.string.mapdl_err_content)
         }
 
+        // (6) نقطيّةٌ لا متجهيّة — على قواعد SQLite وحدها؛ `zip` و`gemf` لا `metadata`
+        // فيهما ولا جدولَ بلاطاتٍ يُستعلم عنه بـSQL
+        if (extension in SQLITE_EXTENSIONS && tileFormatOf(plainPart) == TileFormat.VECTOR) {
+            runCatching { plainPart.delete() }
+            return fail(R.string.mapdl_err_vector)
+        }
+
         runCatching { if (target.exists()) target.delete() }
-        val moved = runCatching { part.renameTo(target) }.getOrDefault(false)
+        val moved = runCatching { plainPart.renameTo(target) }.getOrDefault(false)
         if (!moved) return fail(R.string.mapdl_err_net)
 
         // المسح فورًا: من نزّل أرشيفًا يريد أن يراه في السطر نفسه، لا أن يُغلق الشاشة
         // ويفتحها ليعرف أنّ التطبيق رآه
         runCatching { OfflineMaps.of(app).rescan() }
         _state.value = DownloadState.Done(target.name)
+    }
+
+    /**
+     * تقديرٌ محافظ لحجم المفكوك.
+     *
+     * أكبرُ رقمين لا أحدهما:
+     *
+     * — **أرضيّةٌ نسبيّة**: أرشيفات البلاطات لا تقلّ عن ثلاثة أضعافٍ عمليًّا، والأربعة
+     *   تحفّظٌ مقصود. وهي الأرضيّة لأنّها لا تكذب أبدًا إلى أدنى بالقدر الذي يكذبه
+     *   الرقم التالي.
+     *
+     * — **حقل `ISIZE`** في ذيل gzip، وهو الحجم الحقيقيّ. ولا يُؤخذ وحده لأنّه أربع
+     *   بايتاتٍ **بباقي ‎2^32‎**: أرشيفٌ حجمه ‎5‎ ج.ب يُعلن ‎0.7‎ ج.ب، وملفٌّ متعدّد
+     *   الأعضاء يُعلن حجم آخر عضوٍ فقط. فيُؤخذ حين يزيد على الأرضيّة، ويُطرح حين ينقص.
+     *
+     * وله سقفٌ فوق ذلك: [GZIP_MAX_RATIO] هو أقصى ما يبلغه DEFLATE نظريًّا، فما جاوزه
+     * ليس `ISIZE` أصلًا بل أربعُ بايتاتٍ من ملفٍّ مقصوصٍ أو من صفحة خطأٍ سُمّيت `.gz`.
+     * وبلا السقف كانت تلك الملفّات تُردّ بـ`mapdl_err_space` — وهو خبرٌ كاذب يرسل
+     * المستعمل يمسح صوره — بدل `mapdl_err_gzip` الذي يقول ما جرى فعلًا.
+     *
+     * وخطأ التقدير إلى أدنى ليس كارثة على كلّ حال: الفكّ يفشل بـ`IOException` فتُمحى
+     * كتاباتُه كلّها وتعود المساحة. وخطؤه إلى أعلى يمنع تنزيلًا كان سينجح.
+     */
+    private fun estimateUnpacked(file: File, packed: Long): Long {
+        val floor = packed * GZIP_EXPANSION_GUESS
+        val declared = runCatching {
+            FileInputStream(file).use { input ->
+                val trailer = ByteArray(GZIP_ISIZE_BYTES)
+                var skipped = 0L
+                val target = packed - GZIP_ISIZE_BYTES
+                if (target < 0L) return@use 0L
+                while (skipped < target) {
+                    val jumped = input.skip(target - skipped)
+                    if (jumped <= 0L) return@use 0L
+                    skipped += jumped
+                }
+                var filled = 0
+                while (filled < GZIP_ISIZE_BYTES) {
+                    val read = input.read(trailer, filled, GZIP_ISIZE_BYTES - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                if (filled < GZIP_ISIZE_BYTES) {
+                    0L
+                } else {
+                    // صغير الطرف أوّلًا (little‑endian)، وبلا إشارة
+                    var value = 0L
+                    for (index in GZIP_ISIZE_BYTES - 1 downTo 0) {
+                        value = (value shl 8) or (trailer[index].toLong() and 0xFF)
+                    }
+                    value
+                }
+            }
+        }.getOrDefault(0L)
+        return declared.coerceIn(floor, packed * GZIP_MAX_RATIO)
+    }
+
+    /**
+     * فكُّ ضغطٍ من ملفٍّ إلى ملفّ بمخزنٍ مؤقّت.
+     *
+     * لا `readBytes()` ولا `ByteArrayOutputStream`: أرشيف بلاطاتٍ لدولةٍ يبلغ مفكوكًا
+     * غيغابايتاتٍ، وكومة التطبيق لا تحتمل جزءًا من ذلك. و[GZIPInputStream] لا تُعلن
+     * طولًا يُقاس عليه تقدّم، فالحالة سطرٌ واحد لا شريط.
+     *
+     * والإلغاء يُسأل مع كلّ كتلة كما في [pump]: `read` حاجزةٌ لا معلَّقة.
+     */
+    private suspend fun gunzip(source: File, destination: File): Boolean {
+        val outcome = runCatching {
+            FileInputStream(source).use { raw ->
+                GZIPInputStream(raw, BUFFER_BYTES).use { input ->
+                    FileOutputStream(destination).use { output ->
+                        val buffer = ByteArray(BUFFER_BYTES)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                        }
+                        output.flush()
+                    }
+                }
+            }
+        }
+        outcome.exceptionOrNull()?.let { error ->
+            runCatching { destination.delete() }
+            // `runCatching` تبتلع الإلغاء أيضًا؛ ولو تُرك مبتلَعًا لصار الإلغاءُ عطبَ فكّ
+            if (error is CancellationException) throw error
+            return false
+        }
+        return true
+    }
+
+    /**
+     * أنقطيّةٌ بلاطاتُ هذا الأرشيف أم متجهيّة؟
+     *
+     * `metadata` أوّلًا لأنّه إعلانُ الصيغة نفسه في مواصفة MBTiles. فإن غاب الجدول أو
+     * المفتاح فلا حكم: أرشيفات OsmAnd وLocus وRMaps لا تكتب `metadata` أصلًا، ورفضُها
+     * لسكوتها خطأٌ أفدح من قبول أرشيفٍ مشكوكٍ فيه. وحينها تُستخرج بلاطةٌ واحدة ويُنظر
+     * في أوّل بايتاتها: توقيعٌ نقطيٌّ معروف يُقبل، و`\x1f\x8b` — وهو غلاف gzip الذي
+     * تُخزَّن به بلاطات MVT عادةً — يُرفض، وما لا يطابق شيئًا يُرفض كذلك.
+     *
+     * و[TileFormat.UNKNOWN] تعني «امضِ»: عجزُنا عن الحكم ليس حكمًا.
+     */
+    private fun tileFormatOf(file: File): TileFormat = runCatching {
+        val db = SQLiteDatabase.openDatabase(
+            file.absolutePath,
+            null,
+            // كما في [OfflineMaps]: قراءةٌ فقط وبلا مُقارِناتٍ محلّيّة، فلا نكتب في
+            // أرشيفٍ لم نُنشئه ولا نفشل على بطاقةٍ مركّبة للقراءة
+            SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
+        )
+        try {
+            declaredFormat(db)?.let { declared ->
+                return@runCatching if (declared in RASTER_FORMATS) {
+                    TileFormat.RASTER
+                } else {
+                    TileFormat.VECTOR
+                }
+            }
+            firstTileFormat(db)
+        } finally {
+            runCatching { db.close() }
+        }
+    }.getOrDefault(TileFormat.UNKNOWN)
+
+    private fun declaredFormat(db: SQLiteDatabase): String? = runCatching {
+        db.rawQuery("SELECT value FROM metadata WHERE name = 'format' LIMIT 1", null).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() }
+
+    private fun firstTileFormat(db: SQLiteDatabase): TileFormat {
+        val blob = runCatching {
+            db.rawQuery("SELECT tile_data FROM tiles LIMIT 1", null).use { c ->
+                if (c.moveToFirst()) c.getBlob(0) else null
+            }
+        }.getOrNull()
+        if (blob == null || blob.isEmpty()) return TileFormat.UNKNOWN
+        return when {
+            blob.startsWith(PNG_MAGIC) -> TileFormat.RASTER
+            blob.startsWith(JPEG_MAGIC) -> TileFormat.RASTER
+            // `RIFF‹أربع بايتات طول›WEBP`: العلامتان معًا شرط، فـ`RIFF` وحدها تسبق
+            // صيغًا شتّى ليس منها صورة
+            blob.startsWith(RIFF_MAGIC) &&
+                blob.size >= WEBP_TAG_OFFSET + WEBP_TAG.size &&
+                blob.matchesAt(WEBP_TAG_OFFSET, WEBP_TAG) -> TileFormat.RASTER
+
+            else -> TileFormat.VECTOR
+        }
     }
 
     /**
@@ -364,20 +585,28 @@ class MapDownloader private constructor(context: Context) {
      * كلّ ما ليس حرفًا ولا رقمًا ولا شرطة يصير `_` — ومنه النقطة: بذلك يستحيل أن يخرج
      * اسمٌ فيه `..` أو `/` فيكتب خارج مجلّد الخرائط. والامتداد يُلحق من قائمتنا نحن،
      * بعد أن يُقبل، لا يُنقل كما جاء.
+     *
+     * و`.gz` امتدادٌ **مركّب** لا بديل: `map.gz` وحدها لا تقول ما بداخلها، فالحكم على
+     * ما قبلها — وهو الامتداد الذي سيحمله الملفّ بعد الفكّ.
      */
     private fun fileNameOf(url: URL): String? {
         val path = url.path.orEmpty()
         val decoded = runCatching { URLDecoder.decode(path, "UTF-8") }.getOrDefault(path)
         val last = decoded.substringAfterLast('/')
-        val extension = last.substringAfterLast('.', "").lowercase(Locale.US)
+
+        val compressed = last.lowercase(Locale.US).endsWith(GZ_SUFFIX)
+        val stem = if (compressed) last.dropLast(GZ_SUFFIX.length) else last
+
+        val extension = stem.substringAfterLast('.', "").lowercase(Locale.US)
         if (extension !in ALLOWED_EXTENSIONS) return null
 
-        val base = last.dropLast(extension.length + 1)
+        val base = stem.dropLast(extension.length + 1)
             .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
             .joinToString("")
             .trim('_')
             .take(MAX_BASE_NAME)
-        return (base.ifEmpty { FALLBACK_BASE_NAME }) + "." + extension
+        val name = (base.ifEmpty { FALLBACK_BASE_NAME }) + "." + extension
+        return if (compressed) name + GZ_SUFFIX else name
     }
 
     /**
@@ -421,6 +650,25 @@ class MapDownloader private constructor(context: Context) {
         /** ما يقبله [OfflineMaps] في مسحه؛ ما عداه يُرفض قبل أوّل بايت */
         private val ALLOWED_EXTENSIONS = SQLITE_EXTENSIONS + ZIP_EXTENSION + "gemf"
 
+        /** غلافٌ لا صيغة: يُقبل فوق كلٍّ من [ALLOWED_EXTENSIONS] ويُنزع قبل الاعتماد */
+        private const val GZ_SUFFIX = ".gz"
+
+        /**
+         * مُضاعِفُ تقدير حجم المفكوك.
+         *
+         * أرشيفات البلاطات صورٌ مضغوطةٌ سلفًا في قاعدةٍ فيها نصٌّ وفهارس، ونسبتها
+         * العمليّة ثلاثة أضعافٍ فأكثر. والأربعة تحفّظٌ مقصود: خطأ التقدير إلى أعلى
+         * يُظهر «لا مساحة» فيمسح المستعمل شيئًا، وخطؤه إلى أدنى يملأ القرص في منتصف
+         * الفكّ فيُعطب ما ليس لنا.
+         */
+        private const val GZIP_EXPANSION_GUESS = 4L
+
+        /** طول حقل `ISIZE` في ذيل gzip */
+        private const val GZIP_ISIZE_BYTES = 4
+
+        /** أقصى نسبة انضغاطٍ يبلغها DEFLATE نظريًّا (‎1032:1‎)؛ ما جاوزها ليس حجمًا */
+        private const val GZIP_MAX_RATIO = 1032L
+
         private val HTTP_PROTOCOLS = setOf("http", "https")
 
         /** ‎303‎ و‎307‎ و‎308‎ معها: المرايا تستعملها كلّها، و`Location` واحدةٌ فيها جميعًا */
@@ -445,6 +693,17 @@ class MapDownloader private constructor(context: Context) {
             "SQLite format 3".toByteArray(Charsets.US_ASCII) + 0x00.toByte()
 
         private val ZIP_MAGIC = byteArrayOf(0x50, 0x4B)
+
+        /** ما تعلنه مواصفة MBTiles صيغةً نقطيّة؛ وما عداه — `pbf` و`mvt` — متجهيّ */
+        private val RASTER_FORMATS = setOf("png", "jpg", "jpeg", "webp")
+
+        private val PNG_MAGIC = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
+        private val JPEG_MAGIC = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+        private val RIFF_MAGIC = "RIFF".toByteArray(Charsets.US_ASCII)
+        private val WEBP_TAG = "WEBP".toByteArray(Charsets.US_ASCII)
+
+        /** `RIFF` ثمّ أربع بايتاتِ طولٍ ثمّ `WEBP` */
+        private const val WEBP_TAG_OFFSET = 8
 
         @Volatile
         private var instance: MapDownloader? = null
@@ -484,13 +743,24 @@ class MapDownloader private constructor(context: Context) {
 }
 
 /** مقارنة توقيعٍ ثنائيّ: `startsWith` النصّيّة لا تصلح لبايتاتٍ فيها صفر */
-private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
-    if (size < prefix.size) return false
-    for (index in prefix.indices) {
-        if (this[index] != prefix[index]) return false
+private fun ByteArray.startsWith(prefix: ByteArray): Boolean = matchesAt(0, prefix)
+
+private fun ByteArray.matchesAt(offset: Int, pattern: ByteArray): Boolean {
+    if (offset < 0 || size < offset + pattern.size) return false
+    for (index in pattern.indices) {
+        if (this[offset + index] != pattern[index]) return false
     }
     return true
 }
+
+/**
+ * حكم فحص الصيغة.
+ *
+ * ثلاثةٌ لا اثنتان: [UNKNOWN] ليست «مرفوضة حتّى يثبت العكس» بل «لا رأي لنا»، وهي حال
+ * الأرشيف الذي لا `metadata` فيه ولا بلاطةَ تُستخرج. وجمعُها مع [VECTOR] كان يعني رفضَ
+ * كلّ أرشيف OsmAnd و Locus سليمٍ نزّله المستعمل بنفسه.
+ */
+private enum class TileFormat { RASTER, VECTOR, UNKNOWN }
 
 /**
  * حالة التنزيل كما تُعرض.
@@ -518,6 +788,14 @@ sealed interface DownloadState {
                 ?.takeIf { it > 0L }
                 ?.let { (downloadedBytes.toFloat() / it.toFloat()).coerceIn(0f, 1f) }
     }
+
+    /**
+     * عملٌ محلّيّ بعد آخر بايتٍ يصل — فكُّ ضغطٍ اليومَ وحده.
+     *
+     * لا عدّاد فيها ولا نسبة: [GZIPInputStream] لا تُعلن طول ناتجها، وشريطٌ يتحرّك
+     * بلا مرجعٍ يكذب. وسطرٌ واحد يقول ما يجري خيرٌ من شاشةٍ تبدو جامدة.
+     */
+    data class Working(@StringRes val label: Int) : DownloadState
 
     data class Done(val fileName: String) : DownloadState
 

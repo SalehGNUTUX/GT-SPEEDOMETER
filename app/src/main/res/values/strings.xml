@@ -341,4 +341,44 @@
     <string name="mapdl_where">من أين أجلب أرشيفًا؟</string>
     <string name="mapdl_where_url">https://wiki.openstreetmap.org/wiki/MBTiles</string>
     <string name="mapdl_where_note">خادم بلاطات OpenStreetMap يمنع التنزيل بالجملة صراحةً، فلا تُجلب منه خريطةُ دولة. وصفحة الويكي تشرح الصيغة وأدوات توليد الأرشيف من بيانات OSM الحرّة.</string>
+
+    <!-- 0.9.3 — أرشيف مضغوط وبلاطات متجهيّة -->
+    <string name="mapdl_decompressing">فكُّ الضغط…</string>
+    <string name="mapdl_err_vector">هذا أرشيفُ بلاطاتٍ **متجهيّة** (Mapbox Vector Tiles) للتحليل لا صورَ خرائط، ولا يرسمه التطبيق. المطلوب أرشيفٌ نقطيّ صوره PNG أو JPEG.</string>
+    <string name="mapdl_err_gzip">تعذّر فكّ ضغط الملفّ</string>
+
+    <!-- 0.9.3 — تأكيد بدء التسجيل وإيقافه -->
+    <string name="settings_confirm_record">تأكيد بدء التسجيل وإيقافه</string>
+    <string name="settings_confirm_record_note">مربّع تأكيدٍ قبل بدء التصوير وقبل إنهائه، فلا يبدأ ولا ينتهي بلمسةٍ عارضة على المقود</string>
+    <string name="confirm_record_start_title">بدء التسجيل؟</string>
+    <string name="confirm_record_start_body">سيبدأ تصوير الطريق وتُنشأ رحلةٌ في السجلّ.</string>
+    <string name="confirm_record_stop_title">إنهاء التسجيل؟</string>
+    <string name="confirm_record_stop_body">سيُحفظ ما صُوّر وتُغلق الجلسة.</string>
+    <string name="confirm_yes_start">ابدأ</string>
+    <string name="confirm_yes_stop">أنهِ</string>
+    <string name="confirm_no">تراجَع</string>
+
+    <!-- 0.9.3 — تحديثات التطبيق -->
+    <string name="settings_section_updates">تحديثات التطبيق</string>
+    <string name="update_check">ابحث عن تحديث</string>
+    <string name="update_checking">جارٍ البحث…</string>
+    <string name="update_current">أنت على أحدث إصدار (%1$s)</string>
+    <string name="update_available">يتوفّر الإصدار %1$s</string>
+    <string name="update_download">نزّل وثبّت</string>
+    <string name="update_downloading">تنزيل التحديث: %1$s</string>
+    <string name="update_install">تثبيت</string>
+    <string name="update_notes">ما الجديد</string>
+    <string name="update_auto">تنبيهني بالتحديثات</string>
+    <string name="update_auto_note">فحصٌ يوميّ عند فتح التطبيق، وإشعارٌ حين يصدر إصدارٌ أحدث</string>
+    <string name="update_beta">أشعِرني بالنسخ التجريبيّة</string>
+    <string name="update_beta_note">كلّ إصدارات التطبيق تجريبيّة اليوم؛ حين يصدر أوّل إصدارٍ مستقرّ يصير هذا المفتاح هو الفارق بينهما</string>
+    <string name="update_err_net">تعذّر الوصول إلى صفحة الإصدارات</string>
+    <string name="update_err_none">لا حزمةً في هذا الإصدار</string>
+    <string name="update_err_install">تعذّر بدء التثبيت. اسمح للتطبيق بتثبيت الحزم من إعدادات النظام.</string>
+    <string name="update_allow_install">السماح بالتثبيت</string>
+    <string name="update_notif_title">يتوفّر تحديث لـ GT-SPEEDOMETER</string>
+    <string name="update_notif_body">الإصدار %1$s جاهز للتنزيل</string>
+    <string name="update_channel">التحديثات</string>
+    <string name="update_never">لم يُفحص بعد</string>
+    <string name="update_last_check">آخر فحص: %1$s</string>
 </resources>

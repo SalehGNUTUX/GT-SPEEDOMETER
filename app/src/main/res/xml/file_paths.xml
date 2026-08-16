@@ -7,4 +7,7 @@
     <external-files-path name="tracks" path="tracks/" />
     <!-- نسخ GPX المصغَّرة التي يقرؤها OsmAnd حين يرسم خريطة الرحلة (OsmAndBridge) -->
     <cache-path name="osmand-gpx" path="osmand-gpx/" />
+    <!-- حزمة التحديث المنزَّلة، يقرؤها مثبّت النظام بعنوانٍ نمنحه إذن قراءةٍ مؤقّتًا
+         (UpdateChecker) -->
+    <cache-path name="updates" path="updates/" />
 </paths>

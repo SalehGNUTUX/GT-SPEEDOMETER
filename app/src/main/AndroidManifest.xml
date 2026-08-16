@@ -19,6 +19,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        التحديث من داخل التطبيق: هو يُوزَّع خارج المتاجر، فيجلب حزمته بنفسه ويسلّمها
+        لمثبّت النظام. والإعلان وحده لا يكفي: أندرويد 8 فما فوق يشترط أن يأذن
+        المستعمل بيده في «تثبيت تطبيقات غير معروفة»، وذلك ما يفحصه
+        `core/update/UpdateChecker.kt` قبل أن يبدأ التثبيت.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 

@@ -53,7 +53,7 @@ PROBLEMS=0
 DELETABLE=()
 
 # ---------------------------------------------------------------------------
-#  بيان الإصدار 0.9.2-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#  بيان الإصدار 0.9.3-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
 # ---------------------------------------------------------------------------
 MANIFEST="MainActivity.kt
 SpeedoApp.kt
@@ -79,6 +79,7 @@ core/trip/GpxReader.kt
 core/trip/GpxWriter.kt
 core/trip/TripRecorder.kt
 core/trip/TripState.kt
+core/update/UpdateChecker.kt
 service/SpeedIcon.kt
 service/SpeedTileService.kt
 service/TripService.kt

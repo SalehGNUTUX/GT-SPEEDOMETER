@@ -213,7 +213,7 @@
 <section id="features">
   <div class="wrap">
     <h2 class="h2">الخصائص</h2>
-    <p class="sub">كلّ ما في التطبيق حتّى الإصدار 0.9.2.</p>
+    <p class="sub">كلّ ما في التطبيق حتّى الإصدار 0.9.3.</p>
       <div class="group" id="f-speed">
         <h3 class="glabel">القياس</h3>
       </div>
@@ -377,7 +377,16 @@
         </thead>
         <tbody>
       <tr class="latest">
-        <th scope="row"><span class="v">0.9.2</span><span class="tag">الأحدث</span></th>
+        <th scope="row"><span class="v">0.9.3</span><span class="tag">الأحدث</span></th>
+        <td class="note">تأكيدٌ قبل بدء التصوير وقبل إنهائه · تحديثٌ من داخل التطبيق · دعم ‎.gz‎ في مُنزِّل الخرائط · أيقونة الموقع كانت تُنعش الصفحة ولا تصعد إلى أعلاها</td>
+        <td class="dl">
+          <a href="https://github.com/SalehGNUTUX/GT-SPEEDOMETER/releases/download/v0.9.3-beta/GT-SPEEDOMETER-0.9.3-beta-release.apk">release</a>
+          <a href="https://github.com/SalehGNUTUX/GT-SPEEDOMETER/releases/download/v0.9.3-beta/GT-SPEEDOMETER-0.9.3-beta-debug.apk">debug</a>
+          <a href="https://github.com/SalehGNUTUX/GT-SPEEDOMETER/releases/tag/v0.9.3-beta" class="ghost">التفاصيل</a>
+        </td>
+      </tr>
+      <tr>
+        <th scope="row"><span class="v">0.9.2</span></th>
         <td class="note">تنزيل أرشيف خرائط من داخل التطبيق</td>
         <td class="dl">
           <a href="https://github.com/SalehGNUTUX/GT-SPEEDOMETER/releases/download/v0.9.2-beta/GT-SPEEDOMETER-0.9.2-beta-release.apk">release</a>
@@ -538,10 +547,13 @@
 </footer>
 
 <script>
-  /* نقرُ الشعار: إلى أعلى الصفحة ثمّ إنعاشها.
-     القفزُ قبل الإنعاش لا بعده: الإنعاش يُعيد بناء الصفحة فيُلغي أيّ حركةٍ جارية،
-     ولو انسللنا (`smooth`) لرآها الزائر مبتورة. و`href="#top"` يبقى عاملًا بلا
-     نصٍّ برمجيّ أصلًا — فمن عطّله وصل إلى الأعلى ولم يُنعش، وهو نصفُ الفعل لا لا شيء. */
+  /* نقرُ الشعار: إلى أعلى الصفحة **ثمّ** إنعاشها.
+     كان `scrollTo(0,0)` وحده لا يكفي: المتصفّح يحفظ موضع التمرير ويعيده بعد
+     الإنعاش (`history.scrollRestoration` وقيمتها `auto`)، فتُنعش الصفحة وتعود
+     إلى حيث كان الزائر. فتُطفأ الاستعادة أوّلًا، وحينئذٍ يبدأ الإنعاش من الأعلى.
+     ونُطفئها عند التحميل لا عند النقر وحده: من أنعش بمفتاح F5 يستحقّ السلوك نفسه.
+     و`href="#top"` يبقى عاملًا بلا نصٍّ برمجيّ أصلًا. */
+  if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
   document.getElementById('brand').addEventListener('click', function (e) {
     e.preventDefault();
     window.scrollTo(0, 0);

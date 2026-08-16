@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
@@ -185,6 +186,39 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
     fun setMapDownloadWifiOnly(enabled: Boolean) = put(KEY_DL_WIFI, enabled)
 
     /**
+     * تأكيدٌ قبل بدء التصوير وقبل إنهائه.
+     *
+     * مفعَّلٌ افتراضًا: زرّ التسجيل كبيرٌ في وسط الشاشة والهاتف على المقود، فلمسةٌ
+     * عارضة تبدأ تصويرًا لا يريده صاحبه أو — وهو الأسوأ — تُنهي تسجيلَ حادثةٍ وهو
+     * يحتاجه. ومن سئم المربّع أطفأه.
+     */
+    val confirmRecording: StateFlow<Boolean> = pref(KEY_CONFIRM_REC, true)
+    fun setConfirmRecording(enabled: Boolean) = put(KEY_CONFIRM_REC, enabled)
+
+    // ===== تحديثات التطبيق =====
+
+    /** فحصٌ يوميّ عند فتح التطبيق، وإشعارٌ حين يصدر أحدث */
+    val updateNotify: StateFlow<Boolean> = pref(KEY_UPD_NOTIFY, true)
+    fun setUpdateNotify(enabled: Boolean) = put(KEY_UPD_NOTIFY, enabled)
+
+    /**
+     * قبولُ النسخ التجريبيّة في الفحص.
+     *
+     * مفعَّلٌ اليوم لأنّ **كلّ** إصداراتنا تجريبيّة؛ ولو كان مطفأً لما وجد الفاحص
+     * شيئًا أبدًا. ويصير الفارقَ الحقيقيّ يوم يصدر أوّل إصدارٍ مستقرّ.
+     */
+    val updateBeta: StateFlow<Boolean> = pref(KEY_UPD_BETA, true)
+    fun setUpdateBeta(enabled: Boolean) = put(KEY_UPD_BETA, enabled)
+
+    /** آخر لحظة فحصٍ ناجحة (ساعة الحائط — هذا زمنٌ مدنيّ يُعرض، لا زمن قياس) */
+    val updateLastCheck: StateFlow<Long> = pref(KEY_UPD_LAST, 0L)
+    fun setUpdateLastCheck(millis: Long) = put(KEY_UPD_LAST, millis)
+
+    /** آخر إصدارٍ أُشعِر به، فلا يُكرَّر الإشعار نفسه كلّ يوم */
+    val updateNotifiedTag: StateFlow<String> = pref(KEY_UPD_TAG, "")
+    fun setUpdateNotifiedTag(tag: String) = put(KEY_UPD_TAG, tag)
+
+    /**
      * آخر قسمٍ فُتح في شاشة الإعدادات.
      *
      * يُحفظ لا يُنسى مع إغلاق الشاشة: من يضبط حدَّ سرعته ثمّ يخرج ليجرّبه ثمّ يعود
@@ -302,6 +336,11 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_MAP_APP = stringPreferencesKey("map_app_package")
         private val KEY_OPEN_SECTION = stringPreferencesKey("settings_open_section")
         private val KEY_DL_WIFI = booleanPreferencesKey("map_download_wifi_only")
+        private val KEY_CONFIRM_REC = booleanPreferencesKey("confirm_recording")
+        private val KEY_UPD_NOTIFY = booleanPreferencesKey("update_notify")
+        private val KEY_UPD_BETA = booleanPreferencesKey("update_beta")
+        private val KEY_UPD_LAST = longPreferencesKey("update_last_check")
+        private val KEY_UPD_TAG = stringPreferencesKey("update_notified_tag")
     }
 }
 

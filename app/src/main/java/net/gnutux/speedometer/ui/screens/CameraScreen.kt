@@ -46,9 +46,11 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -319,6 +321,7 @@ fun CameraScreen(
     val screenFlashOn by vm.camera.screenFlashOn.collectAsStateWithLifecycle()
     val screenFlashEnabled by vm.camera.screenFlashEnabled.collectAsStateWithLifecycle()
     val dualActive by vm.camera.dualActive.collectAsStateWithLifecycle()
+    val confirmRecording by vm.settings.confirmRecording.collectAsStateWithLifecycle()
 
     var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
@@ -326,6 +329,7 @@ fun CameraScreen(
     var hideControls by remember { mutableStateOf(false) }
     var scenePickerOpen by remember { mutableStateOf(false) }
     var switchHint by remember { mutableStateOf(false) }
+    var confirmRecord by remember { mutableStateOf(false) }
 
     // COMPATIBLE يفرض TextureView: SurfaceView لا يظهر في PixelCopy لنافذة التطبيق،
     // فكانت اللقطة تخرج بمستطيل أسود مكان المعاينة.
@@ -662,7 +666,20 @@ fun CameraScreen(
                             ShutterButton(onClick = { captureTick++ })
                         }
                         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            RecordButton(isRecording = isRecording, onClick = vm::toggleRecording)
+                            // البدء والإنهاء وحدهما يمرّان بالتأكيد: الأوّل يفتح ملفًّا
+                            // ورحلةً بلا قصد، والثاني يُنهي تصويرًا لا يُستعاد. أمّا
+                            // الإيقاف المؤقّت والاستئناف واللقطة فتُصحَّح كلّها بلمسةٍ
+                            // ثانية، وتأكيدٌ عليها ضريبةٌ على الفعل الصحيح.
+                            RecordButton(
+                                isRecording = isRecording,
+                                onClick = {
+                                    if (confirmRecording) {
+                                        confirmRecord = true
+                                    } else {
+                                        vm.toggleRecording()
+                                    }
+                                },
+                            )
                         }
                         // الخانة الثالثة كانت فراغًا محجوزًا لتوسيط زرّ التسجيل؛
                         // صارت تحمل زرّ الإيقاف المؤقّت حين يكون له معنى وحده،
@@ -701,6 +718,62 @@ fun CameraScreen(
                 },
             )
         }
+    }
+
+    // ===== تأكيد التسجيل =====
+    //
+    // خارج `BoxWithConstraints`: `AlertDialog` نافذةٌ مستقلّة لا ابنٌ في التخطيط،
+    // فوضعها داخل الصندوق يوهم بترتيبٍ في الرسم لا وجود له.
+    //
+    // والسؤال يُصاغ من [isRecording] لحظةَ العرض لا من رايةٍ تُحفظ عند الضغط: لو
+    // انتهى التسجيل من تلقاء نفسه — قرصٌ امتلأ أو خطأٌ في الترميز — والمربّع مفتوح،
+    // لسأل «إنهاء التسجيل؟» عن تسجيلٍ منتهٍ ثمّ بدأ واحدًا جديدًا بضغطة «أنهِ».
+    if (confirmRecord) {
+        val stopping = isRecording
+        AlertDialog(
+            onDismissRequest = { confirmRecord = false },
+            title = {
+                Text(
+                    stringResource(
+                        if (stopping) {
+                            R.string.confirm_record_stop_title
+                        } else {
+                            R.string.confirm_record_start_title
+                        }
+                    )
+                )
+            },
+            text = {
+                Text(
+                    stringResource(
+                        if (stopping) {
+                            R.string.confirm_record_stop_body
+                        } else {
+                            R.string.confirm_record_start_body
+                        }
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRecord = false
+                        vm.toggleRecording()
+                    }
+                ) {
+                    Text(
+                        stringResource(
+                            if (stopping) R.string.confirm_yes_stop else R.string.confirm_yes_start
+                        )
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRecord = false }) {
+                    Text(stringResource(R.string.confirm_no))
+                }
+            },
+        )
     }
 }
 
