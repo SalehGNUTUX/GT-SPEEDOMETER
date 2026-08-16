@@ -31,6 +31,24 @@
         <package android:name="net.osmand.plus" />
         <package android:name="net.osmand" />
         <package android:name="net.osmand.dev" />
+
+        <!--
+            وسائر تطبيقات الخرائط: لا تُعرف حزمها سلفًا كما تُعرف حزم OsmAnd، فتُطلب
+            رؤيتها بما تعلنه لا باسمها. النيّتان هما عينهما اللتان يجسّ بهما
+            `core/map/MapApps.kt`، وبدونهما يُرجع `queryIntentActivities` قائمةً
+            فارغة على أندرويد 11 فما فوق فيبدو الجهاز خاليًا من تطبيقات الخرائط.
+
+            ولا عنصر ثالث لـ `application/octet-stream`: لا يُعتدّ به إلّا مع شهادة
+            `geo:`، ومن شهدت له صار مرئيًّا بالعنصر الثاني.
+        -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/gpx+xml" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
     </queries>
 
     <application

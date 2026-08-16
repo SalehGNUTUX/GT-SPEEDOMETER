@@ -53,7 +53,7 @@ PROBLEMS=0
 DELETABLE=()
 
 # ---------------------------------------------------------------------------
-#  بيان الإصدار 0.8.0-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#  بيان الإصدار 0.9.1-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
 # ---------------------------------------------------------------------------
 MANIFEST="MainActivity.kt
 SpeedoApp.kt
@@ -67,6 +67,7 @@ core/location/GnssInfo.kt
 core/location/LocationEngine.kt
 core/location/SpeedFilter.kt
 core/location/SpeedSample.kt
+core/map/MapApps.kt
 core/map/OfflineMaps.kt
 core/map/OsmAndBridge.kt
 core/media/MediaRepository.kt
@@ -235,7 +236,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac

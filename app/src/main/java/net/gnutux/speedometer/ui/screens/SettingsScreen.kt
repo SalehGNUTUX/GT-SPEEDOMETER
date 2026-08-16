@@ -1,7 +1,11 @@
 package net.gnutux.speedometer.ui.screens
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import androidx.annotation.StringRes
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,13 +24,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -34,20 +43,28 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.DeviceTier
+import net.gnutux.speedometer.core.map.MapAppInfo
+import net.gnutux.speedometer.core.map.MapApps
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndState
@@ -62,6 +79,7 @@ import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Bg
+import net.gnutux.speedometer.ui.theme.Danger
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
 import net.gnutux.speedometer.ui.theme.TextPrimary
@@ -106,6 +124,32 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val osmAndBridge = remember(context) { OsmAndBridge.of(context) }
     val osmAnd by osmAndBridge.status.collectAsStateWithLifecycle()
 
+    // تطبيقات الخرائط: كشفٌ عند أوّل فتحٍ للإعدادات، وهي الشاشة الوحيدة التي تعرضها
+    val mapAppsSource = remember(context) { MapApps.of(context) }
+    val mapAppLibrary by mapAppsSource.library.collectAsStateWithLifecycle()
+    val mapAppPackage by s.mapAppPackage.collectAsStateWithLifecycle()
+
+    // القسم المفتوح: واحدٌ لا أكثر، ومحفوظٌ فيعود المستعمل إلى حيث ترك.
+    // ونقرُ الرأس المفتوح يطويه — فيصير المحفوظ فراغًا وهو حال «كلّها مطويّة».
+    val openSection by s.settingsOpenSection.collectAsStateWithLifecycle()
+    val toggleSection: (String) -> Unit = { id ->
+        s.setSettingsOpenSection(if (openSection == id) "" else id)
+    }
+
+    val listState = rememberLazyListState()
+
+    // تمريرٌ إلى ما فُتح لا إلى ما طُوي: من فتح «عن التطبيق» وهو آخر اثني عشر رأسًا
+    // يجب أن يرى محتواه لا رأسه وحده؛ ومن طوى قسمًا لم يطلب أن تتحرّك القائمة تحته.
+    // والمفتاح معرّف القسم لا فهرسه، فيقع مرّةً عند الفتح — ويقع عند وصول القيمة
+    // المحفوظة بعد أوّل تركيب، وذلك مقصود: استعادة الموضع تمام استعادة الحالة.
+    //
+    // والفهرس هو ترتيب القسم في [SECTION_ORDER] لأنّ المفتوح واحدٌ لا أكثر: كلّ ما
+    // قبله مطويّ، والمطويّ لا يُصدر إلّا رأسه، ولا شيء في القائمة يسبق أوّل رأس.
+    LaunchedEffect(openSection) {
+        val index = SECTION_ORDER.indexOf(openSection)
+        if (index >= 0) runCatching { listState.animateScrollToItem(index) }
+    }
+
     val cameraScene by s.cameraScene.collectAsStateWithLifecycle()
     val lens by s.cameraLens.collectAsStateWithLifecycle()
     val dual by s.dualCamera.collectAsStateWithLifecycle()
@@ -125,69 +169,82 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
         SettingsHeader(onClose)
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             // ===== المظهر =====
-            item { SectionTitle(stringResource(R.string.settings_section_appearance)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_theme_mode),
-                        note = stringResource(themeMode.summary),
-                    )
-                    ChoiceRow(
-                        options = ThemeMode.entries.map { stringResource(it.label) },
-                        selectedIndex = ThemeMode.entries.indexOf(themeMode),
-                        onSelect = { s.setThemeMode(ThemeMode.entries[it]) },
-                    )
-                }
-            }
-            // ساعتا التبديل لا معنى لهما خارج الوضع التلقائيّ، فتظهران معه وحده
-            if (themeMode == ThemeMode.AUTO_TIME) {
-                item {
+            settingsSection(
+                id = SECTION_APPEARANCE,
+                openId = openSection,
+                title = R.string.settings_section_appearance,
+                onToggle = toggleSection,
+            ) {
+                item(key = "appearance-1") {
                     SettingCard {
-                        RowLabel(stringResource(R.string.settings_day_start), null)
-                        HourRow(selected = dayStart, onSelect = s::setDayStartHour)
-                        Spacer(Modifier.height(10.dp))
-                        RowLabel(stringResource(R.string.settings_night_start), null)
-                        HourRow(selected = nightStart, onSelect = s::setNightStartHour)
+                        RowLabel(
+                            title = stringResource(R.string.settings_theme_mode),
+                            note = stringResource(themeMode.summary),
+                        )
+                        ChoiceRow(
+                            options = ThemeMode.entries.map { stringResource(it.label) },
+                            selectedIndex = ThemeMode.entries.indexOf(themeMode),
+                            onSelect = { s.setThemeMode(ThemeMode.entries[it]) },
+                        )
+                    }
+                }
+                // ساعتا التبديل لا معنى لهما خارج الوضع التلقائيّ، فتظهران معه وحده
+                if (themeMode == ThemeMode.AUTO_TIME) {
+                    item(key = "appearance-2") {
+                        SettingCard {
+                            RowLabel(stringResource(R.string.settings_day_start), null)
+                            HourRow(selected = dayStart, onSelect = s::setDayStartHour)
+                            Spacer(Modifier.height(10.dp))
+                            RowLabel(stringResource(R.string.settings_night_start), null)
+                            HourRow(selected = nightStart, onSelect = s::setNightStartHour)
+                        }
                     }
                 }
             }
 
             // ===== القيادة =====
-            item { SectionTitle(stringResource(R.string.settings_section_driving)) }
-            item {
-                SettingCard {
-                    SwitchRow(
-                        title = stringResource(R.string.settings_keep_screen_on),
-                        note = stringResource(R.string.settings_keep_screen_on_note),
-                        checked = keepScreenOn,
-                        onChange = s::setKeepScreenOn,
-                    )
-                    // جارُ «إبقاء الشاشة مضاءة» عمدًا: كلاهما جوابٌ عن سؤالٍ واحد —
-                    // ماذا يحدث للعداد حين تتحوّل الشاشة عنه؟
-                    SwitchRow(
-                        title = stringResource(R.string.settings_pip),
-                        note = stringResource(R.string.settings_pip_note),
-                        checked = pipOnLeave,
-                        onChange = s::setPipOnLeave,
-                    )
+            settingsSection(
+                id = SECTION_DRIVING,
+                openId = openSection,
+                title = R.string.settings_section_driving,
+                onToggle = toggleSection,
+            ) {
+                item(key = "driving-1") {
+                    SettingCard {
+                        SwitchRow(
+                            title = stringResource(R.string.settings_keep_screen_on),
+                            note = stringResource(R.string.settings_keep_screen_on_note),
+                            checked = keepScreenOn,
+                            onChange = s::setKeepScreenOn,
+                        )
+                        // جارُ «إبقاء الشاشة مضاءة» عمدًا: كلاهما جوابٌ عن سؤالٍ واحد —
+                        // ماذا يحدث للعداد حين تتحوّل الشاشة عنه؟
+                        SwitchRow(
+                            title = stringResource(R.string.settings_pip),
+                            note = stringResource(R.string.settings_pip_note),
+                            checked = pipOnLeave,
+                            onChange = s::setPipOnLeave,
+                        )
+                    }
                 }
-            }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_vehicle),
-                        note = stringResource(R.string.settings_vehicle_note),
-                    )
-                    ChoiceRow(
-                        options = VehicleProfile.entries.map { stringResource(it.label) },
-                        selectedIndex = VehicleProfile.entries.indexOf(profile),
-                        onSelect = { vm.setProfile(VehicleProfile.entries[it]) },
-                    )
+                item(key = "driving-2") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_vehicle),
+                            note = stringResource(R.string.settings_vehicle_note),
+                        )
+                        ChoiceRow(
+                            options = VehicleProfile.entries.map { stringResource(it.label) },
+                            selectedIndex = VehicleProfile.entries.indexOf(profile),
+                            onSelect = { vm.setProfile(VehicleProfile.entries[it]) },
+                        )
+                    }
                 }
             }
 
@@ -195,98 +252,119 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             //
             // قسمٌ قائم بذاته لا سطرٌ في «القيادة»: الحدُّ يغيّر مدى القرص وألوانه
             // وصوت التطبيق، وهو أثرٌ أوسع من أن يُخبَّأ بين مفاتيح.
-            item { SectionTitle(stringResource(R.string.settings_section_limit)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_speed_limit),
-                        note = stringResource(R.string.settings_speed_limit_note),
-                    )
-                    ChoiceRow(
-                        options = AppSettings.LIMIT_CHOICES.map { limitLabel(it) },
-                        selectedIndex = AppSettings.LIMIT_CHOICES.indexOf(speedLimit)
-                            .coerceAtLeast(0),
-                        onSelect = { s.setSpeedLimitKmh(AppSettings.LIMIT_CHOICES[it]) },
-                    )
-                    // المفتاح يظهر مع الحدّ وحده: تنبيهٌ صوتيّ بلا حدٍّ يُنبّه على
-                    // ماذا؟ وإظهاره معطَّلًا يترك المستعمل يقلبه فلا يقع شيء.
-                    if (speedLimit > 0) {
-                        SwitchRow(
-                            title = stringResource(R.string.settings_speed_alert),
-                            note = stringResource(R.string.settings_speed_alert_note),
-                            checked = speedAlert,
-                            onChange = s::setSpeedAlertEnabled,
+            settingsSection(
+                id = SECTION_LIMIT,
+                openId = openSection,
+                title = R.string.settings_section_limit,
+                onToggle = toggleSection,
+            ) {
+                item(key = "limit-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_speed_limit),
+                            note = stringResource(R.string.settings_speed_limit_note),
                         )
+                        ChoiceRow(
+                            options = AppSettings.LIMIT_CHOICES.map { limitLabel(it) },
+                            // القيمة المكتوبة يدويًّا إن وافقت خيارًا أبرزت ذلك الخيار:
+                            // الفهرس يُشتقّ من الحدّ المعتمَد وحده، فلا حالتان لقيمة.
+                            selectedIndex = AppSettings.LIMIT_CHOICES.indexOf(speedLimit)
+                                .coerceAtLeast(0),
+                            onSelect = { s.setSpeedLimitKmh(AppSettings.LIMIT_CHOICES[it]) },
+                        )
+                        ManualLimitField(current = speedLimit, onApply = s::setSpeedLimitKmh)
+                        // المفتاح يظهر مع الحدّ وحده: تنبيهٌ صوتيّ بلا حدٍّ يُنبّه على
+                        // ماذا؟ وإظهاره معطَّلًا يترك المستعمل يقلبه فلا يقع شيء.
+                        if (speedLimit > 0) {
+                            SwitchRow(
+                                title = stringResource(R.string.settings_speed_alert),
+                                note = stringResource(R.string.settings_speed_alert_note),
+                                checked = speedAlert,
+                                onChange = s::setSpeedAlertEnabled,
+                            )
+                        }
                     }
                 }
             }
 
             // ===== الفيديو =====
-            item { SectionTitle(stringResource(R.string.settings_section_video)) }
-            item {
-                SettingCard {
-                    SwitchRow(
-                        title = stringResource(R.string.burn_overlay),
-                        note = stringResource(R.string.settings_burn_note),
-                        checked = burn,
-                        onChange = vm::setBurnOverlay,
-                    )
-                    SwitchRow(
-                        title = stringResource(R.string.settings_audio),
-                        note = stringResource(R.string.settings_audio_note),
-                        checked = audio,
-                        onChange = s::setRecordAudio,
-                    )
+            settingsSection(
+                id = SECTION_VIDEO,
+                openId = openSection,
+                title = R.string.settings_section_video,
+                onToggle = toggleSection,
+            ) {
+                item(key = "video-1") {
+                    SettingCard {
+                        SwitchRow(
+                            title = stringResource(R.string.burn_overlay),
+                            note = stringResource(R.string.settings_burn_note),
+                            checked = burn,
+                            onChange = vm::setBurnOverlay,
+                        )
+                        SwitchRow(
+                            title = stringResource(R.string.settings_audio),
+                            note = stringResource(R.string.settings_audio_note),
+                            checked = audio,
+                            onChange = s::setRecordAudio,
+                        )
+                    }
                 }
-            }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_segment),
-                        note = stringResource(R.string.settings_segment_note),
-                    )
-                    ChoiceRow(
-                        options = AppSettings.SEGMENT_CHOICES.map { segmentLabel(it) },
-                        selectedIndex = AppSettings.SEGMENT_CHOICES.indexOf(segment)
-                            .coerceAtLeast(0),
-                        onSelect = { s.setVideoSegmentMinutes(AppSettings.SEGMENT_CHOICES[it]) },
-                    )
+                item(key = "video-2") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_segment),
+                            note = stringResource(R.string.settings_segment_note),
+                        )
+                        ChoiceRow(
+                            options = AppSettings.SEGMENT_CHOICES.map { segmentLabel(it) },
+                            selectedIndex = AppSettings.SEGMENT_CHOICES.indexOf(segment)
+                                .coerceAtLeast(0),
+                            onSelect = { s.setVideoSegmentMinutes(AppSettings.SEGMENT_CHOICES[it]) },
+                        )
+                    }
                 }
-            }
-            item {
-                SettingCard {
-                    SwitchRow(
-                        title = stringResource(R.string.settings_auto_trip),
-                        note = stringResource(R.string.settings_auto_trip_note),
-                        checked = autoTrip,
-                        onChange = s::setAutoTripWithRecording,
-                    )
+                item(key = "video-3") {
+                    SettingCard {
+                        SwitchRow(
+                            title = stringResource(R.string.settings_auto_trip),
+                            note = stringResource(R.string.settings_auto_trip_note),
+                            checked = autoTrip,
+                            onChange = s::setAutoTripWithRecording,
+                        )
+                    }
                 }
             }
 
             // ===== الخريطة والسجلّ =====
-            item { SectionTitle(stringResource(R.string.settings_section_map)) }
-            item {
-                SettingCard {
-                    SwitchRow(
-                        title = stringResource(R.string.settings_invert_tiles),
-                        note = stringResource(R.string.settings_invert_tiles_note),
-                        checked = invertTiles,
-                        onChange = s::setInvertMapTiles,
-                    )
+            settingsSection(
+                id = SECTION_MAP,
+                openId = openSection,
+                title = R.string.settings_section_map,
+                onToggle = toggleSection,
+            ) {
+                item(key = "map-1") {
+                    SettingCard {
+                        SwitchRow(
+                            title = stringResource(R.string.settings_invert_tiles),
+                            note = stringResource(R.string.settings_invert_tiles_note),
+                            checked = invertTiles,
+                            onChange = s::setInvertMapTiles,
+                        )
+                    }
                 }
-            }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_undo),
-                        note = stringResource(R.string.settings_undo_note),
-                    )
-                    ChoiceRow(
-                        options = UNDO_CHOICES.map { undoLabel(it) },
-                        selectedIndex = UNDO_CHOICES.indexOf(undoSeconds).coerceAtLeast(0),
-                        onSelect = { s.setUndoSeconds(UNDO_CHOICES[it]) },
-                    )
+                item(key = "map-2") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_undo),
+                            note = stringResource(R.string.settings_undo_note),
+                        )
+                        ChoiceRow(
+                            options = UNDO_CHOICES.map { undoLabel(it) },
+                            selectedIndex = UNDO_CHOICES.indexOf(undoSeconds).coerceAtLeast(0),
+                            onSelect = { s.setUndoSeconds(UNDO_CHOICES[it]) },
+                        )
+                    }
                 }
             }
 
@@ -295,52 +373,58 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             // قسمٌ قائم بذاته لا سطرٌ في «الخريطة والسجلّ»: هو المكان الوحيد الذي
             // يُخبر المستعمل **أين** يضع ملفّه و**هل** رآه التطبيق. بلا هذين السطرين
             // يصير الأمر تخمينًا، وملفٌّ لا يُعثر عليه كأنّه لم يُنسخ.
-            item { SectionTitle(stringResource(R.string.settings_section_offline)) }
-            item {
-                SettingCard {
-                    SwitchRow(
-                        title = stringResource(R.string.settings_offline_maps),
-                        note = stringResource(R.string.settings_offline_maps_note),
-                        checked = preferOffline,
-                        onChange = s::setPreferOfflineMaps,
-                    )
-                    RowLabel(
-                        title = if (offlineLibrary.hasArchives) {
-                            stringResource(
-                                R.string.settings_offline_status_found,
-                                offlineLibrary.names,
+            settingsSection(
+                id = SECTION_OFFLINE,
+                openId = openSection,
+                title = R.string.settings_section_offline,
+                onToggle = toggleSection,
+            ) {
+                item(key = "offline-1") {
+                    SettingCard {
+                        SwitchRow(
+                            title = stringResource(R.string.settings_offline_maps),
+                            note = stringResource(R.string.settings_offline_maps_note),
+                            checked = preferOffline,
+                            onChange = s::setPreferOfflineMaps,
+                        )
+                        RowLabel(
+                            title = if (offlineLibrary.hasArchives) {
+                                stringResource(
+                                    R.string.settings_offline_status_found,
+                                    offlineLibrary.names,
+                                )
+                            } else {
+                                stringResource(R.string.settings_offline_status_none)
+                            },
+                            // المسار يظهر بعد أوّل مسحٍ فقط: قراءته من القرص لا تقع على
+                            // الخيط الرئيس، فحتّى تصل نُبقي السطر فارغًا بدل مسارٍ مخمَّن
+                            note = offlineLibrary.folderPath
+                                .takeIf { it.isNotEmpty() }
+                                ?.let { stringResource(R.string.settings_offline_folder, it) },
+                        )
+                        // «لا خريطة محلّيّة» جوابٌ ناقص لمن نزّل خرائطه بـ OsmAnd فعلًا:
+                        // الملفّات موجودة والتطبيق رآها، وإنّما صيغتها متجهيّة لا
+                        // يرسمها osmdroid. بلا هذا السطر يظنّ المستعمل الفحصَ فاشلًا
+                        // فيعيده أبدًا.
+                        if (offlineLibrary.hasVectorOnly) {
+                            RowLabel(
+                                title = stringResource(
+                                    R.string.map_obf_found,
+                                    offlineLibrary.vectorNames,
+                                ),
                             )
-                        } else {
-                            stringResource(R.string.settings_offline_status_none)
-                        },
-                        // المسار يظهر بعد أوّل مسحٍ فقط: قراءته من القرص لا تقع على
-                        // الخيط الرئيس، فحتّى تصل نُبقي السطر فارغًا بدل مسارٍ مخمَّن
-                        note = offlineLibrary.folderPath
-                            .takeIf { it.isNotEmpty() }
-                            ?.let { stringResource(R.string.settings_offline_folder, it) },
-                    )
-                    // «لا خريطة محلّيّة» جوابٌ ناقص لمن نزّل خرائطه بـ OsmAnd فعلًا:
-                    // الملفّات موجودة والتطبيق رآها، وإنّما صيغتها متجهيّة لا
-                    // يرسمها osmdroid. بلا هذا السطر يظنّ المستعمل الفحصَ فاشلًا
-                    // فيعيده أبدًا.
-                    if (offlineLibrary.hasVectorOnly) {
-                        RowLabel(
-                            title = stringResource(
-                                R.string.map_obf_found,
-                                offlineLibrary.vectorNames,
-                            ),
+                        }
+                        if (offlineLibrary.altFolderPath.isNotEmpty()) {
+                            RowLabel(
+                                title = stringResource(R.string.settings_offline_folder_alt),
+                                note = offlineLibrary.altFolderPath,
+                            )
+                        }
+                        ActionRow(
+                            label = stringResource(R.string.settings_offline_rescan),
+                            onClick = offlineMaps::rescan,
                         )
                     }
-                    if (offlineLibrary.altFolderPath.isNotEmpty()) {
-                        RowLabel(
-                            title = stringResource(R.string.settings_offline_folder_alt),
-                            note = offlineLibrary.altFolderPath,
-                        )
-                    }
-                    ActionRow(
-                        label = stringResource(R.string.settings_offline_rescan),
-                        onClick = offlineMaps::rescan,
-                    )
                 }
             }
 
@@ -350,44 +434,113 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             // يضعه المستعمل بيده ويرسمه تطبيقنا، وهذا عن خرائطَ متجهيّة يملكها
             // تطبيقٌ آخر ويرسمها بنفسه. خلطُهما كان يجعل «لا خريطة محلّيّة» جوابًا
             // واحدًا عن سؤالين مختلفين، وعلاجُ كلٍّ منهما غير علاج الآخر.
-            item { SectionTitle(stringResource(R.string.settings_section_osmand)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_osmand_title),
-                        note = stringResource(R.string.settings_osmand_note),
-                    )
-                    RowLabel(
-                        title = when (osmAnd.state) {
-                            OsmAndState.CHECKING ->
-                                stringResource(R.string.settings_osmand_checking)
-                            OsmAndState.MISSING ->
-                                stringResource(R.string.settings_osmand_missing)
-                            OsmAndState.UNREACHABLE ->
-                                stringResource(R.string.settings_osmand_unreachable)
-                            // «لم يأذن» ليست «لا تستجيب»: الأولى فعلٌ ينتظر المستعمل
-                            // في تطبيقٍ آخر، والثانية عطبٌ لا يملك له شيئًا. وخلطهما
-                            // كان يترك من عليه خطوةٌ واحدة يظنّ أنّ لا سبيل.
-                            OsmAndState.DENIED ->
-                                stringResource(R.string.settings_osmand_denied)
-                            OsmAndState.READY ->
-                                stringResource(R.string.settings_osmand_ready)
-                        },
-                        // اسم الحزمة يُعرض عند وجودها وحدها: سطرٌ فارغ تحت «غير
-                        // مثبَّت» يوحي بأنّ شيئًا نقص من العرض
-                        note = osmAnd.packageName
-                            .takeIf { it.isNotEmpty() }
-                            ?.let { stringResource(R.string.settings_osmand_installed, it) },
-                    )
-                    if (osmAnd.state == OsmAndState.MISSING) {
-                        LinkRow(
-                            title = stringResource(R.string.settings_osmand_get),
-                            url = stringResource(R.string.settings_osmand_url),
+            settingsSection(
+                id = SECTION_OSMAND,
+                openId = openSection,
+                title = R.string.settings_section_osmand,
+                onToggle = toggleSection,
+            ) {
+                item(key = "osmand-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_osmand_title),
+                            note = stringResource(R.string.settings_osmand_note),
                         )
-                    } else {
+                        RowLabel(
+                            title = when (osmAnd.state) {
+                                OsmAndState.CHECKING ->
+                                    stringResource(R.string.settings_osmand_checking)
+                                OsmAndState.MISSING ->
+                                    stringResource(R.string.settings_osmand_missing)
+                                OsmAndState.UNREACHABLE ->
+                                    stringResource(R.string.settings_osmand_unreachable)
+                                // «لم يأذن» ليست «لا تستجيب»: الأولى فعلٌ ينتظر المستعمل
+                                // في تطبيقٍ آخر، والثانية عطبٌ لا يملك له شيئًا. وخلطهما
+                                // كان يترك من عليه خطوةٌ واحدة يظنّ أنّ لا سبيل.
+                                OsmAndState.DENIED ->
+                                    stringResource(R.string.settings_osmand_denied)
+                                OsmAndState.READY ->
+                                    stringResource(R.string.settings_osmand_ready)
+                            },
+                            // اسم الحزمة يُعرض عند وجودها وحدها: سطرٌ فارغ تحت «غير
+                            // مثبَّت» يوحي بأنّ شيئًا نقص من العرض
+                            note = osmAnd.packageName
+                                .takeIf { it.isNotEmpty() }
+                                ?.let { stringResource(R.string.settings_osmand_installed, it) },
+                        )
+                        if (osmAnd.state == OsmAndState.MISSING) {
+                            LinkRow(
+                                title = stringResource(R.string.settings_osmand_get),
+                                url = stringResource(R.string.settings_osmand_url),
+                            )
+                        } else {
+                            ActionRow(
+                                label = stringResource(R.string.settings_osmand_recheck),
+                                onClick = osmAndBridge::recheck,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ===== تطبيقات الخرائط =====
+            //
+            // كشفٌ وتصنيفٌ واختيارُ افتراضيّ، لا وعدَ بأكثر: الرسمُ داخل شاشتنا واجهةٌ
+            // لا يعرضها إلّا OsmAnd، وما عداه يفتح المسار عنده هو. والقائمة تقول عن
+            // كلّ تطبيقٍ أيّهما يقدر عليه بدل أن تسوّي بينهما بكلمة «مدعوم».
+            settingsSection(
+                id = SECTION_MAPAPPS,
+                openId = openSection,
+                title = R.string.settings_section_mapapps,
+                onToggle = toggleSection,
+            ) {
+                item(key = "mapapps-1") {
+                    SettingCard {
+                        Text(
+                            text = stringResource(R.string.mapapps_note),
+                            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+                        )
+                        // قبل تمام المسح لا يُقال شيء: «لا تطبيق خرائط» قبل أن
+                        // نسأل `PackageManager` خبرٌ كاذب، وفراغٌ لجزءٍ من ثانية
+                        // أهون منه.
+                        if (mapAppLibrary.hasApps) {
+                            // «اسألني» خيارٌ في القائمة لا غيابُ خيار: من ثبّته
+                            // افتراضيًّا ثمّ ندم يحتاج طريق رجعةٍ ظاهرة.
+                            MapAppRow(
+                                title = stringResource(R.string.mapapps_ask),
+                                note = null,
+                                icon = null,
+                                selected = mapAppPackage.isEmpty(),
+                                onClick = { s.setMapAppPackage("") },
+                            )
+                            mapAppLibrary.apps.forEach { app ->
+                                MapAppRow(
+                                    title = app.label,
+                                    note = capabilityNote(app),
+                                    icon = app.icon,
+                                    selected = app.packageName == mapAppPackage,
+                                    // ما لا يفتح مسارًا لا يُنقر: الاختيار الذي
+                                    // يُخلَف عند أوّل رحلة أسوأ من اختيارٍ لا يُتاح،
+                                    // وسطرُ القدرة يقول لماذا.
+                                    onClick = if (app.placesOnly) {
+                                        null
+                                    } else {
+                                        { s.setMapAppPackage(app.packageName) }
+                                    },
+                                )
+                            }
+                            RowLabel(
+                                title = stringResource(
+                                    R.string.mapapps_count,
+                                    Fmt.count(mapAppLibrary.apps.size),
+                                ),
+                            )
+                        } else if (mapAppLibrary.scanned) {
+                            RowLabel(title = stringResource(R.string.mapapps_none))
+                        }
                         ActionRow(
-                            label = stringResource(R.string.settings_osmand_recheck),
-                            onClick = osmAndBridge::recheck,
+                            label = stringResource(R.string.mapapps_rescan),
+                            onClick = mapAppsSource::rescan,
                         )
                     }
                 }
@@ -397,23 +550,29 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             //
             // الوضع يُختار من شاشة الكاميرا أيضًا، وهذا الموضع للاطّلاع والضبط
             // البارد: من يعدّ جهازه قبل الركوب لا يفتح المعاينة لضبطها.
-            item { SectionTitle(stringResource(R.string.settings_section_camera)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.camera_scene_title),
-                        note = stringResource(R.string.camera_scene_note),
-                    )
-                    ChoiceRow(
-                        options = listOf(
-                            stringResource(R.string.camera_scene_auto),
-                            stringResource(R.string.camera_scene_day),
-                            stringResource(R.string.camera_scene_night),
-                        ),
-                        selectedIndex = CameraScene.entries.indexOf(cameraScene)
-                            .coerceAtLeast(0),
-                        onSelect = { s.setCameraScene(CameraScene.entries[it]) },
-                    )
+            settingsSection(
+                id = SECTION_CAMERA,
+                openId = openSection,
+                title = R.string.settings_section_camera,
+                onToggle = toggleSection,
+            ) {
+                item(key = "camera-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.camera_scene_title),
+                            note = stringResource(R.string.camera_scene_note),
+                        )
+                        ChoiceRow(
+                            options = listOf(
+                                stringResource(R.string.camera_scene_auto),
+                                stringResource(R.string.camera_scene_day),
+                                stringResource(R.string.camera_scene_night),
+                            ),
+                            selectedIndex = CameraScene.entries.indexOf(cameraScene)
+                                .coerceAtLeast(0),
+                            onSelect = { s.setCameraScene(CameraScene.entries[it]) },
+                        )
+                    }
                 }
             }
 
@@ -422,138 +581,156 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             // الصفوف كلّها مقفلةٌ أثناء التسجيل، كما يُقفل توگل الحرق: كلٌّ منها
             // يستلزم إعادة ربطٍ تقتل جلسة الترميز، فتُلَفّ المقاطع. وقفلُها أصدق من
             // مفتاحٍ يقلبه المستعمل فيجد ملفّه انقسم بلا أن يطلب ذلك.
-            item { SectionTitle(stringResource(R.string.settings_section_dual)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = if (dualSupported) {
-                            stringResource(R.string.camera_dual_supported)
-                        } else {
-                            stringResource(R.string.camera_dual_unsupported)
-                        },
-                        note = stringResource(R.string.camera_dual_note),
-                    )
-                    // بلا دعمٍ من الجهاز لا يُعرض المفتاح أصلًا: مفتاحٌ لا يفعل
-                    // شيئًا أسوأ من غيابه، والسطر أعلاه قال السبب.
-                    if (dualSupported) {
-                        SwitchRow(
-                            title = stringResource(R.string.camera_dual),
-                            note = if (recording) {
-                                stringResource(R.string.camera_switch_rolls)
+            settingsSection(
+                id = SECTION_DUAL,
+                openId = openSection,
+                title = R.string.settings_section_dual,
+                onToggle = toggleSection,
+            ) {
+                item(key = "dual-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = if (dualSupported) {
+                                stringResource(R.string.camera_dual_supported)
                             } else {
-                                stringResource(R.string.camera_dual_note)
+                                stringResource(R.string.camera_dual_unsupported)
                             },
-                            checked = dual,
-                            onChange = { if (!recording) s.setDualCamera(it) },
+                            note = stringResource(R.string.camera_dual_note),
                         )
-                        if (dual) {
-                            RowLabel(title = stringResource(R.string.camera_dual_layout))
-                            ChoiceRow(
-                                options = listOf(
-                                    stringResource(R.string.camera_dual_pip),
-                                    stringResource(R.string.camera_dual_split),
-                                ),
-                                selectedIndex = DualLayout.entries.indexOf(dualLayout)
-                                    .coerceAtLeast(0),
-                                onSelect = {
-                                    if (!recording) s.setDualLayout(DualLayout.entries[it])
+                        // بلا دعمٍ من الجهاز لا يُعرض المفتاح أصلًا: مفتاحٌ لا يفعل
+                        // شيئًا أسوأ من غيابه، والسطر أعلاه قال السبب.
+                        if (dualSupported) {
+                            SwitchRow(
+                                title = stringResource(R.string.camera_dual),
+                                note = if (recording) {
+                                    stringResource(R.string.camera_switch_rolls)
+                                } else {
+                                    stringResource(R.string.camera_dual_note)
                                 },
+                                checked = dual,
+                                onChange = { if (!recording) s.setDualCamera(it) },
                             )
+                            if (dual) {
+                                RowLabel(title = stringResource(R.string.camera_dual_layout))
+                                ChoiceRow(
+                                    options = listOf(
+                                        stringResource(R.string.camera_dual_pip),
+                                        stringResource(R.string.camera_dual_split),
+                                    ),
+                                    selectedIndex = DualLayout.entries.indexOf(dualLayout)
+                                        .coerceAtLeast(0),
+                                    onSelect = {
+                                        if (!recording) s.setDualLayout(DualLayout.entries[it])
+                                    },
+                                )
+                                ChoiceRow(
+                                    options = listOf(
+                                        stringResource(R.string.camera_dual_primary_back),
+                                        stringResource(R.string.camera_dual_primary_front),
+                                    ),
+                                    selectedIndex = if (dualPrimary == CameraLens.FRONT) 1 else 0,
+                                    onSelect = {
+                                        if (!recording) {
+                                            s.setDualPrimary(
+                                                if (it == 1) CameraLens.FRONT else CameraLens.BACK
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        // العدسة المفردة تبقى معروضةً في الوضعين: هي التي تعمل حين
+                        // يُطفأ المزدوج، ومن يضبطها الآن لا يريد أن يعود ليضبطها بعده.
+                        if (!dual) {
+                            RowLabel(title = stringResource(R.string.camera_switch))
                             ChoiceRow(
                                 options = listOf(
-                                    stringResource(R.string.camera_dual_primary_back),
-                                    stringResource(R.string.camera_dual_primary_front),
+                                    stringResource(R.string.camera_lens_back),
+                                    stringResource(R.string.camera_lens_front),
                                 ),
-                                selectedIndex = if (dualPrimary == CameraLens.FRONT) 1 else 0,
+                                selectedIndex = if (lens == CameraLens.FRONT) 1 else 0,
                                 onSelect = {
-                                    if (!recording) {
-                                        s.setDualPrimary(
-                                            if (it == 1) CameraLens.FRONT else CameraLens.BACK
-                                        )
-                                    }
+                                    s.setCameraLens(if (it == 1) CameraLens.FRONT else CameraLens.BACK)
                                 },
                             )
                         }
-                    }
-                    // العدسة المفردة تبقى معروضةً في الوضعين: هي التي تعمل حين
-                    // يُطفأ المزدوج، ومن يضبطها الآن لا يريد أن يعود ليضبطها بعده.
-                    if (!dual) {
-                        RowLabel(title = stringResource(R.string.camera_switch))
-                        ChoiceRow(
-                            options = listOf(
-                                stringResource(R.string.camera_lens_back),
-                                stringResource(R.string.camera_lens_front),
-                            ),
-                            selectedIndex = if (lens == CameraLens.FRONT) 1 else 0,
-                            onSelect = {
-                                s.setCameraLens(if (it == 1) CameraLens.FRONT else CameraLens.BACK)
-                            },
+                        SwitchRow(
+                            title = stringResource(R.string.camera_screen_flash),
+                            note = stringResource(R.string.camera_screen_flash_note),
+                            checked = screenFlash,
+                            onChange = s::setScreenFlash,
                         )
                     }
-                    SwitchRow(
-                        title = stringResource(R.string.camera_screen_flash),
-                        note = stringResource(R.string.camera_screen_flash_note),
-                        checked = screenFlash,
-                        onChange = s::setScreenFlash,
-                    )
                 }
             }
 
             // ===== الأجهزة المحدودة =====
-            item { SectionTitle(stringResource(R.string.settings_section_lowend)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_lite_mode),
-                        note = stringResource(R.string.settings_lite_mode_note),
-                    )
-                    ChoiceRow(
-                        options = LiteMode.entries.map { liteLabel(it) },
-                        selectedIndex = LiteMode.entries.indexOf(liteMode).coerceAtLeast(0),
-                        onSelect = { s.setLiteMode(LiteMode.entries[it]) },
-                    )
-                    // «ما الذي وقع فعلًا» لا «ما الذي اخترتَه»: مع [LiteMode.AUTO]
-                    // لا يعرف المستعمل أيّهما جرى، وتخفيفٌ صامتٌ يُقرأ عطبًا في
-                    // الجودة لا خدمةً في السرعة.
-                    RowLabel(
-                        title = if (lowRam) {
-                            stringResource(R.string.settings_lite_detected)
-                        } else {
-                            stringResource(R.string.settings_lite_manual)
-                        },
-                    )
-                    SwitchRow(
-                        title = stringResource(R.string.settings_fast_fix),
-                        note = stringResource(R.string.settings_fast_fix_note),
-                        checked = fastFix,
-                        onChange = s::setFastFirstFix,
-                    )
+            settingsSection(
+                id = SECTION_LOWEND,
+                openId = openSection,
+                title = R.string.settings_section_lowend,
+                onToggle = toggleSection,
+            ) {
+                item(key = "lowend-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_lite_mode),
+                            note = stringResource(R.string.settings_lite_mode_note),
+                        )
+                        ChoiceRow(
+                            options = LiteMode.entries.map { liteLabel(it) },
+                            selectedIndex = LiteMode.entries.indexOf(liteMode).coerceAtLeast(0),
+                            onSelect = { s.setLiteMode(LiteMode.entries[it]) },
+                        )
+                        // «ما الذي وقع فعلًا» لا «ما الذي اخترتَه»: مع [LiteMode.AUTO]
+                        // لا يعرف المستعمل أيّهما جرى، وتخفيفٌ صامتٌ يُقرأ عطبًا في
+                        // الجودة لا خدمةً في السرعة.
+                        RowLabel(
+                            title = if (lowRam) {
+                                stringResource(R.string.settings_lite_detected)
+                            } else {
+                                stringResource(R.string.settings_lite_manual)
+                            },
+                        )
+                        SwitchRow(
+                            title = stringResource(R.string.settings_fast_fix),
+                            note = stringResource(R.string.settings_fast_fix_note),
+                            checked = fastFix,
+                            onChange = s::setFastFirstFix,
+                        )
+                    }
                 }
             }
 
             // ===== عن التطبيق =====
-            item { SectionTitle(stringResource(R.string.settings_section_about)) }
-            item {
-                SettingCard {
-                    RowLabel(
-                        title = stringResource(R.string.settings_version),
-                        note = BuildConfig.VERSION_NAME,
-                    )
-                    RowLabel(
-                        title = stringResource(R.string.settings_license),
-                        note = stringResource(R.string.settings_osm_notice),
-                    )
-                    RowLabel(
-                        title = stringResource(R.string.settings_about_developer),
-                        note = stringResource(R.string.settings_about_developer_name),
-                    )
-                    LinkRow(
-                        title = stringResource(R.string.settings_about_repo),
-                        url = stringResource(R.string.settings_about_repo_url),
-                    )
+            settingsSection(
+                id = SECTION_ABOUT,
+                openId = openSection,
+                title = R.string.settings_section_about,
+                onToggle = toggleSection,
+            ) {
+                item(key = "about-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_version),
+                            note = BuildConfig.VERSION_NAME,
+                        )
+                        RowLabel(
+                            title = stringResource(R.string.settings_license),
+                            note = stringResource(R.string.settings_osm_notice),
+                        )
+                        RowLabel(
+                            title = stringResource(R.string.settings_about_developer),
+                            note = stringResource(R.string.settings_about_developer_name),
+                        )
+                        LinkRow(
+                            title = stringResource(R.string.settings_about_repo),
+                            url = stringResource(R.string.settings_about_repo_url),
+                        )
+                    }
                 }
             }
-            item { Spacer(Modifier.height(24.dp)) }
+            item(key = "tail-spacer") { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
@@ -627,16 +804,123 @@ private fun SettingsHeader(onClose: () -> Unit) {
     }
 }
 
+/**
+ * معرّفات الأقسام: نصٌّ ثابت لا فهرس.
+ *
+ * الفهرس كان يعني أنّ إدراج قسمٍ جديدٍ في الوسط يفتح عند المستعمل قسمًا غير الذي
+ * تركه مفتوحًا — والقيمة محفوظةٌ في القرص فتعبر التحديثات. والنصّ يعبرها سالمًا،
+ * وأسوأ ما يقع عند حذف قسمٍ أن تُطوى الأقسام كلّها.
+ */
+private const val SECTION_APPEARANCE = "appearance"
+private const val SECTION_DRIVING = "driving"
+private const val SECTION_LIMIT = "limit"
+private const val SECTION_VIDEO = "video"
+private const val SECTION_MAP = "map"
+private const val SECTION_OFFLINE = "offline"
+private const val SECTION_OSMAND = "osmand"
+private const val SECTION_MAPAPPS = "mapapps"
+private const val SECTION_CAMERA = "camera"
+private const val SECTION_DUAL = "dual"
+private const val SECTION_LOWEND = "lowend"
+private const val SECTION_ABOUT = "about"
+
+/**
+ * ترتيب الأقسام على الشاشة.
+ *
+ * يُستعمل للتمرير إلى القسم المفتوح، ويجب أن يبقى مطابقًا لترتيب النداءات في
+ * [SettingsScreen]: فهرس الرأس هو موضعُه هنا ما دام المفتوح واحدًا لا أكثر.
+ */
+private val SECTION_ORDER = listOf(
+    SECTION_APPEARANCE,
+    SECTION_DRIVING,
+    SECTION_LIMIT,
+    SECTION_VIDEO,
+    SECTION_MAP,
+    SECTION_OFFLINE,
+    SECTION_OSMAND,
+    SECTION_MAPAPPS,
+    SECTION_CAMERA,
+    SECTION_DUAL,
+    SECTION_LOWEND,
+    SECTION_ABOUT,
+)
+
+/** أوسع حدٍّ يُكتب يدويًّا؛ هو سقف [AppSettings.setSpeedLimitKmh] نفسه */
+private const val MAX_MANUAL_LIMIT = 300
+
+/** حارس فيضٍ عند التحليل: ما بلغه فقد خرج عن المدى قطعًا */
+private const val LIMIT_OVERFLOW_GUARD = 9_999
+
+/**
+ * قسمٌ مطويّ داخل [LazyColumn].
+ *
+ * **لماذا لا `AnimatedVisibility`؟** لأنّ الطيّ هنا أبسط منها وأصحّ: حين يكون
+ * القسم مطويًّا لا تُصدَر عناصره أصلًا، فلا تُركّب بطاقاتٌ لا تُرى ولا يقيسها
+ * التخطيط الكسول. وبطاقةٌ فيها منتقي ساعاتٍ كسول داخل مُحرّكِ ظهورٍ متداخل ثمنٌ
+ * بلا مقابل.
+ *
+ * و[id] نصٌّ ثابت لا فهرس، و`key` في كلّ عنصرٍ كي لا تنتقل حالة عنصرٍ إلى جاره حين
+ * يُطوى قسمٌ ويُفتح آخر.
+ */
+private fun LazyListScope.settingsSection(
+    id: String,
+    openId: String,
+    @StringRes title: Int,
+    onToggle: (String) -> Unit,
+    content: LazyListScope.() -> Unit,
+) {
+    val expanded = openId == id
+    item(key = "section-$id") {
+        SectionHeader(
+            title = stringResource(title),
+            expanded = expanded,
+            onClick = { onToggle(id) },
+        )
+    }
+    if (expanded) content()
+}
+
+/**
+ * رأس قسمٍ يُنقر.
+ *
+ * السهم يدور مع الحالة بدل أن تُستبدل أيقونةٌ بأخرى: الدوران يربط الحالتين في عين
+ * المستعمل، والوصف يقول أيّهما سيقع عند النقر لا أيّهما قائم — فذلك ما ينفع قارئ
+ * الشاشة.
+ */
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge.copy(
-            color = Accent,
-            fontWeight = FontWeight.Bold,
-        ),
-        modifier = Modifier.padding(start = 6.dp, top = 8.dp),
+private fun SectionHeader(title: String, expanded: Boolean, onClick: () -> Unit) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "settings-section-arrow",
     )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (expanded) SurfaceHigh else Surface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge.copy(
+                color = Accent,
+                fontWeight = FontWeight.Bold,
+            ),
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = Icons.Filled.ExpandMore,
+            contentDescription = stringResource(
+                if (expanded) R.string.settings_collapse else R.string.settings_expand
+            ),
+            tint = Accent,
+            modifier = Modifier.rotate(rotation),
+        )
+    }
 }
 
 @Composable
@@ -796,6 +1080,198 @@ private fun ChoiceRow(options: List<String>, selectedIndex: Int, onSelect: (Int)
             }
         }
     }
+}
+
+/**
+ * سطر تطبيق خرائطٍ مثبَّت: اختيارٌ بحالةٍ ظاهرة.
+ *
+ * التمييز بالخلفيّة **وبشارةٍ نصّيّة** معًا لا باللون وحده: الشاشة تُقرأ تحت الشمس،
+ * ومن لا يميّز الألوان يجب أن يعرف أيّها المضبوط.
+ *
+ * و[onClick] بقيمة `null` تعني سطرًا يُعرض ولا يُنقر: تطبيقٌ لا يفتح مسارنا يُذكر
+ * لأنّه على الجهاز، ولا يُعرض عليه اختيارٌ يُخلَف. ولا شارة افتراضيٍّ لما لا يصير
+ * افتراضيًّا أصلًا.
+ */
+@Composable
+private fun MapAppRow(
+    title: String,
+    note: String?,
+    icon: Bitmap?,
+    selected: Boolean,
+    onClick: (() -> Unit)?,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    val base = Modifier
+        .fillMaxWidth()
+        .defaultMinSize(minHeight = 56.dp)
+        .clip(shape)
+        .background(if (selected && onClick != null) SurfaceHigh else Color.Transparent)
+    Row(
+        modifier = (if (onClick != null) base.clickable(onClick = onClick) else base)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (icon != null) {
+            // اللفّ لا يُعيد رسم الصورة، لكنّه يخصّص كائنًا مع كلّ تركيب؛ والأيقونة
+            // ثابتةٌ بين مسحين فتُلَفّ مرّةً وتُحفظ.
+            val image = remember(icon) { icon.asImageBitmap() }
+            Image(
+                bitmap = image,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp),
+            )
+        }
+        Box(Modifier.weight(1f)) { RowLabel(title, note) }
+        if (selected) {
+            Text(
+                text = stringResource(R.string.mapapps_default_badge),
+                style = MaterialTheme.typography.labelMedium.copy(
+                    color = Accent,
+                    fontWeight = FontWeight.Bold,
+                ),
+            )
+        }
+    }
+}
+
+/**
+ * ما يقدر عليه التطبيق، بلا زيادة.
+ *
+ * القدرتان تُجتمعان في سطرٍ واحد حين تجتمعان (OsmAnd وحده). ومن لا يعلن إلّا
+ * `geo:` يقول عنه السطر إنّه يفتح المواضع لا المسارات — وهو سببُ كون سطره غير
+ * قابلٍ للنقر، فيُقرأ الحكم مع علّته في موضعٍ واحد.
+ */
+@Composable
+private fun capabilityNote(app: MapAppInfo): String {
+    val lines = mutableListOf<String>()
+    if (app.canRender) lines += stringResource(R.string.mapapps_can_render)
+    if (app.canOpenTrack) lines += stringResource(R.string.mapapps_can_open)
+    return lines.takeIf { it.isNotEmpty() }?.joinToString("، ")
+        ?: stringResource(R.string.mapapps_places_only)
+}
+
+/**
+ * حدُّ سرعةٍ يُكتب بالرقم.
+ *
+ * ثلاثة قرارات فيه:
+ *
+ * — **الحقل يتبع الحدَّ المعتمَد**: بذرتُه مفتاحُها [current]، فمن لمس خيارًا من
+ *   الصفّ رأى الحقل يفرغ، ومن اعتمد رقمًا خارج الصفّ رآه مكتوبًا فيه. ولا تبقى في
+ *   الحقل قيمةٌ تخالف ما يعمل به التطبيق.
+ *
+ * — **الأرقام تُحلَّل لا تُقارَن**: لوحة المفاتيح العربيّة تُدخل ‎٤٠‎ لا ‎40‎،
+ *   و`toIntOrNull` تردّ `null` عليها. و[parseLimit] تمرّ بـ`Character.digit` وهي
+ *   تعرف كلّ أرقام يونيكود العشريّة — العربيّة والهنديّة والفارسيّة سواء.
+ *
+ * — **الخطأ يُعرض ولا يُعتمد**: ما خرج عن المدى يُترك في الحقل مع سطرٍ يقول المدى،
+ *   فلا يُمحى ما كتبه المستعمل ولا يُضبط حدٌّ لم يقصده.
+ */
+@Composable
+private fun ManualLimitField(current: Int, onApply: (Int) -> Unit) {
+    var text by remember(current) {
+        mutableStateOf(
+            if (current in AppSettings.LIMIT_CHOICES) "" else Fmt.count(current)
+        )
+    }
+    var outOfRange by remember(current) { mutableStateOf(false) }
+
+    RowLabel(title = stringResource(R.string.limit_manual))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .defaultMinSize(minHeight = 56.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(SurfaceHigh)
+                .border(
+                    width = if (outOfRange) 2.dp else 0.dp,
+                    color = if (outOfRange) Danger else Color.Transparent,
+                    shape = RoundedCornerShape(12.dp),
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (text.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.limit_manual_hint),
+                    style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
+                )
+            }
+            BasicTextField(
+                value = text,
+                onValueChange = {
+                    text = it
+                    // التحذير يزول مع أوّل تعديل: تحذيرٌ يبقى على نصٍّ تبدّل يكذب
+                    outOfRange = false
+                },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.titleSmall.copy(
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                ),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                cursorBrush = SolidColor(Accent),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .defaultMinSize(minHeight = 56.dp, minWidth = 56.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Accent)
+                .clickable {
+                    val value = parseLimit(text)
+                    if (value != null && value in 1..MAX_MANUAL_LIMIT) {
+                        onApply(value)
+                        outOfRange = false
+                    } else {
+                        outOfRange = true
+                    }
+                }
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(R.string.limit_manual_apply),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    color = Bg,
+                    fontWeight = FontWeight.Bold,
+                ),
+            )
+        }
+    }
+    if (outOfRange) {
+        Text(
+            text = stringResource(R.string.limit_manual_range),
+            style = MaterialTheme.typography.bodySmall.copy(color = Danger),
+        )
+    }
+}
+
+/**
+ * تحليل عددٍ مكتوبٍ بأيّ أرقامٍ عشريّة.
+ *
+ * `Character.digit` تعرف الأرقام العربيّة (‎0-9‎) والهنديّة (‎٠-٩‎) والفارسيّة
+ * (‎۰-۹‎) وغيرها، فلا نكتب جدول تحويلٍ بأيدينا ولا ننسى نصفه. وما ليس رقمًا يردّ
+ * `null` فيُعرض المدى — لا يُعتمد شيءٌ مخمَّن.
+ */
+private fun parseLimit(raw: String): Int? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    var value = 0
+    for (ch in trimmed) {
+        val digit = Character.digit(ch, 10)
+        if (digit < 0) return null
+        value = value * 10 + digit
+        // من كتب رقمًا طويلًا خرج عن المدى قطعًا، ومتابعة الضرب تفيض بلا فائدة
+        if (value >= LIMIT_OVERFLOW_GUARD) return LIMIT_OVERFLOW_GUARD
+    }
+    return value
 }
 
 /**

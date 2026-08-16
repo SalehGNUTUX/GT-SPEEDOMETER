@@ -165,6 +165,25 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     fun setMapSource(source: MapSourcePreference) = put(KEY_MAP_SOURCE, source.id)
 
+    /**
+     * حزمةُ تطبيق الخرائط المفضَّل لفتح المسار فيه؛ فراغٌ يعني «اسألني في كلّ مرّة».
+     *
+     * فراغٌ هو الافتراض عمدًا: منتقي النظام يعرض كلّ ما يقدر على فتح GPX، ومن ثبّت
+     * تطبيقًا جديدًا يراه فيه بلا أن يعود إلى إعداداتنا. وإنّما يُثبَّت الاختيار لمن
+     * سئم المنتقي في كلّ رحلة.
+     */
+    val mapAppPackage: StateFlow<String> = pref(KEY_MAP_APP, "")
+    fun setMapAppPackage(pkg: String) = put(KEY_MAP_APP, pkg)
+
+    /**
+     * آخر قسمٍ فُتح في شاشة الإعدادات.
+     *
+     * يُحفظ لا يُنسى مع إغلاق الشاشة: من يضبط حدَّ سرعته ثمّ يخرج ليجرّبه ثمّ يعود
+     * ليعدّله يجد قسمه مفتوحًا. وفراغٌ يعني «كلّها مطويّة» وهو حال أوّل فتحة.
+     */
+    val settingsOpenSection: StateFlow<String> = pref(KEY_OPEN_SECTION, "")
+    fun setSettingsOpenSection(id: String) = put(KEY_OPEN_SECTION, id)
+
     // ===== الكاميرا =====
 
     val cameraScene: StateFlow<CameraScene> =
@@ -245,7 +264,7 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
          * حسابيًّا. من يريد رقمًا خارجها فـ [setSpeedLimitKmh] تقبل أيّ قيمة، وهذه
          * قائمة اختيارٍ بلمسةٍ واحدة لا حصر.
          */
-        val LIMIT_CHOICES = listOf(NO_SPEED_LIMIT, 30, 50, 60, 80, 90, 100, 110, 120, 140)
+        val LIMIT_CHOICES = listOf(NO_SPEED_LIMIT, 30, 40, 50, 60, 80, 90, 100, 110, 120, 140)
 
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_DAY_START = intPreferencesKey("day_start_hour")
@@ -271,6 +290,8 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_DUAL_LAYOUT = stringPreferencesKey("dual_layout")
         private val KEY_DUAL_PRIMARY = stringPreferencesKey("dual_primary_lens")
         private val KEY_SCREEN_FLASH = booleanPreferencesKey("screen_flash")
+        private val KEY_MAP_APP = stringPreferencesKey("map_app_package")
+        private val KEY_OPEN_SECTION = stringPreferencesKey("settings_open_section")
     }
 }
 

@@ -648,7 +648,7 @@ step "تحديث $GRADLE_FILE"
 BAK_DIR="$(mktemp -d)"
 trap 'rm -f "$NOTES_FILE"; rm -rf "$BAK_DIR"' EXIT
 SYNC_FILES=("$GRADLE_FILE")
-for f in README.md CHANGELOG.md; do
+for f in README.md CHANGELOG.md index.html; do
   if [[ -f "$f" ]]; then SYNC_FILES+=("$f"); fi
 done
 backup_files() {
@@ -707,6 +707,23 @@ if [[ -f CHANGELOG.md ]] && ! grep -q "^## v\?${NEW_NAME}\b" CHANGELOG.md; then
       ' CHANGELOG.md > "$NOTES_FILE"
     fi
     ok "أُضيف قسم ${NEW_NAME} إلى CHANGELOG.md"
+  fi
+fi
+
+# ---------- صفحة الموقع ----------
+# بعد مزامنة README و CHANGELOG لا قبلها: المولّد يقرأ سجلّ التغييرات، فلو سبقها
+# لبُنيت صفحةٌ تعلن الإصدار السابق. وفشلُه تحذيرٌ لا موت: صفحةٌ متأخّرة أهون من
+# إصدارٍ لا يخرج.
+if [[ -f build.py ]]; then
+  step "تحديث صفحة الموقع"
+  if (( DRY_RUN )); then
+    ok "(تجربة) كنت سأشغّل: python3 build.py"
+  elif ! command -v python3 >/dev/null 2>&1; then
+    warn "python3 غير موجود — index.html على حاله."
+  elif python3 build.py; then
+    ok "index.html محدَّث من CHANGELOG.md"
+  else
+    warn "فشل توليد index.html — الصفحة على حالها."
   fi
 fi
 

@@ -295,4 +295,26 @@
     <string name="camera_dual_swap">مبادلة الكبيرة بالمصغَّرة</string>
     <string name="camera_dual_primary_back">الخلفيّة هي الكبيرة</string>
     <string name="camera_dual_primary_front">الأماميّة هي الكبيرة</string>
+
+    <!-- 0.9.1 — تطبيقات الخرائط المثبَّتة -->
+    <string name="settings_section_mapapps">تطبيقات الخرائط</string>
+    <string name="mapapps_note">التطبيقات المثبَّتة التي تفتح المسارات والخرائط. اختر واحدًا ليكون الافتراضيّ، أو دع «اسألني» فيظهر منتقي النظام في كلّ مرّة.</string>
+    <string name="mapapps_none">لا تطبيق خرائط مثبَّتًا يفتح ملفّات GPX</string>
+    <string name="mapapps_ask">اسألني في كلّ مرّة</string>
+    <string name="mapapps_rescan">إعادة الفحص</string>
+    <string name="mapapps_can_render">يرسم خريطة رحلاتنا داخل التطبيق</string>
+    <string name="mapapps_can_open">يفتح المسار عنده</string>
+    <string name="mapapps_places_only">يفتح المواضع لا المسارات</string>
+    <string name="mapapps_default_badge">الافتراضيّ</string>
+    <string name="mapapps_count">%1$s تطبيقًا</string>
+
+    <!-- 0.9.1 — حدُّ سرعةٍ يدويّ -->
+    <string name="limit_manual">إدخالٌ يدويّ</string>
+    <string name="limit_manual_hint">كم/س</string>
+    <string name="limit_manual_apply">اعتمِد</string>
+    <string name="limit_manual_range">بين 1 و300 كم/س</string>
+
+    <!-- 0.9.1 — أقسام مطويّة -->
+    <string name="settings_expand">افتح القسم</string>
+    <string name="settings_collapse">اطوِ القسم</string>
 </resources>

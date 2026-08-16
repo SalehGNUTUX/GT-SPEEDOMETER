@@ -298,19 +298,31 @@ private fun TripDetail(
         )
     }
 
+    // تطبيق الخرائط المفضَّل؛ فراغٌ يعني «اسألني في كلّ مرّة» وهو الافتراض.
+    val mapApp by vm.settings.mapAppPackage.collectAsStateWithLifecycle()
+
     // فعلٌ واحد لموضعَي نداء: زرّ «فتح في OsmAnd»، وملاحظةُ الخريطة حين لا يملك
     // الراكب إلّا خرائط `.obf` المتجهيّة — فتلك OsmAnd وحدها ترسمها.
     val openInOsmAnd = {
-        // ACTION_VIEW على نوع GPX يلتقطه OsmAnd وأمثاله؛ لا نربط أنفسنا بحزمة بعينها.
+        // ACTION_VIEW على نوع GPX يلتقطه OsmAnd وأمثاله.
         val uri = vm.uriForTrack(trip.file)
         val view = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, GPX_MIME)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        runCatching {
-            context.startActivity(
-                Intent.createChooser(view, context.getString(R.string.trip_open_osmand))
-            )
+        // التوجيه إلى الحزمة المختارة أوّلًا، والارتداد إلى منتقي النظام إن فشل.
+        // والفشل واقعٌ لا نظريّ: التفضيل يبقى في القرص بعد أن يُزال التطبيق من
+        // الجهاز، أو بعد أن يُسقط مرشِّح GPX في تحديثٍ له. والإعدادات لا تعرض
+        // للاختيار إلّا من يفتح مسارًا، فلا يبقى للارتداد إلّا هذا الباب.
+        val direct = mapApp.isNotEmpty() && runCatching {
+            context.startActivity(Intent(view).setPackage(mapApp))
+        }.isSuccess
+        if (!direct) {
+            runCatching {
+                context.startActivity(
+                    Intent.createChooser(view, context.getString(R.string.trip_open_osmand))
+                )
+            }
         }
         Unit
     }
