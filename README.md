@@ -17,13 +17,14 @@
 [**تنزيل أحدث نسخة**](https://github.com/SalehGNUTUX/GT-SPEEDOMETER/releases/latest) ·
 [الموقع](https://salehgnutux.github.io/GT-SPEEDOMETER/) ·
 [سجلّ التغييرات](CHANGELOG.md) ·
+[خارطة الطريق](ROADMAP.md) ·
 [مشاريع GNUTUX](https://salehgnutux.github.io/gnutux/)
 
 </div>
 
 ---
 
-> الحالة: **v0.9.4-beta** — كلّ الإصدارات تجريبيّة حتّى إشعارٍ آخر.
+> الحالة: **v0.9.5-beta** — كلّ الإصدارات تجريبيّة حتّى إشعارٍ آخر.
 
 ## ما الذي يميّزه
 

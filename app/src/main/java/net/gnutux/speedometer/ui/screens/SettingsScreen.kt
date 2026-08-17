@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -163,6 +165,14 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val downloadState by downloader.state.collectAsStateWithLifecycle()
     val downloadWifiOnly by s.mapDownloadWifiOnly.collectAsStateWithLifecycle()
     var downloadUrl by remember { mutableStateOf("") }
+
+    // مُنتقي المستندات: `OpenDocument` لا `GetContent` — الأوّل يمنح إذنَ قراءةٍ صريحًا
+    // للعنوان الذي يُعاد، والثاني قد يعطي عنوانًا مؤقّتًا ينتهي قبل أن يكتمل نسخُ أرشيفٍ
+    // بمئات الميغابايت. ولا إذنَ تخزينٍ في البيان: منتقي النظام يمنح الوصول لما اختاره
+    // المستعمل وحده، وهو ما تقتضيه سياسة أندرويد ‎11‎ فما فوق.
+    val pickMap = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) downloader.importFrom(uri)
+    }
 
     // ————— قائمة الخرائط المحلّيّة: حالةٌ مرفوعة إلى الشاشة لا إلى بطاقتها —————
     //
@@ -683,6 +693,7 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                                 downloader.clear()
                             },
                             onStart = { downloader.start(downloadUrl, downloadWifiOnly) },
+                            onPick = { pickMap.launch(MAP_PICK_MIME_TYPES) },
                             onCancel = downloader::cancel,
                             wifiOnly = downloadWifiOnly,
                             onWifiOnlyChange = s::setMapDownloadWifiOnly,
@@ -2152,6 +2163,7 @@ private fun MapDownloadRows(
     url: String,
     onUrlChange: (String) -> Unit,
     onStart: () -> Unit,
+    onPick: () -> Unit,
     onCancel: () -> Unit,
     wifiOnly: Boolean,
     onWifiOnlyChange: (Boolean) -> Unit,
@@ -2190,6 +2202,13 @@ private fun MapDownloadRows(
         ActionRow(label = stringResource(R.string.mapdl_cancel), onClick = onCancel)
     } else {
         MapUrlField(url = url, onUrlChange = onUrlChange, onStart = onStart)
+        // الجلب من التخزين سطرٌ ثانٍ لا زرٌّ ثالث في صفّ الرابط: الصفّ فيه حقلٌ وزرّ
+        // بمساحتَي لمسٍ كاملتين، وثالثٌ يضغطهما تحت الإصبع — وهذا تطبيقٌ يُستعمل بقفّاز.
+        ActionRow(label = stringResource(R.string.mapdl_pick), onClick = onPick)
+        Text(
+            text = stringResource(R.string.mapdl_pick_note),
+            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+        )
     }
 
     SwitchRow(
@@ -2487,3 +2506,16 @@ private fun lastCheckLabel(millis: Long): String =
             SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(millis)),
         )
     }
+
+/**
+ * ما يُعرَض في منتقي المستندات: **كلّ الأنواع** لا نوعًا بعينه.
+ *
+ * أرشيفات البلاطات (‎.mbtiles‎ و‎.gemf‎ و‎.sqlitedb‎) لا نوع MIME مسجَّلًا لها، فمزوّدات
+ * التخزين تُعلنها `application/octet-stream` أو لا تُعلن شيئًا — وتصفيةٌ بالنوع كانت
+ * تُخفي عن المستعمل الملفَّ الذي جاء يختاره فيظنّه مفقودًا. والحكم على الامتداد بعد
+ * الاختيار في [MapDownloader] على كلّ حال، وهو الحكم الذي يُعتدّ به.
+ *
+ * (ولا تُكتب النجمةُ والمائلة داخل تعليقٍ كهذا: تسلسلُ إغلاقه يقع في وسطها فيُقصّ
+ * التعليق ويُكسر البناء — وهو ما وقع فعلًا هنا.)
+ */
+private val MAP_PICK_MIME_TYPES = arrayOf("*/*")

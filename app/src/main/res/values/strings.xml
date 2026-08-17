@@ -346,6 +346,10 @@
     <string name="mapdl_decompressing">فكُّ الضغط…</string>
     <string name="mapdl_err_vector">هذا أرشيفُ بلاطاتٍ **متجهيّة** (Mapbox Vector Tiles) للتحليل لا صورَ خرائط، ولا يرسمه التطبيق. المطلوب أرشيفٌ نقطيّ صوره PNG أو JPEG.</string>
     <string name="mapdl_err_gzip">تعذّر فكّ ضغط الملفّ</string>
+    <string name="mapdl_pick">من التخزين</string>
+    <string name="mapdl_pick_note">أو اجلب أرشيفًا نزّلتَه بالفعل إلى جهازك، أو نقلتَه إليه من الحاسوب — يمرّ من الفحوص نفسها ثمّ يُنقل إلى مجلّد الخرائط.</string>
+    <string name="mapdl_copying">نسخٌ إلى مجلّد الخرائط…</string>
+    <string name="mapdl_err_read">تعذّرت قراءة الملفّ المختار</string>
 
     <!-- 0.9.3 — تأكيد بدء التسجيل وإيقافه -->
     <string name="settings_confirm_record">تأكيد بدء التسجيل وإيقافه</string>

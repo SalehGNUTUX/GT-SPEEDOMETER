@@ -1,0 +1,52 @@
+# بناءٌ وفحصٌ عند كلّ دفعةٍ وكلّ طلب دمج.
+#
+# **لماذا هذا الملفّ؟** خارطة الطريق كانت تُدرجه في «أدوات التحقّق في المستودع» وتبني
+# عليه متانةَ ‎0.12.0‎، وهو لم يكن موجودًا أصلًا: لا محلّيًّا ولا على GitHub. فمن يقرأ
+# التوثيق يطمئنّ إلى شبكة أمانٍ لا وجود لها — وهذا أسوأ من غيابها معلنًا.
+#
+# والترتيب مقصود: `CLEANUP.sh` أوّلًا لأنّه يكشف في ثوانٍ ما يكشفه Gradle في دقائق —
+# ونصٌّ مستعمَلٌ بلا مقابلٍ في `strings.xml` أكثرُ ما كسر البناء في هذا المشروع.
+name: بناء وفحص
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: تهيئة Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # أرخص الفحوص أوّلًا: ثمانية فحوصٍ في ثانية، وفشلها يوفّر بناءً كاملًا
+      - name: فحص الشجرة
+        run: bash CLEANUP.sh
+
+      # المنطق النقيّ: تنبيهٌ ومقياس. لا جهازَ ولا محاكيًا يلزمه
+      - name: اختبارات الوحدة
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      # الحكم النهائيّ
+      - name: ترجمة الحزمة
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      # تقارير الاختبار تُحفَظ عند الفشل وحده: عند النجاح لا أحد يقرؤها
+      - name: تقارير الاختبار
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+          retention-days: 7

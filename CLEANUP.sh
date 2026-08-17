@@ -239,7 +239,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist .gradle .kotlin .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac

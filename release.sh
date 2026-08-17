@@ -685,7 +685,7 @@ step "تحديث $GRADLE_FILE"
 BAK_DIR="$(mktemp -d)"
 trap 'rm -f "$NOTES_FILE"; rm -rf "$BAK_DIR"' EXIT
 SYNC_FILES=("$GRADLE_FILE")
-for f in README.md CHANGELOG.md index.html; do
+for f in README.md CHANGELOG.md ROADMAP.md index.html; do
   if [[ -f "$f" ]]; then SYNC_FILES+=("$f"); fi
 done
 backup_files() {

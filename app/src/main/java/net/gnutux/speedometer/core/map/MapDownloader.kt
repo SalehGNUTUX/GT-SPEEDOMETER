@@ -4,7 +4,9 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import androidx.annotation.StringRes
 import java.io.File
 import java.io.FileInputStream
@@ -135,6 +137,33 @@ class MapDownloader private constructor(context: Context) {
         }
     }
 
+    /**
+     * جلب أرشيفٍ من تخزين الجهاز بدل الشبكة.
+     *
+     * **لماذا هنا لا في ملفٍّ جديد؟** لأنّ ما بعد آخر بايتٍ يصل هو الأهمّ في هذا الملفّ
+     * كلِّه: الفكّ، وفحص الرأس، ورفض المتجهيّة، ورفض البيانات الخام، ثمّ النقل والمسح.
+     * وهذه كلُّها في [finish] — فالجلب المحلّيّ يستبدل **مصدر البايتات وحده** ويمرّ من
+     * الحرّاس نفسها. ولو نُسخت هنا لصار في التطبيق حكمان على أرشيفٍ واحد، ولاختلفا عند
+     * أوّل تعديلٍ على أحدهما: فيُقبل من التخزين ما يُرفض من الشبكة.
+     *
+     * ولا استئناف ولا واي‑فاي هنا: النسخ محلّيّ، ينتهي في ثوانٍ ولا يستنزف حزمة.
+     */
+    fun importFrom(uri: Uri) {
+        if (!busy.compareAndSet(false, true)) return
+        job = scope.launch {
+            try {
+                copyIn(uri)
+            } catch (cancelled: CancellationException) {
+                _state.value = DownloadState.Idle
+                throw cancelled
+            } catch (error: Throwable) {
+                _state.value = DownloadState.Failed(R.string.mapdl_err_read)
+            } finally {
+                busy.set(false)
+            }
+        }
+    }
+
     /** الإلغاء يُبقي `.part` كما هو: هو رأس مال الاستئناف، وحذفه يُهدر ما نُزّل */
     fun cancel() {
         job?.cancel()
@@ -179,6 +208,61 @@ class MapDownloader private constructor(context: Context) {
         // حالةٌ تظهر قبل أوّل حزمة تصل: الضغطة يجب أن يُرى أثرها فورًا
         _state.value = DownloadState.Running(saved, null, resumed = saved > 0L)
         transfer(url, folder, part, plainPart, target, extension, compressed, saved)
+    }
+
+    /**
+     * نسخُ ما اختاره المستعمل إلى مجلّد الخرائط، ثمّ تسليمُه إلى [finish].
+     *
+     * الاسم يُؤخذ من مزوّد المستندات لا من مسار الـ`Uri`: مزوّدات SAF تعطي عناوين مثل
+     * `content://…/document/1234` لا اسم فيها. وحين يسكت المزوّد عن الاسم لا نخترع
+     * امتدادًا — نردّ «امتدادٌ غير مدعوم»، لأنّ الامتداد هو ما تُقاس عليه كلّ الفحوص بعدُ.
+     */
+    private suspend fun copyIn(uri: Uri) {
+        // (1) الاسم والامتداد — بنفس تنقية [safeNameOf] التي تمرّ منها روابط الشبكة
+        val declared = displayNameOf(uri) ?: return fail(R.string.mapdl_err_ext)
+        val name = safeNameOf(declared) ?: return fail(R.string.mapdl_err_ext)
+        val compressed = name.endsWith(GZ_SUFFIX)
+        val plainName = if (compressed) name.dropLast(GZ_SUFFIX.length) else name
+        val extension = plainName.substringAfterLast('.', "").lowercase(Locale.US)
+
+        val folder = OfflineMaps.primaryFolder(app)
+        val size = sizeOf(uri)
+
+        // (2) المساحة — قبل أوّل بايتٍ يُكتب. والمضغوط يحتاج موضعًا لنفسه ولناتجه معًا،
+        // وهو ما يقدّره [finish] ثانيةً قبل الفكّ؛ وهذا الحارس للنسخ وحده.
+        if (size != null) {
+            val free = runCatching { folder.usableSpace }.getOrDefault(Long.MAX_VALUE)
+            if (size + SPACE_MARGIN_BYTES > free) {
+                return fail(R.string.mapdl_err_space, formatBytes(size))
+            }
+        }
+
+        // البصمة من الـ`Uri` لا من الاسم: ملفّان باسم `map.mbtiles` من مجلّدين مختلفين
+        // لا يتقاسمان ملفَّ جزءٍ واحدًا.
+        val stamp = Integer.toHexString(uri.toString().hashCode())
+        val part = File(folder, "$name.$stamp$PART_SUFFIX")
+        val plainPart = if (compressed) File(folder, "$plainName.$stamp$PART_SUFFIX") else part
+        val target = File(folder, plainName)
+
+        // نسخةٌ جديدة لا استئناف: `.part` قديمٌ من محاولةٍ سابقة يُلحَق به فيخرج خليط
+        runCatching { if (part.isFile) part.delete() }
+        // حين يسكت المزوّد عن الحجم لا شريطَ تقدّمٍ يُقاس، فيُقال «نسخ» صراحةً بدل
+        // شريطٍ فارغٍ يُقرأ توقّفًا. وحين يُعلنه يمضي الشريط كما يمضي في التنزيل.
+        _state.value = if (size == null) {
+            DownloadState.Working(R.string.mapdl_copying)
+        } else {
+            DownloadState.Running(0L, size, resumed = false)
+        }
+
+        val opened = runCatching { app.contentResolver.openInputStream(uri) }.getOrNull()
+            ?: return fail(R.string.mapdl_err_read)
+        opened.use { input ->
+            FileOutputStream(part).use { output ->
+                pump(input, output, 0L, size, resumed = false)
+            }
+        }
+
+        finish(folder, part, plainPart, target, extension, compressed)
     }
 
     private suspend fun transfer(
@@ -608,8 +692,17 @@ class MapDownloader private constructor(context: Context) {
     private fun fileNameOf(url: URL): String? {
         val path = url.path.orEmpty()
         val decoded = runCatching { URLDecoder.decode(path, "UTF-8") }.getOrDefault(path)
-        val last = decoded.substringAfterLast('/')
+        return safeNameOf(decoded.substringAfterLast('/'))
+    }
 
+    /**
+     * الاسم النهائيّ من اسمٍ خام — أيًّا كان مصدره: مسارُ رابطٍ أو مستندٌ اختاره المستعمل.
+     *
+     * وهو مشترَكٌ بينهما عمدًا: مصدرا البايتات اثنان والحكم على الاسم واحد، وإلّا قَبِل
+     * أحدهما امتدادًا يرفضه الآخر أو كتب حيث لا يكتب.
+     */
+    private fun safeNameOf(raw: String): String? {
+        val last = raw.substringAfterLast('/')
         val compressed = last.lowercase(Locale.US).endsWith(GZ_SUFFIX)
         val stem = if (compressed) last.dropLast(GZ_SUFFIX.length) else last
 
@@ -624,6 +717,26 @@ class MapDownloader private constructor(context: Context) {
         val name = (base.ifEmpty { FALLBACK_BASE_NAME }) + "." + extension
         return if (compressed) name + GZ_SUFFIX else name
     }
+
+    /** اسم المستند كما يعلنه مزوّده؛ و`null` حين يسكت عنه فلا نخترع امتدادًا */
+    private fun displayNameOf(uri: Uri): String? = runCatching {
+        app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (column < 0) null else cursor.getString(column)
+            }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    /** الحجم المعلَن — و`null` حين يجهله المزوّد، فيمضي النسخ بشريطٍ بلا نهايةٍ معلومة */
+    private fun sizeOf(uri: Uri): Long? = runCatching {
+        app.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val column = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (column < 0 || cursor.isNull(column)) null else cursor.getLong(column)
+            }
+    }.getOrNull()?.takeIf { it > 0L }
 
     /**
      * هل يبدأ الملفّ بما يبدأ به نوعه؟

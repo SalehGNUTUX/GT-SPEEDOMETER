@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -637,15 +638,26 @@ private fun ExitDialog(
         isTripActive -> stringResource(R.string.exit_body_trip)
         else -> stringResource(R.string.exit_body)
     }
+    // الزرّان كانا بلونٍ واحد، فيُقرآن قبل أن يُميَّزا — والخطأ هنا يُنهي تسجيلًا جاريًا.
+    // اللون يسبق النصّ إلى العين: الأحمر لما يُتلِف، والأخضر للبقاء. وهو نفس عقد
+    // الألوان في بقيّة التطبيق (`danger` للإتلاف و`accent` للفعل الآمن) فلا يتعلّم
+    // المستعمل اصطلاحًا خاصًّا بهذه المحاورة وحدها.
+    val colors = LocalGtColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.exit_title)) },
         text = { Text(body) },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text(stringResource(R.string.exit_confirm)) }
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(contentColor = colors.danger),
+            ) { Text(stringResource(R.string.exit_confirm)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(contentColor = colors.accent),
+            ) { Text(stringResource(R.string.action_cancel)) }
         },
         containerColor = Surface,
     )

@@ -21,8 +21,8 @@ android {
         applicationId = "net.gnutux.speedometer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.9.4-beta"
+        versionCode = 14
+        versionName = "0.9.5-beta"
     }
 
     androidResources {
@@ -78,6 +78,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
+
+    // المنطق النقيّ (SpeedAlert · SpeedScale) يُختبر على آلة جافا بلا جهازٍ ولا محاكٍ
+    testImplementation(libs.junit)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
