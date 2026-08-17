@@ -1,6 +1,7 @@
 package net.gnutux.speedometer.core
 
 import android.content.Context
+import android.media.AudioManager
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,7 @@ import net.gnutux.speedometer.core.location.LocationEngine
 import net.gnutux.speedometer.core.location.SpeedFilter
 import net.gnutux.speedometer.core.media.MediaRepository
 import net.gnutux.speedometer.core.profile.VehicleProfile
+import net.gnutux.speedometer.core.settings.AlertTone
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.trip.GpxWriter
 import net.gnutux.speedometer.core.trip.TripRecorder
@@ -88,7 +90,28 @@ class TripEngine(private val context: Context) {
      * أوّل انطفاءٍ للشاشة — أي حين يحتاجها السائق.
      */
     private val alert = SpeedAlert()
-    private val alertPlayer = SpeedAlertPlayer()
+    private val alertPlayer = SpeedAlertPlayer(context)
+
+    /**
+     * مستوى مجرى «المنبّه» في النظام صفر؟ عندئذٍ لن يُسمع التنبيه مهما ضُبطت شدّته
+     * عندنا، لأنّ شدّتنا نسبةٌ من ذلك المجرى لا مستوًى مطلق.
+     *
+     * قراءةٌ عند الطلب لا `StateFlow` محفوظ: المستعمل قد يرفع المستوى من إعدادات
+     * النظام وشاشتُنا مفتوحة، وقيمةٌ مخزَّنة كانت ستُبقي التحذير معروضًا بعد زوال
+     * سببه — أو تُخفيه بعد حدوثه.
+     */
+    fun isAlarmStreamMuted(): Boolean = runCatching {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        am.getStreamVolume(AudioManager.STREAM_ALARM) == 0
+    }.getOrDefault(false)
+
+    /**
+     * سماع نغمةٍ قبل اختيارها. الشدّة من التفضيلات لا من وسيط: المعاينة يجب أن تكون
+     * بعينها ما سيُسمع على الطريق، وشدّةٌ أخرى في المعاينة تُضلّل من يختار.
+     */
+    fun previewAlert(tone: AlertTone) {
+        alertPlayer.preview(tone, settings.alertVolume.value)
+    }
 
     fun setProfile(p: VehicleProfile) {
         // الاختيار يُحفظ: ملفّ المركبة يضبط مدى القرص وعتبة التوقّف وشدّة التنعيم،
@@ -132,9 +155,17 @@ class TripEngine(private val context: Context) {
     }
 
     /**
-     * التنبيه الصوتيّ. يُنادى لكلّ عيّنةٍ **قُبلت** (مرّت ببوّابة الدقّة في
-     * [SpeedFilter.accepts])، فشرط «لا تنبيه والإشارة رديئة» مستوفًى قبل الدخول
-     * هنا. ويبقى شرط «لا تنبيه والمركبة واقفة» أدناه.
+     * التنبيه الصوتيّ.
+     *
+     * **تبدّل شرط الدخول في 0.9.4.** كانت تُنادى للعيّنات التي تمرّ ببوّابة الدقّة
+     * في [SpeedFilter.accepts] وحدها، وكان يُقال هنا إنّ شرط «لا تنبيه والإشارة
+     * رديئة» مستوفًى قبل الدخول. وتبيّن أنّ ذلك كان يُسكت التنبيه حيث يجب أن ينطق:
+     * رداءةُ دقّة التموضع لا تعني رداءة السرعة حين تأتي السرعة من الشريحة — انظر
+     * شرح البوّابة في [startLocation] — فصارت تُنادى للمرفوضة أيضًا ما دامت سرعتها
+     * من الشريحة.
+     *
+     * ويبقى شرط «لا تنبيه والمركبة واقفة» أدناه، وهو الشرط الذي يحمي فعلًا من
+     * الصفير الكاذب.
      *
      * القرار كلّه في [SpeedAlert.onSample]، وهذه الدالّة غلافٌ يجمع الشروط ويناول
      * الناتج إلى المشغّل.
@@ -148,6 +179,12 @@ class TripEngine(private val context: Context) {
             alertPlayer.release()
             return
         }
+        // النغمة تُهيَّأ الآن لا عند العبور: `SoundPool.load` غير متزامنة، وأوّل صفيرةٍ
+        // تُطلب قبل تمام فكّ الترميز صفيرةٌ تضيع — وهي أهمّها، صفيرةُ العبور. والنداء
+        // لا يفعل شيئًا بعد أوّل مرّة، فثمنه نظرةٌ في خريطة لكلّ عيّنة
+        val tone = settings.alertTone.value
+        alertPlayer.prepare(tone)
+
         // واقفة: العدّاد يصفّر ما دون عتبة التوقّف، ومع ذلك نشترطها صراحةً — تذبذبُ
         // التموضع وقوفًا يُخرج قفزاتٍ كاذبة، وصفيرةٌ والسيّارة ساكنة تُفقد الثقة كلّها
         if (smoothedMps <= _profile.value.stopThresholdMps) {
@@ -155,7 +192,11 @@ class TripEngine(private val context: Context) {
             return
         }
         val action = alert.onSample(smoothedMps * 3.6f, limit, nowNanos)
-        if (action != AlertAction.SILENT) alertPlayer.play(action)
+        // النغمة والشدّة تُقرآن لحظة التشغيل من `‎.value`: من بدّلهما في الإعدادات
+        // وسيّارتُه سائرة يسمع الجديد في الصفيرة التالية بلا إعادة تشغيل
+        if (action != AlertAction.SILENT) {
+            alertPlayer.play(action, tone, settings.alertVolume.value)
+        }
     }
 
     init {
@@ -222,10 +263,26 @@ class TripEngine(private val context: Context) {
         if (collectJob == null) {
             collectJob = scope.launch {
                 location.samples.collect { sample ->
-                    if (!filter.accepts(sample)) return@collect
+                    // بوّابة الدقّة تحمي **المسار** لا السرعة: نقطةٌ دقّتها أربعون
+                    // مترًا تزيد المسافة كيلومتراتٍ وهميّة وتُعوّج الخطّ في الخريطة.
+                    // أمّا السرعة فمن إزاحة دوبلر في الإشارة لا من فرق موضعين،
+                    // ودقّتها مستقلّة عن دقّة التموضع.
+                    //
+                    // وكان الرفض يُسقط العيّنة كلّها، فيقع أمران معًا تحت الأشجار
+                    // وبين الأبراج: العدّاد يتجمّد على آخر رقمٍ سبق الرفض فيرى
+                    // السائق «‎62‎» ثابتةً وهي كذبة، والتنبيه يُحرَم العيّنات فلا
+                    // يصفّر أصلًا — وهذا وجهٌ من وجوه «التنبيه أحيانًا لا يعمل»،
+                    // وأسوؤها لأنّ الشاشة تشهد بالتجاوز والصوت صامت. بل إنّ جهازًا
+                    // لا يبلّغ دقّةً أصلًا — فتصير `accuracyM` تسعمئةً وتسعًا
+                    // وتسعين — كان يُرفض على الدوام فلا تنبيه فيه البتّة.
+                    //
+                    // فالفصل الآن صريح: المرفوضة لا تُكتب في المسار بحال، لكنّها إن
+                    // جاءت سرعتها من الشريحة حُسبت في العدّاد والطبقة والتنبيه.
+                    val accepted = filter.accepts(sample)
+                    if (!accepted && !sample.speedFromChip) return@collect
                     val smoothed = filter.update(sample.speedMps)
                     _liveSpeedMps.value = smoothed
-                    recorder.onSample(sample, smoothed)
+                    if (accepted) recorder.onSample(sample, smoothed)
                     pushHud(smoothed)
                     // زمن العيّنة لا زمن الآن: كلاهما على محور `elapsedRealtimeNanos`،
                     // وزمن العيّنة هو اللحظة التي كانت فيها السرعة هذه فعلًا
@@ -249,8 +306,8 @@ class TripEngine(private val context: Context) {
         collectJob?.cancel()
         collectJob = null
         _liveSpeedMps.value = 0f
-        // مسار التحرير: لا عيّنات بعد اليوم فلا صفير، و`ToneGenerator` يمسك مسار
-        // صوتٍ في النظام فلا يُترك معلّقًا
+        // مسار التحرير: لا عيّنات بعد اليوم فلا صفير، والمجمّع يمسك عيّناتٍ مفكوكة
+        // الترميز ومسارَ صوتٍ في النظام فلا يُترك معلّقًا
         alert.reset()
         alertPlayer.release()
     }

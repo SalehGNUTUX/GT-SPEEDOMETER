@@ -1,10 +1,12 @@
 package net.gnutux.speedometer.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,16 +38,20 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.gnutux.speedometer.BuildConfig
 import net.gnutux.speedometer.R
@@ -67,20 +75,30 @@ import net.gnutux.speedometer.core.map.DownloadState
 import net.gnutux.speedometer.core.map.MapAppInfo
 import net.gnutux.speedometer.core.map.MapApps
 import net.gnutux.speedometer.core.map.MapDownloader
+import net.gnutux.speedometer.core.map.MapFileEntry
+import net.gnutux.speedometer.core.map.MapFileKind
+import net.gnutux.speedometer.core.map.OfflineMapLibrary
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndState
 import net.gnutux.speedometer.core.profile.VehicleProfile
+import net.gnutux.speedometer.core.settings.AlertTone
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.settings.CameraLens
 import net.gnutux.speedometer.core.settings.CameraScene
 import net.gnutux.speedometer.core.settings.DualLayout
+import net.gnutux.speedometer.core.settings.GaugeStyle
 import net.gnutux.speedometer.core.settings.LiteMode
+import net.gnutux.speedometer.core.settings.PipSize
+import net.gnutux.speedometer.core.settings.PipStyle
 import net.gnutux.speedometer.core.settings.ThemeMode
 import net.gnutux.speedometer.core.update.UpdateChecker
 import net.gnutux.speedometer.core.update.UpdateState
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
+import net.gnutux.speedometer.ui.components.GaugePalette
+import net.gnutux.speedometer.ui.components.aspect
+import net.gnutux.speedometer.ui.components.drawGaugeFace
 import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Bg
 import net.gnutux.speedometer.ui.theme.Danger
@@ -88,10 +106,14 @@ import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
 import net.gnutux.speedometer.ui.theme.TextPrimary
 import net.gnutux.speedometer.ui.theme.TextSecondary
+import net.gnutux.speedometer.ui.theme.TrackDim
+import net.gnutux.speedometer.ui.theme.Warn
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * شاشة الإعدادات الشاملة.
@@ -120,6 +142,13 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val profile by vm.profile.collectAsStateWithLifecycle()
     val speedLimit by s.speedLimitKmh.collectAsStateWithLifecycle()
     val speedAlert by s.speedAlertEnabled.collectAsStateWithLifecycle()
+    val alertTone by s.alertTone.collectAsStateWithLifecycle()
+    val alertVolume by s.alertVolume.collectAsStateWithLifecycle()
+    val gaugeStyle by s.gaugeStyle.collectAsStateWithLifecycle()
+    val pipStyle by s.pipStyle.collectAsStateWithLifecycle()
+    val pipSize by s.pipSize.collectAsStateWithLifecycle()
+    val pipTransparent by s.pipTransparent.collectAsStateWithLifecycle()
+    val pipOpacity by s.pipOpacity.collectAsStateWithLifecycle()
 
     // مصدر الحقيقة نفسه الذي تقرؤه الخريطة، فلا تقول الإعدادات «وُجدت» بينما ترسم
     // الخريطة بلاطات إنترنت
@@ -134,6 +163,47 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val downloadState by downloader.state.collectAsStateWithLifecycle()
     val downloadWifiOnly by s.mapDownloadWifiOnly.collectAsStateWithLifecycle()
     var downloadUrl by remember { mutableStateOf("") }
+
+    // ————— قائمة الخرائط المحلّيّة: حالةٌ مرفوعة إلى الشاشة لا إلى بطاقتها —————
+    //
+    // للسبب الذي رُفع من أجله حقلُ الرابط أعلاه: البطاقة عنصرٌ في قائمةٍ كسولة،
+    // فإذا مرّرها المستعمل خارج الشاشة تُتلَف تركيبتها ومعها كلُّ `remember` فيها.
+    // ولو سكن هنا طلبُ الحذف لضاع الحوارُ بمجرّد تمريرةٍ بالإصبع، ولضاع سطرُ
+    // «حُذف كذا» قبل أن يُقرأ.
+    //
+    // ونطاقُ الإجراء نطاقُ التركيب: من أغلق الإعدادات وسط الحذف يُلغى تعليقُه.
+    // وهذا حدٌّ معلوم لا خطأ مستور: `File.delete` نفسها لا تُقطع في منتصفها، وأسوأ
+    // ما يقع أن يُمحى الملفّ ولا تصل إعادةُ المسح — ويصلحها فتحُ الشاشة من جديد.
+    val scope = rememberCoroutineScope()
+    var pendingDelete by remember { mutableStateOf<MapFileEntry?>(null) }
+    var mapsNotice by remember { mutableStateOf<MapsNotice?>(null) }
+
+    // خبرٌ عابر لا خبرٌ مقيم: هذه الشاشة لا `Scaffold` لها فلا `Snackbar` فيها،
+    // وسطرٌ يبقى إلى الأبد يصير بعد دقيقةٍ كذبًا («حُذف كذا» وقد حُذف غيرُه بعده).
+    // فيُمحى بعد [MAPS_NOTICE_MILLIS]، وهي مدّةٌ تكفي لقراءة سطرٍ واحد.
+    LaunchedEffect(mapsNotice) {
+        if (mapsNotice != null) {
+            delay(MAPS_NOTICE_MILLIS)
+            mapsNotice = null
+        }
+    }
+
+    // ————— إسماعُ الشدّة بعد وصولها لا قبله —————
+    //
+    // `previewAlert` يقرأ الشدّة من التفضيلات لا من وسيط (وذلك مقصودٌ عنده: المعاينة
+    // يجب أن تكون بعينها ما يُسمع على الطريق)، والكتابة إلى التفضيلات غير متزامنة.
+    // فنداءُ الإسماع عقب `setAlertVolume` مباشرةً يُسمع بالشدّة **السابقة** — أي
+    // يُضلّل من يعاير شدّته بالضبط في اللحظة التي يعاير فيها. فتُعلَّم النيّة هنا،
+    // وتُنفَّذ حين تصل القيمة الجديدة إلى التدفّق فعلًا.
+    //
+    // والسالب يعني «لا نيّة»: الشدّات كلّها موجبة، فلا تلتبس قيمةٌ بغياب قيمة.
+    var pendingVolumePreview by remember { mutableStateOf(NO_PENDING_PREVIEW) }
+    LaunchedEffect(alertVolume) {
+        if (pendingVolumePreview == alertVolume) {
+            pendingVolumePreview = NO_PENDING_PREVIEW
+            vm.previewAlert(alertTone)
+        }
+    }
 
     // فتحُ الإعدادات أحد الموضعين اللذين يُوقظان جسر OsmAnd؛ والآخر فتحُ رحلة.
     // ولا يُنشأ في `SpeedoApp` كي لا يوقظ عمليّة OsmAnd عند كلّ إقلاع.
@@ -236,6 +306,71 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                 }
             }
 
+            // ===== تصميم العدّاد =====
+            //
+            // جارُ «المظهر» لا قسمٌ في ذيل القائمة: هو مظهرٌ أيضًا، ومن جاء يبدّل
+            // سمةً هو نفسه من يبدّل شكل قرصه. وقسمٌ قائمٌ بذاته لا بطاقةٌ تُلحق
+            // بالمظهر، لأنّ محتواه ستّة أوجهٍ مرسومة وأربعةُ إعدادات للنافذة
+            // المصغّرة — إلحاقُها كان يُغرق سطرَي السمة فيما لا يبحث عنه من فتحه.
+            settingsSection(
+                id = SECTION_GAUGE,
+                openId = openSection,
+                title = R.string.settings_section_gauge,
+                onToggle = toggleSection,
+            ) {
+                item(key = "gauge-1") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_gauge_style),
+                            note = stringResource(R.string.settings_gauge_style_note),
+                        )
+                        GaugeStylePicker(selected = gaugeStyle, onSelect = s::setGaugeStyle)
+                    }
+                }
+                // بطاقةٌ ثانية: النافذة المصغّرة سطحٌ آخر غير الشاشة، وخلطُ إعداداتها
+                // بالقرص كان يجعل «شكل» و«حجم» يبدوان صفتين للقرص نفسه
+                item(key = "gauge-2") {
+                    SettingCard {
+                        RowLabel(title = stringResource(R.string.settings_pip_style))
+                        ChoiceRow(
+                            options = PipStyle.entries.map { pipStyleLabel(it) },
+                            selectedIndex = PipStyle.entries.indexOf(pipStyle).coerceAtLeast(0),
+                            onSelect = { s.setPipStyle(PipStyle.entries[it]) },
+                        )
+                        RowLabel(title = stringResource(R.string.settings_pip_size))
+                        ChoiceRow(
+                            options = PipSize.entries.map { pipSizeLabel(it) },
+                            selectedIndex = PipSize.entries.indexOf(pipSize).coerceAtLeast(0),
+                            onSelect = { s.setPipSize(PipSize.entries[it]) },
+                        )
+                        SwitchRow(
+                            title = stringResource(R.string.settings_pip_transparent),
+                            note = stringResource(R.string.settings_pip_transparent_note),
+                            checked = pipTransparent,
+                            onChange = s::setPipTransparent,
+                        )
+                        // الكثافة تظهر مع الشفافيّة وحدها، كما يظهر مفتاح التنبيه مع
+                        // الحدّ وحده: «كثافة الخلفيّة» على خلفيّةٍ صلبة لا تصف شيئًا،
+                        // وعرضُها معطَّلةً يترك المستعمل يلمس صفًّا كاملًا فلا يتبدّل
+                        // شيء — وهو أسوأ من غيابه، إذ يوهمه أنّ في التطبيق عطبًا.
+                        if (pipTransparent) {
+                            RowLabel(title = stringResource(R.string.settings_pip_opacity))
+                            ChoiceRow(
+                                options = AppSettings.PIP_OPACITY_CHOICES.map {
+                                    stringResource(R.string.percent_value, it)
+                                },
+                                selectedIndex = AppSettings.PIP_OPACITY_CHOICES
+                                    .indexOf(pipOpacity)
+                                    .coerceAtLeast(0),
+                                onSelect = {
+                                    s.setPipOpacity(AppSettings.PIP_OPACITY_CHOICES[it])
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
             // ===== القيادة =====
             settingsSection(
                 id = SECTION_DRIVING,
@@ -310,6 +445,73 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                                 checked = speedAlert,
                                 onChange = s::setSpeedAlertEnabled,
                             )
+                            // النغمة والشدّة تتبعان المفتاح كما يتبع المفتاحُ الحدَّ:
+                            // درجةٌ ثانية من الشرط نفسه. ومعايرةُ صوتٍ مطفأ عبثٌ،
+                            // وأسوأ منها أن يلمس المستعمل «استمع» فيسمع نغمةً ثمّ لا
+                            // يسمع على الطريق شيئًا — فيظنّ التنبيه عاملًا وهو مطفأ.
+                            if (speedAlert) {
+                                RowLabel(title = stringResource(R.string.settings_alert_tone))
+                                ChoiceRow(
+                                    options = AlertTone.entries.map { alertToneLabel(it) },
+                                    selectedIndex = AlertTone.entries.indexOf(alertTone)
+                                        .coerceAtLeast(0),
+                                    // الاختيار يُسمع في الحال: أسماء النغمات
+                                    // («جرس»، «نبضة خفيفة») لا تنقل صوتًا، والسماع
+                                    // هو الاختيار نفسه. والنغمة تُمرَّر وسيطًا إلى
+                                    // المعاينة فلا تنتظر كتابةَ التفضيلات — بخلاف
+                                    // الشدّة أدناه، وسببُ الفرق مبسوطٌ عند
+                                    // [pendingVolumePreview].
+                                    onSelect = {
+                                        val tone = AlertTone.entries[it]
+                                        s.setAlertTone(tone)
+                                        vm.previewAlert(tone)
+                                    },
+                                )
+                                ActionRow(
+                                    label = stringResource(R.string.alert_preview),
+                                    onClick = { vm.previewAlert(alertTone) },
+                                )
+                                RowLabel(
+                                    title = stringResource(R.string.settings_alert_volume),
+                                    note = stringResource(R.string.settings_alert_volume_note),
+                                )
+                                ChoiceRow(
+                                    options = AppSettings.ALERT_VOLUME_CHOICES.map {
+                                        stringResource(R.string.percent_value, it)
+                                    },
+                                    selectedIndex = AppSettings.ALERT_VOLUME_CHOICES
+                                        .indexOf(alertVolume)
+                                        .coerceAtLeast(0),
+                                    // شدّةٌ تُضبط بلا أن تُسمع رقمٌ بلا معنى: ‎%40‎
+                                    // لا تقول شيئًا عن مقصورةٍ بعينها. ومن أعاد لمس
+                                    // الشدّة القائمة يُسمَع في الحال: لا كتابة هناك
+                                    // فلا قيمة تُنتظر، ولو انتظرناها لصمت الصفّ.
+                                    onSelect = {
+                                        val percent = AppSettings.ALERT_VOLUME_CHOICES[it]
+                                        if (percent == alertVolume) {
+                                            vm.previewAlert(alertTone)
+                                        } else {
+                                            pendingVolumePreview = percent
+                                            s.setAlertVolume(percent)
+                                        }
+                                    },
+                                )
+                                // قراءةٌ حيّة عند كلّ إعادة تركيب، بلا `remember`:
+                                // المستعمل قد يرفع مستوى «المنبّه» بأزرار جهازه
+                                // وشاشتُنا مفتوحة، وقيمةٌ محفوظة كانت ستُبقي التحذير
+                                // بعد زوال سببه. والثمن نداءُ `AudioManager` رخيص.
+                                if (vm.isAlarmStreamMuted()) {
+                                    // بلون التحذير لا بلون الخطر: لا شيء عندنا عطب،
+                                    // وإنّما إعدادٌ في النظام يُبطل مفعول ما ضُبط هنا.
+                                    // ولا بلون الشرح الرمادي أيضًا: من لا يقرؤه لا
+                                    // يُنبَّه على الطريق أصلًا.
+                                    Text(
+                                        text = stringResource(R.string.alert_stream_muted),
+                                        style = MaterialTheme.typography.bodySmall
+                                            .copy(color = Warn),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -442,6 +644,19 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                                 ),
                             )
                         }
+                        // الحال الموازية: بياناتٌ خام وحدها. من أنزل ‎*.shp.zip‎ من
+                        // Geofabrik ووضعه في المجلّد صار لا يرى «وُجدت خريطة» — وهذا
+                        // صوابٌ في نفسه — لكنّه بلا هذا السطر لا يُخبَر **لماذا**،
+                        // فيعيد النسخ والفحص أبدًا ظنًّا أنّ التطبيق لم يره. وهو ما
+                        // وقع فعلًا. والسطر يقول: رآه، ولا يرسمه، وهذه صيغته.
+                        if (offlineLibrary.hasRawDataOnly) {
+                            RowLabel(
+                                title = stringResource(
+                                    R.string.map_rawdata_found,
+                                    offlineLibrary.rawDataNames,
+                                ),
+                            )
+                        }
                         if (offlineLibrary.altFolderPath.isNotEmpty()) {
                             RowLabel(
                                 title = stringResource(R.string.settings_offline_folder_alt),
@@ -471,6 +686,30 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                             onCancel = downloader::cancel,
                             wifiOnly = downloadWifiOnly,
                             onWifiOnlyChange = s::setMapDownloadWifiOnly,
+                        )
+                    }
+                }
+                // بطاقةٌ ثالثة لهمٍّ ثالث: الأولى «ماذا عندك» جوابًا مختصرًا، والثانية
+                // «هات جديدًا»، وهذه «دبّر ما عندك». وإلحاقُ القائمة بالأولى كان
+                // يُغرق سطرَ الحالة في عشرة أسماء ملفّات، وهو أوّل ما يُقرأ في القسم.
+                item(key = "offline-3") {
+                    SettingCard {
+                        MapFilesCard(
+                            library = offlineLibrary,
+                            notice = mapsNotice,
+                            deletable = offlineMaps::deletable,
+                            onShare = { entry ->
+                                // الفشل يُقال ولا يُسقط التطبيق: تفصيلُ الحالين عند
+                                // [shareMapFile]
+                                if (!shareMapFile(context, entry.file)) {
+                                    mapsNotice = MapsNotice(
+                                        text = R.string.map_file_share_failed,
+                                        fileName = null,
+                                        ok = false,
+                                    )
+                                }
+                            },
+                            onDelete = { entry -> pendingDelete = entry },
                         )
                     }
                 }
@@ -834,6 +1073,52 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             item(key = "tail-spacer") { Spacer(Modifier.height(24.dp)) }
         }
     }
+
+    // الحوار خارج القائمة الكسولة لا داخل بطاقتها: عنصرُ القائمة يُتلَف إذا خرج عن
+    // الشاشة، فلو سكن الحوارُ هناك لاختفى السؤالُ بتمريرةٍ عارضة وبقي الملفّ. وموضعه
+    // بعد [Column] لا يشغل حيّزًا في التخطيط: الحوار نافذةٌ للنظام لا ابنٌ للعمود.
+    val doomed = pendingDelete
+    if (doomed != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(stringResource(R.string.map_file_delete_title)) },
+            // الاسم والحجم في نصّ السؤال لا في عنوانه: هذه ملفّاتٌ بمئات
+            // الميغابايت دُفع في تنزيلها من حزمة بياناتٍ محدودة، ومن يؤكّد المحو
+            // يجب أن يرى **أيّها** و**كم** قبل أن يضغط، لا بعده.
+            text = {
+                Text(
+                    stringResource(
+                        R.string.map_file_delete_body,
+                        doomed.file.name,
+                        MapDownloader.formatBytes(doomed.sizeBytes),
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val file = doomed.file
+                    val name = file.name
+                    pendingDelete = null
+                    // لا حذف مؤجّلًا هنا بخلاف الرحلات: مهلةُ التراجع تعني إبقاء
+                    // مئات الميغابايت على القرص بعد أن طلب المستعمل تفريغه، وهو
+                    // نقيض ما جاء يفعل. فالسؤال قبل الفعل، والفعل قاطع.
+                    scope.launch {
+                        val gone = offlineMaps.delete(file)
+                        mapsNotice = if (gone) {
+                            MapsNotice(R.string.map_file_deleted, name, ok = true)
+                        } else {
+                            MapsNotice(R.string.map_file_delete_failed, null, ok = false)
+                        }
+                    }
+                }) { Text(stringResource(R.string.map_file_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
 }
 
 /** ساعات التبديل: الفهرس هو الساعة نفسها، وعليه يعتمد القفز إلى العنصر المختار */
@@ -872,6 +1157,47 @@ private fun limitLabel(kmh: Int): String =
     } else {
         stringResource(R.string.speed_limit_value, Fmt.count(kmh))
     }
+
+/**
+ * أسماء التعدادات الأربعة، كلٌّ في دالّةٍ على حدة بـ`when` شاملة.
+ *
+ * `when` بلا `else` عمدًا في الأربع: من زاد وجهًا أو نغمةً لا يُصرَّف مشروعُه حتّى
+ * يسمّيه، فلا يظهر خيارٌ بلا اسم — وهو ما كان يقع لو كُتبت القوائم `map` على
+ * مصفوفة نصوصٍ موازية، إذ يصمت المصرِّف ويكذب الترتيب.
+ */
+@Composable
+private fun gaugeStyleLabel(style: GaugeStyle): String = when (style) {
+    GaugeStyle.CLASSIC -> stringResource(R.string.gauge_style_classic)
+    GaugeStyle.NEEDLE -> stringResource(R.string.gauge_style_needle)
+    GaugeStyle.MINIMAL -> stringResource(R.string.gauge_style_minimal)
+    GaugeStyle.SEGMENTS -> stringResource(R.string.gauge_style_segments)
+    GaugeStyle.DUAL_RING -> stringResource(R.string.gauge_style_dual_ring)
+    GaugeStyle.BAR -> stringResource(R.string.gauge_style_bar)
+}
+
+@Composable
+private fun pipStyleLabel(style: PipStyle): String = when (style) {
+    PipStyle.NUMBER -> stringResource(R.string.pip_style_number)
+    PipStyle.RING -> stringResource(R.string.pip_style_ring)
+    PipStyle.NEEDLE -> stringResource(R.string.pip_style_needle)
+    PipStyle.BAR -> stringResource(R.string.pip_style_bar)
+}
+
+@Composable
+private fun pipSizeLabel(size: PipSize): String = when (size) {
+    PipSize.SMALL -> stringResource(R.string.pip_size_small)
+    PipSize.MEDIUM -> stringResource(R.string.pip_size_medium)
+    PipSize.LARGE -> stringResource(R.string.pip_size_large)
+}
+
+@Composable
+private fun alertToneLabel(tone: AlertTone): String = when (tone) {
+    AlertTone.BEEP -> stringResource(R.string.alert_tone_beep)
+    AlertTone.DOUBLE -> stringResource(R.string.alert_tone_double)
+    AlertTone.CHIME -> stringResource(R.string.alert_tone_chime)
+    AlertTone.DIGITAL -> stringResource(R.string.alert_tone_digital)
+    AlertTone.SOFT -> stringResource(R.string.alert_tone_soft)
+}
 
 @Composable
 private fun SettingsHeader(onClose: () -> Unit) {
@@ -913,6 +1239,7 @@ private fun SettingsHeader(onClose: () -> Unit) {
  * وأسوأ ما يقع عند حذف قسمٍ أن تُطوى الأقسام كلّها.
  */
 private const val SECTION_APPEARANCE = "appearance"
+private const val SECTION_GAUGE = "gauge"
 private const val SECTION_DRIVING = "driving"
 private const val SECTION_LIMIT = "limit"
 private const val SECTION_VIDEO = "video"
@@ -934,6 +1261,7 @@ private const val SECTION_ABOUT = "about"
  */
 private val SECTION_ORDER = listOf(
     SECTION_APPEARANCE,
+    SECTION_GAUGE,
     SECTION_DRIVING,
     SECTION_LIMIT,
     SECTION_VIDEO,
@@ -950,6 +1278,49 @@ private val SECTION_ORDER = listOf(
 
 /** أوسع حدٍّ يُكتب يدويًّا؛ هو سقف [AppSettings.setSpeedLimitKmh] نفسه */
 private const val MAX_MANUAL_LIMIT = 300
+
+// ===== ثوابت ما أُضيف في 0.9.4 =====
+
+/**
+ * القراءة الموضوعة في بلاطات المعاينة: ‎%62‎ من المدى.
+ *
+ * ليست اعتباطًا: هي دون عتبة التحذير الموضوعة ([GAUGE_PREVIEW_WARN]) فيبقى القوس
+ * بلون المنطقة العاديّة، ودون علامة الحدّ ([GAUGE_PREVIEW_LIMIT]) فتبقى العلامة
+ * ظاهرةً أمام رأس القوس لا مطموسةً تحته. وهي فوق نصف المدى فيدور مؤشّرُ الوجه
+ * التناظريّ إلى الشقّ الأيمن حيث يُقرأ دورانُه.
+ */
+private const val GAUGE_PREVIEW_FRACTION = 0.62f
+
+/** عتبة التحذير في المعاينة: بها تظهر المنطقة الباهتة في التصاميم التي ترسمها */
+private const val GAUGE_PREVIEW_WARN = 0.75f
+
+/** موضع علامة الحدّ في المعاينة؛ لا يُمرَّر سالبًا وإلّا اختفت من التصاميم الستّة */
+private const val GAUGE_PREVIEW_LIMIT = 0.80f
+
+/** عرض بلاطة المعاينة. أضيق منه يخنق اسم «مؤشّر تناظريّ» في سطرين */
+private val GAUGE_TILE_WIDTH = 96.dp
+
+/**
+ * ارتفاع صندوق الوجه في البلاطة.
+ *
+ * مربّعٌ للأوجه المستديرة (العرض بعد الحاشية ‎80dp‎)، ويُوسَّط فيه الشريطُ العريض
+ * القصير. وأقلُّ منه يُذيب الفرق بين «مقتضب» و«كلاسيكيّ» فيبطل مقصد المنتقي.
+ */
+private val GAUGE_TILE_FACE = 80.dp
+
+/**
+ * نوع ملفّ الخريطة عند المشاركة.
+ *
+ * ثنائيٌّ عامّ لا نوعٌ مدَّعًى: لا نوع MIME مسجَّلًا لـ‎.mbtiles‎ ولا لـ‎.obf‎،
+ * والادّعاء يُظهر في المُختار تطبيقاتٍ لا تفتح الملفّ.
+ */
+private const val MAP_FILE_MIME = "application/octet-stream"
+
+/** عمر سطر «حُذف كذا»: يكفي لقراءة سطرٍ واحد، ولا يبقى حتّى يكذب */
+private const val MAPS_NOTICE_MILLIS = 4_000L
+
+/** «لا نيّة إسماعٍ معلّقة»؛ سالبٌ لأنّ الشدّات كلّها موجبة فلا تلتبس بقيمة */
+private const val NO_PENDING_PREVIEW = -1
 
 /** حارس فيضٍ عند التحليل: ما بلغه فقد خرج عن المدى قطعًا */
 private const val LIMIT_OVERFLOW_GUARD = 9_999
@@ -1087,11 +1458,21 @@ private fun SwitchRow(title: String, note: String, checked: Boolean, onChange: (
  *
  * فُضّل على زرّ Material لأنّ البطاقة كلّها أسطرٌ متراصّة، وزرٌّ مؤطَّر وسطها يكسر
  * الإيقاع البصريّ للقائمة.
+ *
+ * و[modifier] و[tint] وسيطان بقيمتين افتراضيّتين، أُضيفا في 0.9.4 لسطر ملفّ الخريطة
+ * ولم يمسّا نداءً قائمًا: هناك فعلان يقتسمان سطرًا واحدًا (مشاركة وحذف) فيحتاج
+ * كلٌّ منهما `weight`، والحذفُ يحتاج لون الخطر لا لون التمييز. ومضاعفةُ المركّب
+ * بنسخةٍ ثانية كانت تعني تخطيطين يتباعدان عند أوّل تعديل على أحدهما.
  */
 @Composable
-private fun ActionRow(label: String, onClick: () -> Unit) {
+private fun ActionRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = Accent,
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 56.dp)
             .clip(RoundedCornerShape(12.dp))
@@ -1102,7 +1483,7 @@ private fun ActionRow(label: String, onClick: () -> Unit) {
         Text(
             text = label,
             style = MaterialTheme.typography.titleSmall.copy(
-                color = Accent,
+                color = tint,
                 fontWeight = FontWeight.Bold,
             ),
         )
@@ -1184,6 +1565,323 @@ private fun ChoiceRow(options: List<String>, selectedIndex: Int, onSelect: (Int)
         }
     }
 }
+
+/**
+ * منتقي وجه العدّاد: بلاطاتٌ **مرسومة** لا شراتُ أسماء.
+ *
+ * ## لماذا لا [ChoiceRow]؟
+ * لأنّ «حلقتان» و«مقتضب» و«شرات مضيئة» أسماءٌ لا تصف شكلًا لمن لم يره. وصفُّ نصوصٍ
+ * هنا يعني أن يجرّب المستعملُ الستّة واحدًا واحدًا، ويخرج في كلّ مرّة من الإعدادات
+ * إلى الشاشة ثمّ يعود — أي ستّ رحلاتٍ ليختار مرّة. والبلاطة تريه ما سيصير إليه
+ * قرصُه قبل أن يلمس.
+ *
+ * ## الرسم من مصدر الحقيقة لا من رسمٍ تقريبيّ
+ * كلّ بلاطة تنادي [drawGaugeFace] نفسها التي ترسم القرص الكبير وطبقة الكاميرا
+ * والنافذة المصغّرة. ولو رُسمت هنا أشكالٌ «تشبه» التصاميم لتباعدت عن أصلها بعد
+ * أوّل تعديلٍ في الهندسة، فصارت المعاينة تعد بما لا يقع — وهو أسوأ من غياب
+ * المعاينة رأسًا.
+ *
+ * ## حدودٌ صريحة للمعاينة
+ * - **بلا تدريجٍ رقميّ** (`ticks = null`): على ‎80dp‎ تصير الأرقام لطخًا، والحجم
+ *   المصغَّر هو نفسه سببُ إتاحة `null` في [GaugeTicks].
+ * - **بقراءةٍ ثابتة موضوعة** ([GAUGE_PREVIEW_FRACTION]): قرصٌ ساكن عند الصفر يُخرج
+ *   التصاميم الستّة متشابهةً — لا قوس ولا مؤشّر ولا شرات مضيئة — فلا يُقارن بينها.
+ * - **بعلامة حدٍّ ظاهرة** ([GAUGE_PREVIEW_LIMIT]): هي معلومةُ السلامة في كلّ وجه،
+ *   ومعاينةٌ تخفيها تُخفي أهمَّ ما يفترق فيه وجهٌ عن وجه.
+ *
+ * ## التمييز بالإطار لا بالتعبئة
+ * [ChoiceRow] يملأ المختار بلون التمييز؛ وذلك هنا يبتلع القوسَ الذي جاءت البلاطةُ
+ * لتُريه (لونه لون التمييز نفسه). فالإطارُ حول البلاطة واسمُها بلونه، وهما إشارتان
+ * لا واحدة — كحلقة [HourRow] وللسبب نفسه: شاشةٌ تحت الشمس وعينٌ لا تميّز الألوان.
+ */
+@Composable
+private fun GaugeStylePicker(selected: GaugeStyle, onSelect: (GaugeStyle) -> Unit) {
+    // اللوحة هي لوحةُ [net.gnutux.speedometer.ui.components.SpeedGauge] بحذافيرها،
+    // ولون القيمة الحيّة [Accent] لأنّ القراءة الموضوعة دون عتبة التحذير: منطقةٌ
+    // عاديّة فلونٌ عاديّ. ولو رُسمت المعاينة برتقاليّةً أو حمراء لفهم المستعمل أنّ
+    // ذلك لونُ التصميم، واللونُ إنّما هو لون السرعة في كلّ التصاميم سواء.
+    val palette = GaugePalette(
+        active = Accent,
+        track = TrackDim,
+        redZone = Danger.copy(alpha = 0.30f),
+        tick = TextSecondary,
+        tickLine = TextSecondary,
+        limit = Danger,
+    )
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GaugeStyle.entries.forEach { style ->
+            val active = style == selected
+            Column(
+                modifier = Modifier
+                    .width(GAUGE_TILE_WIDTH)
+                    .clip(shape)
+                    .background(SurfaceHigh)
+                    .border(
+                        width = if (active) 2.dp else 0.dp,
+                        color = if (active) Accent else Color.Transparent,
+                        shape = shape,
+                    )
+                    .clickable { onSelect(style) }
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // صندوقٌ ثابت الارتفاع للجميع، والقماشُ داخله بنسبة تصميمه: بذلك
+                // يظلّ [GaugeStyle.BAR] شريطًا عريضًا قصيرًا كما هو على الشاشة —
+                // ولو فُرضت عليه نسبة الأوجه المستديرة لانضغط فبدا كبسولةً سمينة
+                // لا تشبه ما سيراه. وهو التخطيط نفسه الذي تبني به النافذةُ
+                // المصغَّرة وجهَها (`width` ثمّ `aspectRatio`).
+                //
+                // وحدٌّ معلوم: الشريط يحجز في وجهه لِسانًا سفليًّا لسلّم الأرقام،
+                // وهو فارغٌ هنا لأنّ المعاينة بلا تدريج — فيبدو الشريط أعلى من وسط
+                // بلاطته قليلًا. تصحيحُه يقتضي إزاحةً تخالف هندسة الوجه الحقيقيّة،
+                // وأن تكذب المعاينة في موضعٍ أسوأ من أن تُزاح قليلًا في بلاطة.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(GAUGE_TILE_FACE),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(style.aspect)
+                    ) {
+                        drawGaugeFace(
+                            style = style,
+                            fraction = GAUGE_PREVIEW_FRACTION,
+                            warnFraction = GAUGE_PREVIEW_WARN,
+                            limitFraction = GAUGE_PREVIEW_LIMIT,
+                            palette = palette,
+                            ticks = null,
+                        )
+                    }
+                }
+                Text(
+                    text = gaugeStyleLabel(style),
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        color = if (active) Accent else TextPrimary,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * بطاقة «ما في مجلّد الخرائط»: كلّ ما وجده المسح، وما يُفعل به.
+ *
+ * القائمة تُبنى مرّةً لكلّ مكتبةٍ لا مع كلّ إعادة تركيب: [OfflineMapLibrary.entries]
+ * خاصّيّةٌ محسوبة (`get()`) تبني [MapFileEntry] لكلّ ملفّ، وباني السطر يقرأ
+ * `File.length` — أي نداءُ نظامٍ على القرص. وCompose يعيد تركيب هذه البطاقة عند كلّ
+ * تبدّلٍ في الشاشة، فقراءةٌ مباشرة كانت تعني عشرات نداءات القرص في الثانية على
+ * **الخيط الرئيس**. والمفتاح هو المكتبة نفسها، فيُعاد البناء عند إعادة المسح وحدها
+ * — وذلك بالضبط حين تتبدّل الحقيقة.
+ *
+ * و[deletable] دالّةٌ تُمرَّر لا رايةٌ في [MapFileEntry]: الحكم يقارن مسار الملفّ
+ * بمسار مجلّدنا الحقيقيّ، وهو من شأن [OfflineMaps] لا من شأن بنيةٍ تُنقل. **وهو
+ * نداءُ قرصٍ كذلك**: `canonicalFile` تحلّ الوصلات الرمزيّة بنداء نظام، فيُحسب
+ * الحكم داخل [remember] نفسه مع بناء القائمة لا في جسم كلّ سطر. ولو حُسب عند
+ * الرسم لصار حكمُ عشرة ملفّاتٍ عشرةَ نداءاتٍ في كلّ إطار.
+ *
+ * والمفتاح [library] وحدها ولو تبدّلت [deletable]: تلك مرجعُ دالّةٍ يُبنى من جديد
+ * مع كلّ إعادة تركيب، فجعلُه مفتاحًا يُبطل الحفظ من أصله — وسلوكُها لا يتبدّل ما
+ * دام مجلّدنا هو هو.
+ */
+@Composable
+private fun MapFilesCard(
+    library: OfflineMapLibrary,
+    notice: MapsNotice?,
+    deletable: (File) -> Boolean,
+    onShare: (MapFileEntry) -> Unit,
+    onDelete: (MapFileEntry) -> Unit,
+) {
+    val rows = remember(library) { library.entries.map { it to deletable(it.file) } }
+
+    RowLabel(
+        title = stringResource(R.string.settings_maps_list),
+        note = stringResource(R.string.settings_maps_list_note),
+    )
+    if (rows.isEmpty()) {
+        // «لا ملفّات بعد» لا قائمةٌ فارغة: فراغٌ تحت عنوانٍ يُقرأ عطبًا في العرض
+        RowLabel(title = stringResource(R.string.settings_maps_list_empty))
+    } else {
+        rows.forEach { (entry, canDelete) ->
+            // المفتاح المسار الكامل لا الاسم: ملفّان باسمٍ واحد في مجلّدين اثنين
+            // (مجلّدنا ومجلّد OsmAnd) حالٌ واقعة، وحالةُ أحدهما لا تخصّ الآخر.
+            key(entry.file.path) {
+                MapFileRow(
+                    entry = entry,
+                    deletable = canDelete,
+                    onShare = { onShare(entry) },
+                    onDelete = { onDelete(entry) },
+                )
+            }
+        }
+    }
+    if (notice != null) {
+        // نصٌّ بمعامل ونصٌّ بلا معامل نداءان مختلفان، كما في نتيجة التنزيل: تمرير
+        // معاملٍ إلى نصٍّ لا يقبله يُلقي استثناءً في التنسيق على بعض الأجهزة
+        val name = notice.fileName
+        Text(
+            text = if (name != null) {
+                stringResource(notice.text, name)
+            } else {
+                stringResource(notice.text)
+            },
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = if (notice.ok) Accent else Danger,
+            ),
+        )
+    }
+}
+
+/**
+ * سطر ملفٍّ واحد: اسمُه، ثمّ صنفُه وحجمُه، ثمّ ما يُفعل به.
+ *
+ * ## سطر الصنف ولونه
+ * الصنف بلون التمييز حين يكون أرشيفًا يُرسم، وبلون الشرح فيما عداه. **ولا لون
+ * خطرٍ لغير المرسوم**: ملفّ ‎.obf‎ أو ‎.shp.zip‎ في المجلّد ليس عطبًا ولا خطأ من
+ * صاحبه — هو ملفٌّ صالح لغير هذا المحرّك، وهذا ما يقوله السطر بالضبط. وهي المعاملة
+ * نفسها التي يُعامَل بها `map_obf_found` حيثما عُرض: خبرٌ لا إنذار.
+ *
+ * ## لماذا يغيب الحذف عن ملفّات الغير؟
+ * قراءتنا لمجلّد OsmAnd (وأمثاله) ضيافةٌ محضة: نحن ننظر فيه ولا نملكه. وزرُّ حذفٍ
+ * هناك يمحو خريطةً نزّلها المستعمل في تطبيقٍ آخر ودفع في تنزيلها، من شاشةِ تطبيقٍ
+ * لا علاقة له بها — وهو أذًى صامت لا يُستدرك. فيُعرض السببُ مكان الزرّ، لا زرٌّ
+ * معطَّل يُلمس فلا يقع شيء.
+ *
+ * **والمشاركة تغيب معه للسبب الجذريّ نفسه** ولسببٍ تقنيّ يوافقه: مزوّد الملفّات
+ * لا يعلن إلّا مجلّدنا (`file_paths.xml`)، فطلبُ عنوانٍ لملفٍّ خارجه يُلقي
+ * `IllegalArgumentException`. فلا يُعرض فعلٌ يُعلم أنّه يفشل.
+ */
+@Composable
+private fun MapFileRow(
+    entry: MapFileEntry,
+    deletable: Boolean,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SurfaceHigh)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        RowLabel(title = entry.file.name)
+        Text(
+            text = stringResource(
+                R.string.map_file_line,
+                mapKindLabel(entry.kind),
+                // التنسيق نفسه الذي يعرض به المُنزِّل تقدّمه، فلا يختلف رقمان في
+                // شاشةٍ واحدة على ملفٍّ واحد
+                MapDownloader.formatBytes(entry.sizeBytes),
+            ),
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = if (entry.kind == MapFileKind.ARCHIVE) Accent else TextSecondary,
+            ),
+        )
+        if (deletable) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ActionRow(
+                    label = stringResource(R.string.map_file_share),
+                    onClick = onShare,
+                    modifier = Modifier.weight(1f),
+                )
+                // بلون الخطر لا بلون التمييز: هو الفعل الوحيد في هذه الشاشة الذي
+                // يمحو ما لا يُستعاد، فلا يستوي في العين مع جاره
+                ActionRow(
+                    label = stringResource(R.string.map_file_delete),
+                    onClick = onDelete,
+                    modifier = Modifier.weight(1f),
+                    tint = Danger,
+                )
+            }
+        } else {
+            Text(
+                text = stringResource(R.string.map_file_foreign),
+                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+            )
+        }
+    }
+}
+
+/** صنف الملفّ بعبارةٍ تقول ما يقع به: أيُرسم أم لا، لا اسمَ امتدادٍ مجرَّدًا */
+@Composable
+private fun mapKindLabel(kind: MapFileKind): String = when (kind) {
+    MapFileKind.ARCHIVE -> stringResource(R.string.map_kind_archive)
+    MapFileKind.VECTOR -> stringResource(R.string.map_kind_vector)
+    MapFileKind.RAW_DATA -> stringResource(R.string.map_kind_rawdata)
+}
+
+/**
+ * مشاركة ملفّ خريطةٍ عبر مزوّد الملفّات، بالطريق نفسه الذي تشارك به شاشةُ الرحلات
+ * ملفَّ الـ GPX: عنوانٌ من [FileProvider] بالسلطة `${packageName}.files`، ثمّ
+ * `ACTION_SEND` بعلَم منح القراءة داخل `createChooser`. ولا نسخة ثانية تُصدَّر —
+ * الملفّ قد يبلغ مئات الميغابايت، ونسخُه لمشاركته يملأ القرص الذي جاء المستعمل
+ * يفرّغه.
+ *
+ * ## `runCatching` مرّتين لعلّتين مختلفتين
+ * الأولى على بناء العنوان: `file_paths.xml` لا يعلن إلّا `maps/` من مجلّدنا، وملفٌّ
+ * خارجه يُلقي `IllegalArgumentException` — وهو استثناءٌ يقع **قبل** أيّ نيّة، فيُردّ
+ * منه `false`. وواجهةُ اليوم لا تعرض المشاركة إلّا على ملفٍّ في مجلّدنا (وهو `maps/`
+ * بعينه)، فالحارس اليوم للنادر: تخزينٌ خارجيّ غير مهيّأ يُخرج مسارًا لا يطابق ما
+ * أُعلن. وغدًا لمن ينادي الدالّة من موضعٍ آخر بلا أن يقرأ هذا كلَّه — فيجد رسالةً
+ * لا سقوطًا.
+ * والثانية على `startActivity`: جهازٌ على المقود قد يخلو من أيّ تطبيقٍ يقبل
+ * الإرسال، فيرمي `ActivityNotFoundException` ويُسقط التطبيق كلَّه لأنّ المستعمل
+ * لمس «مشاركة» — وهو الحذر نفسه المبسوط عند [LinkRow].
+ *
+ * والنوع `application/octet-stream` لأنّه صادق: لا نوع MIME متّفقًا عليه لـ‎.mbtiles‎
+ * ولا لـ‎.obf‎، وادّعاء `application/zip` على ‎.obf‎ يُظهر في المُختار تطبيقاتٍ لا
+ * تفتحه. و«ملفّ ثنائيّ» تقبله تطبيقات النقل والتخزين كلّها، وهي المقصودة هنا.
+ *
+ * @return هل أُطلق المُختار فعلًا؟ و`false` تعني «قل للمستعمل إنّها تعذّرت».
+ */
+private fun shareMapFile(context: Context, file: File): Boolean {
+    val uri = runCatching {
+        FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+    }.getOrNull() ?: return false
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = MAP_FILE_MIME
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    return runCatching {
+        context.startActivity(
+            Intent.createChooser(send, context.getString(R.string.map_file_share))
+        )
+    }.isSuccess
+}
+
+/**
+ * خبرٌ عابر عن آخر فعلٍ في قائمة الخرائط.
+ *
+ * صنفٌ صغير لا ثلاث حالاتٍ متفرّقة: النصّ ومعامله وحكمُه يتبدّلون معًا دائمًا،
+ * وتفريقُهم يفتح باب سطرٍ ناجح بلونٍ فاشل أو نصٍّ ذي معاملٍ بلا معامله.
+ *
+ * @param text مورد النصّ.
+ * @param fileName معامل النصّ إن كان يقبله، و`null` لما لا يقبل — والفرق يُحترم عند
+ *   العرض لأنّ التنسيق يُلقي استثناءً على بعض الأجهزة إن خُلط.
+ * @param ok نجح الفعل؟ فيُعرض بلون التمييز لا بلون الخطر.
+ */
+private class MapsNotice(
+    @StringRes val text: Int,
+    val fileName: String?,
+    val ok: Boolean,
+)
 
 /**
  * سطر تطبيق خرائطٍ مثبَّت: اختيارٌ بحالةٍ ظاهرة.
@@ -1530,6 +2228,26 @@ private fun MapDownloadRows(
     )
     Text(
         text = stringResource(R.string.mapdl_where_note),
+        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+    )
+
+    // مصدرٌ ثانٍ يُذكر مع وصفٍ صادق، لا مصدرٌ يُوعَد به.
+    //
+    // Geofabrik أوسع مصادر بيانات OSM الحرّة وأنظمها، ولا واحد من ملفّاته يرسمه
+    // هذا التطبيق: ‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg.zip‎ بياناتٌ خام لا صور، وملفّ
+    // ‎shortbread‎ وإن كان MBTiles فمحتواه مربّعاتٌ متجهيّة (MVT) وosmdroid نقطيّ
+    // لا غير. فالسطر يقول ذلك صراحةً في `mapdl_where_geofabrik_note` ويحيل على
+    // 0.10.0 حيث المحرّك المتجهيّ.
+    //
+    // ولون النصّ لون الشرح لا لون الخطأ: ليس هنا عطبٌ ولا فعلٌ فاشل، وإنّما مصدرٌ
+    // نافع بحدٍّ معلوم. وحمرةُ الخطر عليه كانت ستقول للمستعمل «لا تذهب»، وليس هذا
+    // المقصود — بل «اذهب وأنت تعلم ما تجد».
+    LinkRow(
+        title = stringResource(R.string.mapdl_where_geofabrik_label),
+        url = stringResource(R.string.mapdl_where_geofabrik),
+    )
+    Text(
+        text = stringResource(R.string.mapdl_where_geofabrik_note),
         style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
     )
 }

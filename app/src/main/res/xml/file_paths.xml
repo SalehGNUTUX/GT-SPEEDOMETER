@@ -5,6 +5,8 @@
     <external-files-path name="videos" path="videos/" />
     <external-files-path name="shots" path="shots/" />
     <external-files-path name="tracks" path="tracks/" />
+    <!-- أرشيفات الخرائط المحلّيّة، تُشارَك من قائمة الإعدادات (0.9.4) -->
+    <external-files-path name="maps" path="maps/" />
     <!-- نسخ GPX المصغَّرة التي يقرؤها OsmAnd حين يرسم خريطة الرحلة (OsmAndBridge) -->
     <cache-path name="osmand-gpx" path="osmand-gpx/" />
     <!-- حزمة التحديث المنزَّلة، يقرؤها مثبّت النظام بعنوانٍ نمنحه إذن قراءةٍ مؤقّتًا

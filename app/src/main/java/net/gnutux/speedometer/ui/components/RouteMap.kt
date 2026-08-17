@@ -22,13 +22,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -78,6 +82,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import net.gnutux.speedometer.R
+import net.gnutux.speedometer.core.map.MapBindForce
 import net.gnutux.speedometer.core.map.MapBinding
 import net.gnutux.speedometer.core.map.MapSource
 import net.gnutux.speedometer.core.map.OfflineMaps
@@ -94,7 +99,9 @@ import net.gnutux.speedometer.ui.theme.Bg
 import net.gnutux.speedometer.ui.theme.Danger
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
+import net.gnutux.speedometer.ui.theme.TextPrimary
 import net.gnutux.speedometer.ui.theme.TextSecondary
+import net.gnutux.speedometer.ui.theme.Warn
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -145,6 +152,14 @@ private class MapReady(
     val box: BoundingBox?,
     /** هل ثمّة اتّصالٌ أصلًا؟ بلا هذا نعرض بلاطاتٍ لا تصل ونسمّيها «إنترنت» */
     val network: Boolean,
+    /**
+     * هل يغطّي أرشيفُ المجلّد هذا المسار؟
+     *
+     * ليست نسخةً من `binding.source`: المزوّد قد يكون شبكيًّا لأنّ المستعمل طلب
+     * الإنترنت صراحةً، والأرشيف مع ذلك يغطّي. وبهذا الفرق وحده تقول قائمةُ الطبقات
+     * الصدق في سطر «محلّيّة» بدل أن تُطفئها لأنّ المرسوم الآن شبكيّ.
+     */
+    val offlineCovers: Boolean,
 ) {
     /**
      * هل استلم [MapView] هذا المزوّد؟
@@ -156,8 +171,14 @@ private class MapReady(
     var consumed: Boolean = false
 }
 
-/** ما يستحقّ أن يُقال تحت الخريطة، مرّةً في الزيارة لا مع كلّ رحلة */
-private enum class MapNotice { NONE, NO_OFFLINE, VECTOR_ONLY }
+/**
+ * ما يستحقّ أن يُقال تحت الخريطة، مرّةً في الزيارة لا مع كلّ رحلة.
+ *
+ * و[RAW_DATA] أخت [VECTOR_ONLY] لا حالةٌ ثالثة غريبة عنهما: كلتاهما «وُجد ملفٌّ ولا
+ * يُرسم»، والفرق أنّ ‎.obf‎ تفتحها OsmAnd وبيانات Geofabrik الخام لا يفتحها شيءٌ على
+ * الهاتف. وسكوتُنا عنها هو ما جعل المستعمل ينتظر خريطةً من ملفّ أشكال ESRI.
+ */
+private enum class MapNotice { NONE, NO_OFFLINE, VECTOR_ONLY, RAW_DATA }
 
 /** ما يُعرض فعلًا في هذا الإطار. الترتيب بينها في [chooseMode]. */
 private enum class MapMode {
@@ -181,11 +202,17 @@ private enum class MapMode {
  * OsmAnd، ثمّ الإنترنت، ثمّ المخطَّط. والمنطق واحد: ما لا يحتاج شبكةً يسبق ما يحتاجها،
  * والتفاعليّ يسبق الساكن عند تساوي الكلفة. وعند تفضيل الإنترنت ينقلب الأوّلان وحدهما.
  *
- * وأمّا التجاوزان فحدُّهما أنّهما **تفضيلٌ لا تعبّد**:
+ * وأمّا التجاوزات الثلاثة فحدُّها أنّها **تفضيلٌ لا تعبّد**:
  * — [MapSourcePreference.OSMAND] يقدّم صورة OsmAnd ما دامت متاحة، ثمّ يسقط إلى
  *   الترتيب المعتاد. من فضّلها لا يريد شاشةً فارغة حين لا يردّ OsmAnd.
- * — [MapSourcePreference.TILES] **لا يسأل OsmAnd أصلًا**، لا يؤخّره: السؤال وحده
- *   يوقظ عمليّته كاملة، ومن اختار البلاطات صراحةً لا يدفع ذلك الثمن.
+ * — [MapSourcePreference.ONLINE] **لا يسأل OsmAnd أصلًا**، لا يؤخّره: السؤال وحده
+ *   يوقظ عمليّته كاملة، ومن اختار الشبكة صراحةً لا يدفع ذلك الثمن. ولا يسقط إلى
+ *   الأرشيف حين تنقطع الشبكة بل إلى المخطَّط: «إنترنت» و«محلّيّة» خياران في القائمة
+ *   ولو تبادلا صمتًا لصارا خيارًا واحدًا في عين المستعمل — والقائمة على كلّ حال قد
+ *   أخبرته «لا اتّصال الآن» قبل أن يختار، فالمخطَّط جوابٌ متوقَّع لا مفاجأة.
+ * — [MapSourcePreference.OFFLINE] بلاطات الأرشيف؛ فإن لم يغطِّ المسارَ أرشيفٌ عاد إلى
+ *   الترتيب المعتاد كاملًا. والفرق عن سابقه مقصود: انقطاع الشبكة حالٌ يعرفها الراكب
+ *   من هاتفه، أمّا مستطيلٌ رماديّ أصمّ فيُقرأ عطبًا في التطبيق لا حدًّا في بياناته.
  *
  * و[osmAndPending] تُعيد «انتظر» لا «تخطَّ»: قولُ «لا خريطة» ثمّ إظهارها بعد ثانيةٍ
  * وميضٌ أسوأ من انتظارٍ معلن.
@@ -199,14 +226,17 @@ private fun chooseMode(
 ): MapMode {
     if (ready == null) return MapMode.PENDING
     val offlineTiles = ready.binding.source == MapSource.OFFLINE
-    if (preference == MapSourcePreference.TILES) {
-        return if (offlineTiles || ready.network) MapMode.TILES else MapMode.SKETCH
+    if (preference == MapSourcePreference.ONLINE) {
+        // المزوّد هنا شبكيٌّ يقينًا: `bind` جاءه [MapBindForce.ONLINE] فلم يفتح قرصًا.
+        return if (ready.network) MapMode.TILES else MapMode.SKETCH
     }
     if (preference == MapSourcePreference.OSMAND) {
         if (osmAndReady) return MapMode.OSMAND
         if (osmAndPending) return MapMode.PENDING
     }
     // الأرشيف لا يُبنى إلّا حين يغطّي المسار فعلًا، فوجوده هنا يعني خريطةً كاملة.
+    // وهو الجواب أيضًا لمن اختار «محلّيّة»؛ ومن لم يغطِّ أرشيفُه يمضي في الترتيب
+    // المعتاد أسفلَه بلا فرعٍ خاصّ به.
     if (offlineTiles) return MapMode.TILES
     if (!preferOffline && ready.network) return MapMode.TILES
     if (osmAndReady) return MapMode.OSMAND
@@ -216,23 +246,74 @@ private fun chooseMode(
 }
 
 /**
- * المصادر التي يجوز أن يبدّل بينها **في هذه الرحلة**.
+ * سطرٌ واحد في قائمة المصادر: ماذا يُسمّى، وماذا يُقال تحته، وأيُختار الآن.
  *
- * لا تُعرض قائمةٌ من ثلاثة يخيب اثنان منها: من لا خرائط عنده ولا اتّصال لا يُعرض
- * عليه «بلاطات»، ومن لم يأذن له OsmAnd لا يُعرض عليه «OsmAnd». وحين لا يبقى إلّا
- * خيارٌ واحد لا يُعرض الزرّ رأسًا.
+ * [note] موردٌ واحد لا اثنان لأنّ الموضع على الشاشة واحد: وصفُ المصدر حين يعمل، وسببُ
+ * تعطّله حين لا يعمل. وسطرٌ يقول «لا أرشيف بلاطاتٍ يغطّي هذا المسار» أنفع من وصفٍ
+ * جميلٍ لخيارٍ مطفأ لا يُدرى لماذا أُطفئ.
  */
-private fun switchableSources(
+private class MapSourceOption(
+    val source: MapSourcePreference,
+    @StringRes val label: Int,
+    @StringRes val note: Int,
+    val enabled: Boolean,
+)
+
+/**
+ * حال المصادر الأربعة **في هذه الرحلة**.
+ *
+ * كانت هذه الدالّة تُرجع قائمةً مصفّاةً تُحذف منها الخيارات المتعذّرة، وكان ذلك أصل
+ * الشكوى: من نزّل أرشيفًا محلّيًّا فلم يغطِّ مسارَ رحلته لم يجد «محلّيّة» في الزرّ
+ * أصلًا، فاستنتج أنّ التطبيق لا يعرف الخرائط المحلّيّة ولا يقرأ ما نزّل. **الخيار
+ * المحذوف لغزٌ والخيار المطفأ خبر**، فصارت تُرجع الأربعة كلَّها ومع كلٍّ حالُه.
+ *
+ * وقبل أن يُحسم الربط ([ready] فارغة) تُعرض كلّها صالحة: التعطيلُ ثمّ التمكينُ بعد
+ * جزءٍ من ثانية وميضٌ يقرؤه المستعمل عطبًا، والسكوت أصدق من حكمٍ لم نتحقّقه بعد.
+ */
+private fun mapSourceOptions(
     ready: MapReady?,
     osmAndReady: Boolean,
-): List<MapSourcePreference> {
-    if (ready == null) return emptyList()
-    val sources = mutableListOf(MapSourcePreference.AUTO)
-    if (osmAndReady) sources += MapSourcePreference.OSMAND
-    if (ready.binding.source == MapSource.OFFLINE || ready.network) {
-        sources += MapSourcePreference.TILES
-    }
-    return if (sources.size > 1) sources else emptyList()
+): List<MapSourceOption> {
+    fun option(
+        source: MapSourcePreference,
+        @StringRes label: Int,
+        @StringRes note: Int,
+        @StringRes reason: Int,
+        available: Boolean,
+    ) = MapSourceOption(source, label, if (available) note else reason, available)
+
+    return listOf(
+        // «تلقائيّ» لا يُطفأ بحال: هو الترتيب نفسه، وآخرُه المخطَّط الذي يعمل دائمًا.
+        MapSourceOption(
+            source = MapSourcePreference.AUTO,
+            label = R.string.map_source_auto,
+            note = R.string.map_source_auto_note,
+            enabled = true,
+        ),
+        option(
+            source = MapSourcePreference.ONLINE,
+            label = R.string.map_source_online,
+            note = R.string.map_source_online_note,
+            reason = R.string.map_source_na_online,
+            available = ready?.network ?: true,
+        ),
+        option(
+            source = MapSourcePreference.OSMAND,
+            label = R.string.map_source_osmand,
+            note = R.string.map_source_osmand_note,
+            reason = R.string.map_source_na_osmand,
+            available = osmAndReady,
+        ),
+        option(
+            source = MapSourcePreference.OFFLINE,
+            label = R.string.map_source_offline,
+            note = R.string.map_source_offline_note,
+            reason = R.string.map_source_na_offline,
+            // التغطية لا مجرّد وجود الملفّ: أرشيف مدينةٍ أخرى يُرضي شرط «عندي خريطة»
+            // ويُخرج فراغًا رماديًّا، وذلك أسوأ ما يمكن أن يُعرض على من اختار بنفسه.
+            available = ready?.offlineCovers ?: true,
+        ),
+    )
 }
 
 /**
@@ -255,7 +336,8 @@ private fun hasNetwork(context: Context): Boolean = runCatching {
  * @param preferOffline تفضيل الأرشيف المحلّيّ على الإنترنت متى غطّى موضع الرحلة.
  * @param mapSource تجاوز المستعمل لترتيب المصادر؛ يُقرأ من التفضيلات ويُمرَّر كما
  *   يُمرَّر [invertTiles]: هذا مُركّب عرضٍ لا يقرأ المخزن بنفسه.
- * @param onMapSourceChange يكتب اختيار زرّ التبديل في التفضيل، فيبقى بعد الخروج.
+ * @param onMapSourceChange يكتب ما اختير من قائمة المصادر في التفضيل، فيبقى بعد
+ *   الخروج. والقائمة تُعرض بأربعة خيارات دائمًا — انظر [MapSourceMenu].
  * @param gpxFile ملفّ الرحلة إن كان عند المُستدعي. يُمرَّر إلى OsmAnd كما هو، وغيابه
  *   لا يُعطّل شيئًا: نكتب حينها نسخةً مصغَّرة في المخبأ من النقاط نفسها.
  * @param noticeVisible هل يُسمح بإظهار ملاحظة الخرائط المحلّيّة الآن؟ القرار عند
@@ -301,11 +383,24 @@ fun RouteMap(
         }
     }
 
+    // ما يُجبَر عليه الربط، مشتقًّا من التفضيل لا هو نفسه.
+    //
+    // وهو مفتاح إعادة الربط أدناه، وذلك موضع دقّة: بلا مفتاحٍ أصلًا — وهو ما كان —
+    // يبقى المزوّد القديم يرسم بعد أن يختار المستعمل «إنترنت» أو «محلّيّة»، فيبدو
+    // الاختيار بلا أثر. وبالتفضيل الخام مفتاحًا تُهدم الخريطة وتُبنى عند كلّ اختيارٍ
+    // ولو لم يتبدّل المزوّد المطلوب — وتبديلُ «تلقائيّ» بـ«OsmAnd» لا يمسّ البلاطات
+    // بحال. فالمفتاح هو **ما يطلبه `bind`** وحده: قيمتان متساويتان لا تُعيدان ربطًا.
+    val force = when (mapSource) {
+        MapSourcePreference.ONLINE -> MapBindForce.ONLINE
+        MapSourcePreference.OFFLINE -> MapBindForce.OFFLINE
+        else -> null
+    }
+
     // القرار والهندسة كلاهما خارج الخيط الرئيس، وفي خطوةٍ واحدة: `bind` يفتح
     // الأرشيفات مرّةً واحدة فيجسّ بها ويبني المزوّد منها. وقيمته الأولى `null` تعني
     // «لم يُحسم بعد» لا «إنترنت»، فلا تُنزَّل بلاطةٌ واحدة قبل أن نعرف أنّ المحلّيّة
     // لا تكفي.
-    val ready by produceState<MapReady?>(null, library, preferOffline, points, offlineMaps) {
+    val ready by produceState<MapReady?>(null, library, preferOffline, points, offlineMaps, force) {
         if (!library.scanned) {
             value = null
             return@produceState
@@ -322,14 +417,26 @@ fun RouteMap(
         val network = withContext(Dispatchers.IO) { hasNetwork(context) }
         // «الإنترنت أوّلًا» تفضيلٌ لا تعبّد: حين لا اتّصال أصلًا نسأل الأرشيف المحلّيّ،
         // فبلاطةٌ محفوظة خيرٌ من مستطيلٍ رماديّ يعتذر عن الشبكة.
-        val binding = offlineMaps.bind(probes, preferOffline || !network)
+        val binding = offlineMaps.bind(probes, preferOffline || !network, force)
+        // ما لم يجسّه `bind` نجسّه هنا: من طلب الإنترنت صراحةً لم يُفتح له قرص، وقائمةُ
+        // الطبقات مع ذلك تحتاج أن تعرف أيغطّي أرشيفُه هذا المسار أم لا. والكلفة محصورة
+        // بمن عنده أرشيفٌ أصلًا (`covers` تُجيب بلا قرصٍ حين لا ملفّات)، والبديل قائمةٌ
+        // تُطفئ «محلّيّة» بلا علمٍ أو تُشعلها بلا علم — وكلاهما كذب.
+        //
+        // والإلغاء أثناءه يترك المزوّد بلا `MapView` يملكه، فيُحرَّر في موضعه قبل أن
+        // يمضي الاستثناء.
+        val covers = binding.archiveCovers ?: runCatching { offlineMaps.covers(probes) }
+            .getOrElse { error ->
+                runCatching { binding.provider.detach() }
+                throw error
+            }
         // إلغاءٌ يقع بين بناء المزوّد وإسناده يترك قواعد sqlite مفتوحةً بلا مالكٍ
         // يُغلقها: لا `MapView` سيستلمه، ولا `onDetach` سيُنادى عليه.
         if (!isActive) {
             binding.provider.detach()
             return@produceState
         }
-        value = MapReady(binding, geometry.first, geometry.second, network)
+        value = MapReady(binding, geometry.first, geometry.second, network, covers)
     }
 
     val current = ready
@@ -345,7 +452,7 @@ fun RouteMap(
         osmAndReady = osmAndReady,
         osmAndPending = osmAndStatus.state == OsmAndState.CHECKING,
     )
-    val switchable = switchableSources(current, osmAndReady)
+    val sourceOptions = mapSourceOptions(current, osmAndReady)
 
     // مقاس الصورة يُطلب بالبكسل، ولا يُعرف قبل أوّل تخطيط. نأخذه من التخطيط نفسه
     // بدل `BoxWithConstraints` كي لا تُقرأ خصائص مُستقبِلٍ ضمنيّ من لامدا متداخلة.
@@ -387,6 +494,9 @@ fun RouteMap(
         // ومن رُسمت خريطته من OsmAnd لا يُدعى إلى فتحها في OsmAnd.
         mode == MapMode.OSMAND -> MapNotice.NONE
         library.hasVectorOnly -> MapNotice.VECTOR_ONLY
+        // بيانات Geofabrik الخام: كان يُقال فيها «وُجدت خريطة محلّيّة» ثمّ لا يُرسم
+        // شيء، وهي الآن مصنّفةٌ على حقيقتها فتُقال على حقيقتها.
+        library.hasRawDataOnly -> MapNotice.RAW_DATA
         !library.hasArchives -> MapNotice.NO_OFFLINE
         // عنده أرشيفٌ لكنّه لا يغطّي هنا: الشارة تقول «إنترنت» وذلك كافٍ، ودعوته
         // إلى تنزيل خرائطَ وهو قد نزّلها نصيحةٌ في غير موضعها.
@@ -458,29 +568,23 @@ fun RouteMap(
             }
         }
 
-        if (switchable.size > 1) {
-            MapControlButton(
-                icon = Icons.Filled.Layers,
-                label = R.string.map_source_switch,
-                onClick = {
-                    // دورةٌ لا قائمة: الخيارات ثلاثةٌ على الأكثر، وحوارٌ لأجلها فوق
-                    // خريطةٍ يقودها المستعمل بيدٍ واحدة ثمنٌ أعلى من فائدته.
-                    val at = switchable.indexOf(mapSource)
-                    onMapSourceChange(switchable[(at + 1).mod(switchable.size)])
-                },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp),
-            )
-        }
+        // الزرّ يظهر دائمًا لا حين يزيد الصالح على واحد: القائمة تُخبر عن المصادر كما
+        // تبدّلها، ومن لا يعمل عنده إلّا مصدرٌ واحد هو أحوج الناس إلى معرفة السبب.
+        MapSourceMenu(
+            options = sourceOptions,
+            selected = mapSource,
+            onSelect = onMapSourceChange,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp),
+        )
 
         if (notice != MapNotice.NONE) {
             OfflineMapNote(
                 notice = notice,
-                vectorLabel = if (library.vectorFiles.size == 1) {
-                    library.vectorNames
-                } else {
-                    Fmt.count(library.vectorFiles.size)
+                fileLabel = when (notice) {
+                    MapNotice.RAW_DATA -> foundFileLabel(library.rawDataFiles, library.rawDataNames)
+                    else -> foundFileLabel(library.vectorFiles, library.vectorNames)
                 },
                 folderPath = library.folderPath,
                 onOpenOsmAnd = onOpenOsmAnd,
@@ -813,6 +917,132 @@ private fun MapControlButton(
 }
 
 /**
+ * قائمة مصدر الخريطة، معلَّقةً بزرّ الطبقات.
+ *
+ * كانت دورةً على الزرّ نفسه، وكان في ذلك عيبان اجتمعا على المستعمل: الدورة لا تُري
+ * أحدًا ما لم يُختَر بعدُ ولا ما هو مختارٌ الآن، وكانت تُسقط من نفسها كلَّ خيارٍ لا
+ * يعمل في هذه اللحظة. فمن وضع أرشيفًا محلّيًّا في مجلّده ثمّ لم يجد «محلّيّة» في الزرّ
+ * استنتج — وهو محقٌّ فيما رأى — أنّ التطبيق لا يعرف الخرائط المحلّيّة أصلًا وأنّ
+ * الزرّ يبدّل بين الإنترنت وOsmAnd لا غير.
+ *
+ * فالقاعدة هنا معكوسة: **تُعرض المصادر الأربعة دائمًا**، ويُطفأ ما لا يعمل ويُكتب
+ * تحته سببُ إطفائه، ويُعلَّم المختار بعلامةٍ وبلون التمييز. والخيار المطفأ ليس ضجيجًا
+ * بل خبرٌ لا يبلغه المستعمل من موضعٍ آخر: «لا أرشيف بلاطاتٍ يغطّي هذا المسار» يقول له
+ * إنّ ملفّه مقروءٌ وإنّ المشكلة في موضعه لا في وجوده.
+ *
+ * والزرّ يظهر ولو لم يعمل إلّا مصدرٌ واحد: من ليس أمامه إلّا خيارٌ واحد أحوجُ الناس
+ * إلى معرفة لماذا.
+ */
+@Composable
+private fun MapSourceMenu(
+    options: List<MapSourceOption>,
+    selected: MapSourcePreference,
+    onSelect: (MapSourcePreference) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // القائمة نافذةٌ مستقلّة، لكنّ موضعها يُشتقّ من هذا الصندوق: تعليقها بالزرّ نفسه
+    // يُبقيها في الزاوية التي ضغط فيها إبهامُه بدل أن تنبت في وسط الخريطة.
+    var open by remember { mutableStateOf(false) }
+
+    Box(modifier) {
+        MapControlButton(
+            icon = Icons.Filled.Layers,
+            label = R.string.map_source_switch,
+            onClick = { open = true },
+        )
+
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            // لون التركيب صراحةً: خانة `surfaceContainer` في Material 3 غير مضبوطةٍ
+            // في تركيبنا، فتُترك القائمة على لون Material الافتراضيّ وهو غريبٌ عن
+            // بقيّة الشاشة.
+            containerColor = Surface,
+        ) {
+            // عنوانٌ لا عنصرٌ يُضغط: القائمة تُفتح فوق خريطةٍ متبدّلة الألوان، وبلا سطرٍ
+            // يقول ما هي تُقرأ قائمةَ «طبقاتٍ» تُعرض فوق الخريطة لا مصادرَ لها.
+            Text(
+                text = stringResource(R.string.map_source_menu),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    color = TextSecondary,
+                    fontWeight = FontWeight.Bold,
+                ),
+                modifier = Modifier.padding(
+                    start = 12.dp,
+                    end = 12.dp,
+                    top = 10.dp,
+                    bottom = 4.dp,
+                ),
+            )
+
+            options.forEach { option ->
+                val chosen = option.source == selected
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = stringResource(option.label),
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = when {
+                                        chosen -> Accent
+                                        option.enabled -> TextPrimary
+                                        else -> TextSecondary
+                                    },
+                                    fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                            )
+                            // السطر الثاني هو الفرق بين قائمةٍ تُبدّل وقائمةٍ تشرح:
+                            // وصفُ المصدر حين يعمل بلون النصّ الثانويّ، وسببُ تعطّله
+                            // حين لا يعمل بلون التنبيه كي تُقرأ العلّة بنظرة.
+                            Text(
+                                text = stringResource(option.note),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = if (option.enabled) TextSecondary else Warn,
+                                ),
+                            )
+                        }
+                    },
+                    onClick = {
+                        open = false
+                        onSelect(option.source)
+                    },
+                    enabled = option.enabled,
+                    // العلامة على المختار وحده، و`null` لا عنصرٌ فارغ: عنصرٌ فارغ يحجز
+                    // عرضه فتُزاح نصوص بقيّة السطور عن محاذاتها.
+                    trailingIcon = if (chosen) {
+                        {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                // زينةٌ لا خبر: اسم الخيار مقروءٌ سلفًا، وقارئ الشاشة
+                                // يُعلن حالة الاختيار من العنصر نفسه.
+                                contentDescription = null,
+                                tint = Accent,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    // حدٌّ للعرض: سطر السبب جملةٌ لا كلمة، وبلا حدٍّ تمتدّ القائمة إلى
+                    // عرض الشاشة كلِّه فتحجب الخريطة التي تصفها.
+                    modifier = Modifier.widthIn(max = 300.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * اسم الملفّ حين يكون واحدًا، وعددُه حين يكونون جمعًا.
+ *
+ * الاسم أنفع ما يُقال لمن نسي ما وضعه في المجلّد — وشكوى «‎morocco-latest-free_shp.zip‎»
+ * لم تُفهم إلّا لأنّ التطبيق كتب الاسم — لكنّ ثلاثة أسماء بهذا الطول في سطرٍ واحد تدفع
+ * الرسالة نفسها خارج الشاشة.
+ */
+private fun foundFileLabel(files: List<File>, names: String): String =
+    if (files.size == 1) names else Fmt.count(files.size)
+
+/**
  * شارة المصدر الحيّ: سطرٌ واحد يفصل «الأرشيف لا يغطّي هنا» عن «التطبيق معطوب».
  *
  * تأخذ نصًّا لا [MapSource]: المصادر المعروضة صارت أكثر من مصادر البلاطات — صورةُ
@@ -840,11 +1070,15 @@ private fun MapSourceBadge(@StringRes label: Int, modifier: Modifier = Modifier)
  *
  * وفي حالة `.obf` لا نَعِد بشيء: نقول إنّها وُجدت وإنّها لا تُرسم هنا، ونحيل إلى
  * OsmAnd نفسها لأنّها الوحيدة التي تفهمها.
+ *
+ * وفي حالة البيانات الخام لا إحالة أصلًا: ملفّ ‎.shp.zip‎ أو ‎.osm.pbf‎ لا يفتحه
+ * OsmAnd ولا غيره على الهاتف، فزرُّه هو زرّ «أين أضع الخرائط؟» — أي الطريق إلى ملفٍّ
+ * صالح — لا وعدٌ بفتح ما لا يُفتح.
  */
 @Composable
 private fun OfflineMapNote(
     notice: MapNotice,
-    vectorLabel: String,
+    fileLabel: String,
     folderPath: String,
     onOpenOsmAnd: () -> Unit,
     onDismiss: () -> Unit,
@@ -866,10 +1100,10 @@ private fun OfflineMapNote(
             )
         }
         Text(
-            text = if (notice == MapNotice.VECTOR_ONLY) {
-                stringResource(R.string.map_obf_found, vectorLabel)
-            } else {
-                stringResource(R.string.map_no_offline_body)
+            text = when (notice) {
+                MapNotice.VECTOR_ONLY -> stringResource(R.string.map_obf_found, fileLabel)
+                MapNotice.RAW_DATA -> stringResource(R.string.map_rawdata_found, fileLabel)
+                else -> stringResource(R.string.map_no_offline_body)
             },
             style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
         )

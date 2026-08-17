@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipFile
 import kotlin.math.PI
 import kotlin.math.asinh
 import kotlin.math.floor
@@ -58,9 +59,11 @@ import org.osmdroid.util.MapTileIndex
  *
  * — **التصنيف**: ليس كلّ ما نزّلته OsmAnd قابلًا للرسم هنا. ملفّ `.obf` صيغةٌ
  *   **متجهيّة** خاصّة بـ OsmAnd، وosmdroid لا تفهمها بحال؛ فتُصنَّف على حدة وتُعرض
- *   على أنّها «موجودة ولا تُرسم» — والكذب على المستعمل أسوأ من خريطةٍ فارغة. أمّا
- *   أرشيفات البلاط النقطيّة فتُقبل، ومنها ما لا تعرفه osmdroid بامتداده (انظر
- *   [RasterSqliteArchive]).
+ *   على أنّها «موجودة ولا تُرسم» — والكذب على المستعمل أسوأ من خريطةٍ فارغة. ومثلها
+ *   **البيانات الخام** (‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg‎…): بياناتٌ لا صور، تُصنَّف في
+ *   [OfflineMapLibrary.rawDataFiles] ويُقال فيها ما يُقال في ‎.obf‎ — انظر [holdsTiles]
+ *   للسبب الذي جعل الامتداد وحده لا يكفي في `.zip`. أمّا أرشيفات البلاط النقطيّة
+ *   فتُقبل، ومنها ما لا تعرفه osmdroid بامتداده (انظر [RasterSqliteArchive]).
  *
  * — **الكشف**: مسحٌ على [Dispatchers.IO] لا على الخيط الرئيس، ونتيجته [StateFlow]
  *   واحدة تراها الإعدادات والخريطة معًا فلا يختلف جوابان عن سؤالٍ واحد.
@@ -102,6 +105,46 @@ class OfflineMaps private constructor(context: Context) {
         }
     }
 
+    // ————————————————————————— التصرّف في الملفّات —————————————————————————
+
+    /**
+     * هل يجوز لنا حذف هذا الملفّ؟
+     *
+     * **مجلّدنا وحده.** المسح يبلغ مجلّدات OsmAnd وLocus وosmdroid ليقرأ منها، وحذفُ
+     * ملفٍّ من هناك يمحو خريطةً نزّلها المستعمل في تطبيقٍ آخر ودفع فيها من حزمته —
+     * وقد لا يخطر له أنّ عدّاد سرعةٍ هو من محاها. القراءة ضيافة، والحذف اعتداء.
+     *
+     * والفحص بالمسار المتعارَف عليه ([File.getCanonicalFile]) لا بالنصّ: `..` في
+     * مسارٍ ملفَّق يخرج من مجلّدنا وهو يبدو داخله. وحين تتعذّر قراءة المسار
+     * المتعارَف — وهي تتعذّر بقيدِ نظامٍ لا بخطأ — يكون الجواب «لا»، فالمنعُ عند
+     * الشكّ أسلم من محوٍ لا يُستدرك.
+     */
+    fun deletable(file: File): Boolean = runCatching {
+        val own = primaryFolder(app).canonicalFile
+        var parent: File? = file.canonicalFile.parentFile
+        while (parent != null) {
+            if (parent == own) return@runCatching true
+            parent = parent.parentFile
+        }
+        false
+    }.getOrDefault(false)
+
+    /**
+     * حذف أرشيفٍ من مجلّدنا ثمّ إعادة المسح.
+     *
+     * تُنفَّذ على [Dispatchers.IO]: الملفّ قد يبلغ مئات الميغابايت، وحذفُ ملفٍّ بهذا
+     * الحجم على الخيط الرئيس يجمّد الواجهة ثوانيَ على تخزينٍ بطيء.
+     *
+     * وإعادة المسح من داخل الدالّة لا من نداءٍ ثانٍ في الواجهة: من حذف يريد القائمة
+     * صادقةً في الحال، وترْكُ ذلك للمستدعي بابُ قائمةٍ تعرض ملفًّا لم يعد موجودًا.
+     */
+    suspend fun delete(file: File): Boolean = withContext(Dispatchers.IO) {
+        if (!deletable(file)) return@withContext false
+        val gone = runCatching { file.delete() }.getOrDefault(false) || !file.exists()
+        if (gone) rescan()
+        gone
+    }
+
     // ————————————————————————— المسح والتصنيف —————————————————————————
 
     private fun scanNow(): OfflineMapLibrary {
@@ -126,11 +169,27 @@ class OfflineMaps private constructor(context: Context) {
 
         val rasters = mutableListOf<File>()
         val vectors = mutableListOf<File>()
+        val rawData = mutableListOf<File>()
 
         for (candidate in candidates.values) {
             val file = candidate.file
+            val lower = file.name.lowercase()
             if (file.extension.equals(OBF_EXT, ignoreCase = true)) {
                 vectors += file
+                continue
+            }
+            // بياناتٌ خام يفضحها اسمها: ‎.osm.pbf‎ و‎.gpkg‎ و‎.shp‎ ليست بلاطًا بحال،
+            // ولا يفتحها قارئٌ عندنا. ولا تُبتلع صمتًا: من نزّلها ظنّها خريطة، وسكوتُنا
+            // يتركه أمام مستطيلٍ رماديّ لا يعرف سببه.
+            if (RAW_DATA_SUFFIXES.any { lower.endsWith(it) }) {
+                rawData += file
+                continue
+            }
+            // و`.zip` أخطرها: `ZipFileArchive` يفتح **أيّ** مضغوطٍ بنجاح، فأرشيف
+            // Geofabrik بامتداد ‎_shp.zip‎ كان يُعدّ خريطةً عاملة ويُعلن باسمه، ثمّ لا
+            // يُرسم منه شيء. فلا يُقبل مضغوطٌ حتّى نرى فيه بلاطةً بعيننا.
+            if (file.extension.equals(ZIP_EXT, ignoreCase = true) && !holdsTiles(file)) {
+                rawData += file
                 continue
             }
             // الامتداد وعدٌ لا برهان: نفتح الأرشيف فعلًا ونغلقه، فلا يظهر ملفٌّ تالفٌ
@@ -145,6 +204,7 @@ class OfflineMaps private constructor(context: Context) {
             altFolderPath = brandFolders.firstOrNull()?.absolutePath.orEmpty(),
             files = rasters.sortedBy { it.name },
             vectorFiles = vectors.sortedBy { it.name },
+            rawDataFiles = rawData.sortedBy { it.name },
             // «محجوب» لا «غير موجود»: على أندرويد 11 فما فوق لا يُقرأ `Android/data`
             // لتطبيقٍ آخر بحال، ولا تُقرأ الملفّات غير الإعلاميّة في التخزين المشترك
             // بلا إذن «كلّ الملفّات». الفرق يجب أن يصل إلى المستعمل كما هو.
@@ -190,7 +250,11 @@ class OfflineMaps private constructor(context: Context) {
                 }
                 val ext = child.extension.lowercase()
                 if (ext !in INTERESTING_EXT) continue
-                if (ext == ZIP_EXT && !root.allowZip) continue
+                // `.zip` والبيانات الخام من مجلّداتنا وحدها: الأوّل لأنّ أيّ مضغوطٍ
+                // يُفتح (انظر [ScanRoot])، والثاني لأنّ قولنا «وجدنا ملفًّا لا يُرسم»
+                // خطابٌ لمن وضع الملفّ بيده — أمّا ملفّ بياناتٍ في مجلّد تطبيقٍ آخر
+                // فليس شأنه ولا شأننا، والتنبيه عليه ضجيجٌ لا خبر.
+                if (ext in OWN_FOLDER_ONLY_EXT && !root.allowZip) continue
                 if (runCatching { child.length() }.getOrDefault(0L) <= 0L) continue
                 // المفتاح المسار المطلق: المجلّد نفسه قد يُبلَغ من جذرين (مجلّدنا
                 // ومجلّد عامّ يرمز إليه)، ولا يُعرض الملفّ مرّتين.
@@ -227,24 +291,50 @@ class OfflineMaps private constructor(context: Context) {
      * أمام صندوقٍ فارغ طوال ذلك. هنا فتحةٌ واحدة: نفتح، نجسّ، ونسلّم عين الأرشيفات
      * المفتوحة إلى المزوّد. ومن رفضنا استعماله نغلقه في مكانه.
      *
+     * و[force] تجاوزٌ صريح من المستعمل لا تفضيلٌ ضمنيّ، ولذلك هو معاملٌ ثانٍ مستقلّ عن
+     * [preferOffline] لا قيمةٌ تُدسّ فيه: الأوّل إعدادٌ عامّ («فضّل المحلّيّ متى غطّى»)
+     * والثاني اختيارُ هذه اللحظة من قائمة الطبقات. وقيمته الافتراضيّة `null` تعني
+     * «قرّر أنت كما كنت تقرّر»، فمسار من لم يفتح القائمة قطّ لم يتبدّل منه حرف.
+     *
      * @param positions مواضع يجب أن يغطّيها الأرشيف كلَّها (طرفا الرحلة ووسطها).
      * @param preferOffline تفضيل المستعمل؛ إطفاؤه يعني إنترنتًا بلا فتح قرصٍ أصلًا.
+     * @param force إجبارٌ على مصدرٍ بعينه؛ انظر [MapBindForce].
      */
     suspend fun bind(
         positions: List<Pair<Double, Double>>,
         preferOffline: Boolean,
+        force: MapBindForce? = null,
     ): MapBinding = withContext(Dispatchers.IO) {
         ensureConfigured(app)
         val online = TileSourceFactory.MAPNIK
         val snapshot = _library.value
 
-        if (!preferOffline || !snapshot.hasArchives || positions.isEmpty()) {
+        // من طلب الإنترنت صراحةً لا يُفتح له قرصٌ أصلًا: ولا حتّى للجسّ. وهذا معنى
+        // «إنترنت» في القائمة — لا «إنترنت إن لم يكن عندك أرشيف».
+        if (force == MapBindForce.ONLINE) {
             return@withContext MapBinding(MapSource.ONLINE, MapTileProviderBasic(app, online))
+        }
+
+        // الإجبار على المحلّيّ يفتح الأرشيف ولو كان التفضيل العامّ إنترنتًا؛ وما دونه
+        // يبقى [preferOffline] وحده حَكَمًا كما كان.
+        val wantArchive = force == MapBindForce.OFFLINE || preferOffline
+
+        if (!wantArchive || !snapshot.hasArchives || positions.isEmpty()) {
+            return@withContext MapBinding(
+                MapSource.ONLINE,
+                MapTileProviderBasic(app, online),
+                // لا أرشيف أصلًا = «لا يغطّي» يقينًا؛ وما عداه لم نجسّه فلا ندّعي علمه
+                archiveCovers = if (snapshot.hasArchives) null else false,
+            )
         }
 
         val archives = snapshot.files.mapNotNull { openArchive(it, allowZip = true) }
         if (archives.isEmpty()) {
-            return@withContext MapBinding(MapSource.ONLINE, MapTileProviderBasic(app, online))
+            return@withContext MapBinding(
+                MapSource.ONLINE,
+                MapTileProviderBasic(app, online),
+                archiveCovers = false,
+            )
         }
         // الأرشيف يخزّن البلاط تحت اسم مصدرٍ لا نعرفه سلفًا (اسم من صنع أداة التصدير)،
         // ومطابقة الاسم كانت تُرجع خريطةً فارغة من ملفٍّ سليم.
@@ -253,10 +343,14 @@ class OfflineMaps private constructor(context: Context) {
         val tileSource = tileSourceFor(archives)
         if (!coversWith(archives, tileSource, positions)) {
             archives.forEach { runCatching { it.close() } }
-            return@withContext MapBinding(MapSource.ONLINE, MapTileProviderBasic(app, online))
+            return@withContext MapBinding(
+                MapSource.ONLINE,
+                MapTileProviderBasic(app, online),
+                archiveCovers = false,
+            )
         }
 
-        MapBinding(MapSource.OFFLINE, offlineProvider(archives, tileSource))
+        MapBinding(MapSource.OFFLINE, offlineProvider(archives, tileSource), archiveCovers = true)
     }
 
     /**
@@ -439,9 +533,32 @@ class OfflineMaps private constructor(context: Context) {
         /** امتدادات أرشيفات سكليت التي نقرّر مخطّطها بأنفسنا لا بامتدادها */
         private val SQLITE_EXT = setOf("sqlitedb", "sqlite")
 
+        /**
+         * لواحق البيانات الخام.
+         *
+         * لواحقُ لا امتدادات: `morocco-latest.osm.pbf` امتدادُه `pbf` وامتدادُ
+         * `x.osm.bz2` هو `bz2` — و`bz2` وحدها ليست بيانات OSM بل غلافُ ضغطٍ لأيّ شيء،
+         * فلا يُحكم عليها إلّا مقرونةً بـ`.osm`. والمقارنة على الاسم كلِّه مصغَّرًا.
+         */
+        private val RAW_DATA_SUFFIXES =
+            listOf(".osm.pbf", ".pbf", ".gpkg", ".shp", ".osm", ".osm.bz2")
+
+        /**
+         * امتدادات تلك اللواحق كما يراها المسح.
+         *
+         * المسح يصفّي بالامتداد وحده (فهو أرخص من مطابقة اسمٍ كاملٍ لآلاف الملفّات)،
+         * والحكم النهائيّ بعده على اللاحقة في [RAW_DATA_SUFFIXES]. ولذلك `bz2` هنا
+         * وليست هناك إلّا مقرونةً بـ`.osm`: ما مرّ ولم يُطابق لاحقةً يسقط عند
+         * [openArchive] بلا ضرر.
+         */
+        private val RAW_DATA_EXT = setOf("pbf", "gpkg", "shp", "osm", "bz2")
+
         /** ما يستحقّ أن نفتحه أو نصنّفه؛ ما عداه يُتخطّى بلا فتحٍ ولا كلفة */
         private val INTERESTING_EXT =
-            setOf("mbtiles", "gemf", "zip", "sqlitedb", "sqlite", OBF_EXT)
+            setOf("mbtiles", "gemf", "zip", "sqlitedb", "sqlite", OBF_EXT) + RAW_DATA_EXT
+
+        /** ما لا يُلتفت إليه خارج مجلّداتنا: انظر تعليل التخطّي في [collectInto] */
+        private val OWN_FOLDER_ONLY_EXT = RAW_DATA_EXT + ZIP_EXT
 
         private val PUBLIC_MAP_DIRS = listOf("osmand", "osmand_data", "Locus", "osmdroid")
 
@@ -453,6 +570,59 @@ class OfflineMaps private constructor(context: Context) {
         /** ما تعرفه osmdroid بامتداده؛ يُسأل عنها لحظتها ولا تُكتب عندنا */
         private fun registeredExtensions(): Set<String> =
             runCatching { ArchiveFileFactory.getRegisteredExtensions() }.getOrNull().orEmpty()
+
+        /**
+         * مدخلٌ يشبه بلاطة: `z/x/y.png` في تخطيط osmdroid وأدوات التصدير كلِّها.
+         *
+         * التكبير رقمان على الأكثر (لا تكبير فوق ‎30‎ في العالم)، وذلك وحده يمنع أن
+         * يُقرأ مسارٌ مثل `data/1234/5/6.png` بلاطةً. والبداية `^` أو `/` كي يُقبل
+         * التخطيط المُسمّى (`mapnik/12/2045/1023.png`) وهو الشائع في `ZipFileArchive`.
+         */
+        private val TILE_ENTRY =
+            Regex("""(^|/)\d{1,2}/\d+/\d+\.(png|jpe?g|webp)$""", RegexOption.IGNORE_CASE)
+
+        /**
+         * سقفٌ على عدد المداخل التي نفحصها في مضغوطٍ واحد.
+         *
+         * أرشيف Geofabrik لبلدٍ يبلغ مئات الميغابايتات وفهرسُه المركزيّ عشرات الآلاف
+         * من المداخل، وتعدادُه كاملًا يُجمّد المسح — وهو ما يجب أن يبقى وراء الشاشة لا
+         * أمامها. وأرشيف البلاط يضع بلاطته الأولى في أوّل مداخله دائمًا (البنية
+         * `z/x/y` تُكتب بترتيبها)، فألفان كافيةٌ بمراحل. والحدّ **يُقرّ بحدِّه**: مضغوطٌ
+         * يخبّئ أوّل بلاطةٍ بعد ألفَي مدخل يُصنَّف بياناتٍ خامًا، ويظهر باسمه في
+         * الملاحظة — وذلك أهون من مسحٍ يقف.
+         */
+        private const val MAX_ZIP_ENTRIES = 2_000
+
+        /**
+         * أفي هذا المضغوط بلاطاتٌ فعلًا؟
+         *
+         * السؤال ليس ترفًا: راكبٌ وضع `morocco-latest-free_shp.zip` — وهو أرشيف أشكال
+         * ESRI من Geofabrik — في مجلّد الخرائط، فقال له التطبيق «وُجدت خريطة محلّيّة»
+         * ثمّ لم يرسم شيئًا. السبب أنّ `ZipFileArchive` يفتح أيّ مضغوطٍ بنجاح ولا يعِد
+         * بمحتواه؛ فالفتح ليس برهانًا، والبرهان أن نرى مدخلًا على هيئة بلاطة.
+         *
+         * ولا نقرأ بايتًا من المحتوى: تعدادُ أسماء المداخل يقرأ الفهرس المركزيّ وحده،
+         * ونقف عند أوّل إصابة. والحدّ الأعلى في [MAX_ZIP_ENTRIES].
+         *
+         * والعطب يُقرأ «لا»: مضغوطٌ مقصوصٌ أو لا يُفتح ليس خريطةً حتّى يثبت العكس —
+         * وهذا هو الاتّجاه الآمن هنا، خلافًا لسائر فحوصنا، لأنّ الخطأ في الاتّجاه الآخر
+         * وعدٌ بخريطةٍ لا وجود لها.
+         *
+         * وهي `internal` لا `private` لأنّ [MapDownloader] يحرس بها الملفّ المُنزَّل
+         * بالحكم نفسه: فحصان بمنطقين كانا سيفترقان عند أوّل تعديل.
+         */
+        internal fun holdsTiles(file: File): Boolean = runCatching {
+            ZipFile(file).use { zip ->
+                val entries = zip.entries()
+                var examined = 0
+                while (entries.hasMoreElements() && examined < MAX_ZIP_ENTRIES) {
+                    examined++
+                    val name = runCatching { entries.nextElement().name }.getOrNull() ?: continue
+                    if (TILE_ENTRY.containsMatchIn(name)) return@use true
+                }
+                false
+            }
+        }.getOrDefault(false)
 
         @Volatile
         private var instance: OfflineMaps? = null
@@ -697,14 +867,36 @@ enum class MapSource(@StringRes val label: Int) {
 }
 
 /**
+ * إجبار [OfflineMaps.bind] على مصدرٍ بعينه.
+ *
+ * تعدادٌ خاصّ بطبقة الخرائط لا `MapSourcePreference` من الإعدادات: تفضيل المستعمل فيه
+ * «تلقائيّ» و«OsmAnd» وليس لهما هنا معنًى — `bind` لا يبني إلّا مزوّد بلاطات — وربطُ
+ * هذه الطبقة بتعداد الإعدادات كان يعني حالتين ميّتتين في كلّ `when` هنا. والترجمة بين
+ * التعدادين تقع عند المُستدعي، حيث تُفهم دلالةُ كلٍّ منهما على حدة.
+ */
+enum class MapBindForce {
+    /** بلاطات الشبكة، ولا يُفتح قرصٌ ولو كان الأرشيف يغطّي */
+    ONLINE,
+
+    /** أرشيف المجلّد، ولو كان التفضيل العامّ إنترنتًا؛ ويسقط إلى الشبكة إن لم يغطِّ */
+    OFFLINE,
+}
+
+/**
  * المزوّد ومصدرُه معًا.
  *
  * لا يُفصلان: تبديل أحدهما دون الآخر يعني شارةً تكذب على ما يُرسم. ومالك هذا الكائن
  * مسؤولٌ عن `detach` على المزوّد، وإلّا بقيت قواعد سكليت مفتوحةً بلا مالك.
+ *
+ * و[archiveCovers] ثلاثيّةٌ لا ثنائيّة، ولها ثمنٌ تدفعه الواجهة إن أهملتها: القائمة
+ * تحتاج أن تقول «لا أرشيف يغطّي هذا المسار» أو تسكت، والجسّ هو الجواب الوحيد. فبدل أن
+ * يُعاد فتح الأرشيفات وجسُّها مرّةً ثانية لأجل سطرٍ في قائمة، يخرج ما عرفه [bind] معه.
  */
 class MapBinding internal constructor(
     val source: MapSource,
     val provider: MapTileProviderBase,
+    /** `true` يغطّي، `false` لا يغطّي أو لا أرشيف، و`null` لم نجسّ فلا علم لنا */
+    val archiveCovers: Boolean? = null,
 )
 
 /**
@@ -715,6 +907,9 @@ class MapBinding internal constructor(
  *
  * و[vectorFiles] منفصلة عن [files] لأنّ الفرق بينهما ليس تفصيلًا تقنيًّا: الأولى
  * موجودةٌ ولا تُرسم هنا، والثانية تُرسم. جمعُهما في عدّادٍ واحد يَعِد بما لا يُوفى.
+ * و[rawDataFiles] ثالثةٌ لها القول نفسه ولها سببٌ آخر: ملفّات Geofabrik ‏(‎.shp.zip‎
+ * و‎.osm.pbf‎ و‎.gpkg‎) بياناتٌ لا صور، وكانت تُعدّ خرائط عاملة فيُقال للمستعمل «وُجدت
+ * خريطة محلّيّة» ثمّ لا يُرسم منها شيء.
  */
 data class OfflineMapLibrary(
     val folderPath: String = "",
@@ -723,6 +918,8 @@ data class OfflineMapLibrary(
     val files: List<File> = emptyList(),
     /** خرائط OsmAnd المتجهيّة `.obf`: وُجدت، ولا يرسمها osmdroid */
     val vectorFiles: List<File> = emptyList(),
+    /** بياناتُ OSM خام: وُجدت، وليست خريطةً أصلًا — لا صورةَ فيها تُعرض */
+    val rawDataFiles: List<File> = emptyList(),
     /** تعذّر بلوغ مجلّدات التطبيقات الأخرى: قيدُ نظامٍ لا خطأُ مستعمل */
     val sharedStorageBlocked: Boolean = false,
     val scanned: Boolean = false,
@@ -732,8 +929,53 @@ data class OfflineMapLibrary(
     /** وُجدت خرائط OsmAnd متجهيّة ولا أرشيف نقطيًّا معها: حالةٌ لها قولٌ خاصّ */
     val hasVectorOnly: Boolean get() = files.isEmpty() && vectorFiles.isNotEmpty()
 
+    /**
+     * لا أرشيف ولا `.obf`، وإنّما بياناتٌ خام وحدها.
+     *
+     * و`.obf` تسبقها في الشرط عمدًا حين تجتمعان: صاحبُها يُحال إلى OsmAnd فتُفتح خريطته
+     * فعلًا، أمّا البيانات الخام فلا يفتحها شيءٌ على الهاتف — فالنصيحة الأنفع أولى.
+     */
+    val hasRawDataOnly: Boolean
+        get() = files.isEmpty() && vectorFiles.isEmpty() && rawDataFiles.isNotEmpty()
+
     /** أسماء الملفّات للعرض في الإعدادات؛ المسار الكامل لا يُقرأ على شاشة هاتف */
     val names: String get() = files.joinToString("، ") { it.name }
 
     val vectorNames: String get() = vectorFiles.joinToString("، ") { it.name }
+
+    val rawDataNames: String get() = rawDataFiles.joinToString("، ") { it.name }
+
+    /**
+     * كلّ ما وُجد في مجلّدات الخرائط مصنَّفًا، لتعرضه الإعدادات قائمةً واحدة.
+     *
+     * القوائم الثلاث تُدمج هنا لا في الواجهة: الترتيب جزءٌ من المعنى — ما يُرسم
+     * أوّلًا، ثمّ ما وُجد ولا يُرسم — ولو تُرك للواجهة لاختلف بين شاشةٍ وأخرى.
+     */
+    val entries: List<MapFileEntry>
+        get() = files.map { MapFileEntry(it, MapFileKind.ARCHIVE) } +
+            vectorFiles.map { MapFileEntry(it, MapFileKind.VECTOR) } +
+            rawDataFiles.map { MapFileEntry(it, MapFileKind.RAW_DATA) }
+}
+
+/** تصنيف ملفٍّ وُجد في مجلّد الخرائط: أيرسمه التطبيق أم لا، ولماذا */
+enum class MapFileKind {
+    /** أرشيف بلاطٍ نقطيّ فُتح فعلًا: هذا وحده ما يُرسم */
+    ARCHIVE,
+
+    /** خريطة OsmAnd متجهيّة `.obf`: تُفتح في OsmAnd ولا يرسمها osmdroid */
+    VECTOR,
+
+    /** بيانات OSM خام (‎shp‎ · ‎gpkg‎ · ‎pbf‎): ليست خريطةً أصلًا */
+    RAW_DATA,
+}
+
+/**
+ * سطرٌ في قائمة الخرائط المحلّيّة.
+ *
+ * الحجم يُقرأ هنا مرّةً عند بناء السطر لا في كلّ إعادة تركيب: `File.length` نداءُ
+ * نظامٍ على القرص، وقائمةٌ من عشرة ملفّات تُعيد تركيبها Compose عشرات المرّات في
+ * الثانية تصير عشرات النداءات في الثانية على مسارٍ لا يتبدّل.
+ */
+data class MapFileEntry(val file: File, val kind: MapFileKind) {
+    val sizeBytes: Long = runCatching { file.length() }.getOrDefault(0L)
 }

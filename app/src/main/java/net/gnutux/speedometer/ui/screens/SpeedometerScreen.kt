@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,6 +29,7 @@ import net.gnutux.speedometer.ui.components.SpeedGauge
 import net.gnutux.speedometer.ui.components.StatTile
 import net.gnutux.speedometer.ui.components.TripControls
 import net.gnutux.speedometer.ui.components.VehicleSelector
+import net.gnutux.speedometer.ui.components.aspect
 
 /**
  * ميزانية الارتفاع. كلّ ما تحت القرص ثابت الارتفاع، فالقرص وحده هو المتغيّر:
@@ -65,6 +66,9 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     // المدى والعتبة والحدّ من اشتقاقٍ واحد لا من ملفّ المركبة مباشرةً: حين يضبط
     // السائق حدًّا يُعاد بناء القرص حوله، والشاشات الأربع تقرأ الجواب نفسه
     val scale by vm.speedScale.collectAsStateWithLifecycle()
+    // تصميم وجه القرص من الإعدادات. افتراضه [GaugeStyle.CLASSIC]، فمن لم يختر شيئًا
+    // يرى قرص ما قبل 0.9.4 بلا فرق
+    val gaugeStyle by vm.settings.gaugeStyle.collectAsStateWithLifecycle()
 
     // عمودٌ خارجيّ لا يتمرّر: القرص والبلاطات وحدها تتمرّر داخل `weight(1f)`، وصفّ
     // الأزرار مثبَّت تحته خارج منطقة التمرير. قبلها كان «إنهاء» ينزلق تحت حافّة الشاشة
@@ -82,6 +86,13 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
             // فلا يخرج القرص عن الشاشة عرضًا مهما ضاقت
             val gaugeSize = minOf(maxOf(maxHeight - FixedBandHeight, MinGaugeSize), widthCap)
 
+            // الميزانية أعلاه كلّها ميزانية **ارتفاع**، وهي حكيمةٌ في وجهٍ مربّع
+            // لأنّ ارتفاعه عرضُه. أمّا الوجه العريض القصير (الشريط) فارتفاعه خمسا
+            // عرضه، فتقييده بميزانية الارتفاع يخرج شريطًا نحيلًا في وسط الشاشة
+            // وحوله بياضٌ لا معنى له. ولذلك يأخذ العريضُ سقفَ العرض وحده، ويتكفّل
+            // `aspectRatio` داخل المركّب بارتفاعه.
+            val gaugeWidth = if (gaugeStyle.aspect > 1f) widthCap else gaugeSize
+
             Column(
                 modifier = Modifier
                     .verticalScroll(rememberScrollState())
@@ -97,8 +108,12 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                     unitLabel = stringResource(R.string.unit_kmh),
                     modifier = Modifier
                         .padding(top = ItemSpacing)
-                        .size(gaugeSize),
+                        // العرض وحده لا الضلعان: الارتفاع يشتقّه المركّب من نسبة
+                        // التصميم. وفي الكلاسيكيّ النسبة ‎1‎ فيخرج المقاس نفسه الذي
+                        // كان يفرضه `size(gaugeSize)` بالبكسل الواحد
+                        .width(gaugeWidth),
                     limitKmh = scale.limitKmh,
+                    style = gaugeStyle,
                 )
 
                 // شريط التموضع تحت القرص: كان يحتلّ شريطًا كاملًا في الأعلى قبل

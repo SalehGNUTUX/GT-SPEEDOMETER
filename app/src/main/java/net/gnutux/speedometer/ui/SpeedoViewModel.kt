@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
 import net.gnutux.speedometer.SpeedoApp
 import net.gnutux.speedometer.core.media.MediaItem
 import net.gnutux.speedometer.core.profile.VehicleProfile
+import net.gnutux.speedometer.core.settings.AlertTone
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.settings.CameraScene
 import net.gnutux.speedometer.core.trip.TripLibrary
@@ -48,6 +49,22 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
 
     /** التفضيلات: مصدر حقيقة واحد تقرؤه الشاشات مباشرة بلا وسيطٍ في هذا الصنف */
     val settings: AppSettings = engine.settings
+
+    /**
+     * معاينة نغمة التنبيه من شاشة الإعدادات: تمريرٌ محض إلى المحرّك، وهو مالكُ
+     * المشغّل. والشدّة لا تُمرَّر — يقرؤها المحرّك من التفضيلات — كي تكون المعاينة
+     * عين ما يُسمع على الطريق لا صوتًا آخر بشدّةٍ أخرى.
+     */
+    fun previewAlert(tone: AlertTone) = engine.previewAlert(tone)
+
+    /**
+     * مستوى مجرى «المنبّه» في النظام صفر؟ فتُظهر الإعدادات `alert_stream_muted`.
+     *
+     * دالّةٌ لا `StateFlow`، والقصد أن يكون القارئ على بيّنة: القيمة تُقرأ من النظام
+     * في كلّ نداء. المستعمل قد يرفع المستوى بأزرار الجهاز وشاشتُنا مفتوحة، وتدفّقٌ
+     * مخزَّن كان سيُبقي التحذير بعد زوال سببه.
+     */
+    fun isAlarmStreamMuted(): Boolean = engine.isAlarmStreamMuted()
 
     val camera = engine.camera
     val isRecording = engine.camera.isRecording

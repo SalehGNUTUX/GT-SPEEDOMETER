@@ -354,8 +354,8 @@
     <string name="confirm_record_start_body">سيبدأ تصوير الطريق وتُنشأ رحلةٌ في السجلّ.</string>
     <string name="confirm_record_stop_title">إنهاء التسجيل؟</string>
     <string name="confirm_record_stop_body">سيُحفظ ما صُوّر وتُغلق الجلسة.</string>
-    <string name="confirm_yes_start">ابدأ</string>
-    <string name="confirm_yes_stop">أنهِ</string>
+    <string name="confirm_yes_start">ابدأ التسجيل</string>
+    <string name="confirm_yes_stop">أنهِ التسجيل</string>
     <string name="confirm_no">تراجَع</string>
 
     <!-- 0.9.3 — تحديثات التطبيق -->
@@ -381,4 +381,81 @@
     <string name="update_channel">التحديثات</string>
     <string name="update_never">لم يُفحص بعد</string>
     <string name="update_last_check">آخر فحص: %1$s</string>
+
+    <!-- ===== 0.9.4 — اختيار مصدر الخريطة صراحةً ===== -->
+    <string name="map_source_menu">مصدر الخريطة</string>
+    <string name="map_source_auto">تلقائيّ</string>
+    <string name="map_source_auto_note">أفضلُ ما يتوفّر: أرشيفٌ محلّيّ، ثمّ OsmAnd، ثمّ الإنترنت</string>
+    <string name="map_source_online_note">بلاطاتٌ حيّة من الشبكة</string>
+    <string name="map_source_osmand_note">صورةٌ يرسمها OsmAnd من خرائطه، دون اتّصال</string>
+    <string name="map_source_offline_note">أرشيف البلاطات الذي في مجلّد الخرائط</string>
+    <string name="map_source_na_online">لا اتّصال الآن</string>
+    <string name="map_source_na_osmand">OsmAnd غير متاح</string>
+    <string name="map_source_na_offline">لا أرشيف بلاطاتٍ يغطّي هذا المسار</string>
+
+    <!-- 0.9.4 — بياناتٌ خام لا تُرسم -->
+    <string name="map_rawdata_found">وُجد ملفّ بيانات OSM خام (%1$s) — بيانات لا صور، فلا يرسمه التطبيق. ملفّات Geofabrik بامتداد ‎.shp.zip‎ و‎.gpkg.zip‎ و‎.osm.pbf‎ كلّها من هذا النوع.</string>
+    <string name="mapdl_err_rawdata">هذا ملفّ بيانات OSM خام (شكل ESRI أو GeoPackage أو PBF) لا أرشيفَ بلاطات. المطلوب أرشيفٌ صوره PNG أو JPEG مرتّبةً على هيئة ‎z/x/y‎.</string>
+    <string name="mapdl_where_geofabrik">https://download.geofabrik.de/</string>
+    <string name="mapdl_where_geofabrik_label">Geofabrik — بيانات OSM لكلّ بلد</string>
+    <string name="mapdl_where_geofabrik_note">مصدرٌ حرٌّ ممتاز، لكنّ ملفّاته **بياناتٌ خام أو متجهيّة**: ‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg.zip‎ لا يرسمها هذا التطبيق، وملفّ ‎shortbread‎ بصيغة MBTiles متجهيّة (MVT). لرسمها داخل التطبيق يلزم محرّكٌ متجهيّ، وهو مقصد الإصدار 0.10.0. وحتّى ذلك الحين تُحوَّل ‎.osm.pbf‎ إلى ‎.obf‎ ببرنامج OsmAndMapCreator ثمّ تُقرأ عبر OsmAnd.</string>
+
+    <!-- ===== 0.9.4 — تصاميم العدّاد ===== -->
+    <string name="settings_section_gauge">تصميم العدّاد</string>
+    <string name="settings_gauge_style">شكل القرص</string>
+    <string name="settings_gauge_style_note">يسري على شاشة العدّاد وطبقة الكاميرا والنافذة المصغّرة. المدى والعتبة وحدّ السرعة لا تتبدّل — يتبدّل الشكل وحده.</string>
+    <string name="gauge_style_classic">كلاسيكيّ</string>
+    <string name="gauge_style_needle">مؤشّر تناظريّ</string>
+    <string name="gauge_style_minimal">مقتضب</string>
+    <string name="gauge_style_segments">شرات مضيئة</string>
+    <string name="gauge_style_dual_ring">حلقتان</string>
+    <string name="gauge_style_bar">شريط</string>
+
+    <!-- ===== 0.9.4 — النافذة المصغّرة ===== -->
+    <string name="settings_pip_style">شكل النافذة المصغّرة</string>
+    <string name="pip_style_number">رقم فقط</string>
+    <string name="pip_style_ring">حلقة</string>
+    <string name="pip_style_needle">مؤشّر</string>
+    <string name="pip_style_bar">شريط</string>
+    <string name="settings_pip_size">حجم الرقم</string>
+    <string name="pip_size_small">صغير</string>
+    <string name="pip_size_medium">متوسّط</string>
+    <string name="pip_size_large">كبير</string>
+    <string name="settings_pip_transparent">خلفيّة شفّافة</string>
+    <string name="settings_pip_transparent_note">تظهر النافذة المصغّرة خفيفةً يُرى ما تحتها. والنتيجة تختلف باختلاف الجهاز: بعض الأجهزة تركّب نافذة «صورة في صورة» فوق خلفيّةٍ صلبة فلا تظهر الشفافيّة.</string>
+    <string name="settings_pip_opacity">كثافة الخلفيّة</string>
+    <string name="percent_value">%1$d٪</string>
+
+    <!-- ===== 0.9.4 — نغمات التنبيه ===== -->
+    <string name="settings_alert_tone">نغمة التنبيه</string>
+    <string name="alert_tone_beep">صفيرة</string>
+    <string name="alert_tone_double">نبضتان</string>
+    <string name="alert_tone_chime">جرس</string>
+    <string name="alert_tone_digital">رنّة رقميّة</string>
+    <string name="alert_tone_soft">نبضة خفيفة</string>
+    <string name="settings_alert_volume">شدّة التنبيه</string>
+    <string name="settings_alert_volume_note">نسبةٌ من مستوى «المنبّه» في نظامك، وهو السقف الذي لا يتجاوزه تطبيق</string>
+    <string name="alert_preview">استمع</string>
+    <string name="alert_stream_muted">مستوى «المنبّه» في نظامك صفر، فلن يُسمع التنبيه مهما ضُبطت شدّته هنا. ارفعه من إعدادات صوت الجهاز.</string>
+
+    <!-- ===== 0.9.4 — قائمة الخرائط المحلّيّة ===== -->
+    <string name="settings_maps_list">ما في مجلّد الخرائط</string>
+    <string name="settings_maps_list_note">كلّ ما وجده الفحص، وما يُرسم منه وما لا يُرسم</string>
+    <string name="settings_maps_list_empty">لا ملفّات بعد</string>
+    <string name="map_kind_archive">أرشيف بلاطات — يُرسم</string>
+    <string name="map_kind_vector">متجهيّة ‎.obf‎ — لا يرسمها التطبيق</string>
+    <string name="map_kind_rawdata">بيانات خام — ليست خريطةً تُرسم</string>
+    <string name="map_file_line">%1$s · %2$s</string>
+    <string name="map_file_share">مشاركة</string>
+    <string name="map_file_delete">حذف</string>
+    <string name="map_file_foreign">في مجلّد تطبيقٍ آخر — يُحذف من هناك لا من هنا</string>
+    <string name="map_file_delete_title">حذف هذا الملفّ؟</string>
+    <string name="map_file_delete_body">سيُمحى «%1$s» (%2$s) من مجلّد الخرائط، ولا رجعة فيه.</string>
+    <string name="map_file_deleted">حُذف %1$s</string>
+    <string name="map_file_delete_failed">تعذّر حذف الملفّ</string>
+    <string name="map_file_share_failed">تعذّرت المشاركة</string>
+
+    <!-- ===== 0.9.4 — تأكيدٌ أوضح ===== -->
+    <string name="confirm_record_start_hint">لن يبدأ التصوير قبل أن تلمس زرّ البدء</string>
+    <string name="confirm_record_stop_hint">ما صُوّر حتّى الآن محفوظٌ ولن يضيع</string>
 </resources>

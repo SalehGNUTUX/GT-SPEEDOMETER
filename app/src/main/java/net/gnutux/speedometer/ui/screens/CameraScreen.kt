@@ -21,13 +21,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +40,7 @@ import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
@@ -45,8 +49,11 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SatelliteAlt
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -67,12 +74,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -81,6 +85,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -101,10 +106,17 @@ import net.gnutux.speedometer.core.location.FixQuality
 import net.gnutux.speedometer.core.location.GnssInfo
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.settings.CameraScene
+import net.gnutux.speedometer.core.settings.GaugeStyle
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
-import kotlin.math.cos
-import kotlin.math.sin
+import net.gnutux.speedometer.ui.components.GaugePalette
+import net.gnutux.speedometer.ui.components.aspect
+import net.gnutux.speedometer.ui.components.drawGaugeFace
+import net.gnutux.speedometer.ui.components.numberBiasOfSide
+import net.gnutux.speedometer.ui.components.numberFractionOfSide
+import net.gnutux.speedometer.ui.components.numberInsideFace
+import net.gnutux.speedometer.ui.theme.Danger
+import net.gnutux.speedometer.ui.theme.LocalGtColors
 
 // ===== شبكة الطبقة =====
 //
@@ -128,6 +140,25 @@ private val TOUCH_MIN = 56.dp
 
 private val ACTION_ROW_HEIGHT = 80.dp
 private val RECORD_SIZE = 80.dp
+
+// مقاسات مربّع التأكيد. مطلقةٌ كسائر عناصر التحكّم: المربّع لا يُحرق في الملفّ،
+// ومقاسه يتبع الإصبع لا الضلع الأقصر للشاشة.
+
+/** الفرجة بين متن السؤال وسطر الطمأنة تحته */
+private val CONFIRM_TEXT_GAP = 10.dp
+
+/**
+ * الفرجة بين الزرّ المملوء والزرّ الثانويّ تحته.
+ *
+ * ‎12dp‎ لا ‎4dp‎: هذه هي المسافة التي تمنع «الضغطة الزالقة» — إبهامٌ يهدف إلى
+ * «تراجَع» فيصيب حافّة «أنهِ التسجيل» لأنّ المركبة اهتزّت. وهي فرجةٌ بصريّة كذلك:
+ * تفصل الفعلين كتلتين لا قائمةً من سطرين.
+ */
+private val CONFIRM_BUTTON_GAP = 12.dp
+
+/** أيقونة الزرّ المملوء وفرجتها عن نصّه — مقاس Material للأيقونة داخل زرّ */
+private val CONFIRM_ICON = 20.dp
+private val CONFIRM_ICON_GAP = 10.dp
 
 /** القاعدة السادسة: أزرار الفعل الرئيسة ≥ 72dp */
 private val SHUTTER_SIZE = 72.dp
@@ -205,6 +236,16 @@ private val RING_TRACK = Color.Black.copy(alpha = HudMetrics.TRACK_ALPHA)
 private val HUD_ACCENT = Color(HudMetrics.COLOR_ACCENT)
 private val HUD_WARN = Color(HudMetrics.COLOR_WARN)
 private val HUD_DANGER = Color(HudMetrics.COLOR_DANGER)
+
+/**
+ * لون شرات التدريج في الأوجه التي ترسمها بلا أرقام (المؤشّر والحلقتان).
+ *
+ * أبيضُ خافت لا لونُ نصٍّ من السمة: الشرة تقع على المشهد مباشرةً، والأبيض الصريح
+ * يزاحم القيمة الحيّة فيُقرأ الوجه مزدحمًا. و‎0.55‎ هي الخفوت نفسه الذي يعطيه القرص
+ * الكبير لخطوط تدريجه (`TextPrimary` بـ ‎0.55‎)، فيتشابه الوجهان في الكثافة وإن
+ * اختلفا في مصدر اللون.
+ */
+private val HUD_TICK_LINE = Color.White.copy(alpha = 0.55f)
 
 /**
  * مقاسات الطبقة بوحدات Compose، مشتقّةً من نسب [HudMetrics] بضلعٍ أقصرَ بعينه.
@@ -322,6 +363,9 @@ fun CameraScreen(
     val screenFlashEnabled by vm.camera.screenFlashEnabled.collectAsStateWithLifecycle()
     val dualActive by vm.camera.dualActive.collectAsStateWithLifecycle()
     val confirmRecording by vm.settings.confirmRecording.collectAsStateWithLifecycle()
+    // تصميم الوجه من الإعدادات نفسها التي يقرأ منها القرص الكبير: من بدّل التصميم
+    // هناك يجده مبدَّلًا هنا، فليس للكاميرا عدّادٌ ثانٍ بشكلٍ آخر
+    val gaugeStyle by vm.settings.gaugeStyle.collectAsStateWithLifecycle()
 
     var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
@@ -615,6 +659,7 @@ fun CameraScreen(
             ) {
                 SpeedRing(
                     dim = dim,
+                    style = gaugeStyle,
                     speedKmh = liveSpeed * 3.6f,
                     maxKmh = scale.gaugeMaxKmh,
                     warnKmh = scale.warnKmh,
@@ -729,52 +774,185 @@ fun CameraScreen(
     // انتهى التسجيل من تلقاء نفسه — قرصٌ امتلأ أو خطأٌ في الترميز — والمربّع مفتوح،
     // لسأل «إنهاء التسجيل؟» عن تسجيلٍ منتهٍ ثمّ بدأ واحدًا جديدًا بضغطة «أنهِ».
     if (confirmRecord) {
-        val stopping = isRecording
-        AlertDialog(
-            onDismissRequest = { confirmRecord = false },
-            title = {
-                Text(
-                    stringResource(
-                        if (stopping) {
-                            R.string.confirm_record_stop_title
-                        } else {
-                            R.string.confirm_record_start_title
-                        }
-                    )
-                )
+        RecordConfirmDialog(
+            stopping = isRecording,
+            onConfirm = {
+                confirmRecord = false
+                vm.toggleRecording()
             },
-            text = {
+            onDismiss = { confirmRecord = false },
+        )
+    }
+}
+
+/**
+ * مربّع تأكيد بدء التسجيل وإنهائه.
+ *
+ * ## لماذا أُعيد بناؤه في 0.9.4
+ * كان الفعلان — «أنهِ التسجيل» و«تراجَع» — زرَّي نصٍّ متطابقين: اللون واحد والوزن
+ * واحد والمساحة واحدة. فالمربّع يُقرأ فقرةً تحتها كلمتان، لا سؤالًا له جوابان
+ * أحدهما لا يُستعاد. وسائقٌ يلمح لا يقرأ كان يضغط أيّهما أقرب إلى إبهامه.
+ *
+ * ## تخطيط الأزرار: عمودٌ بعرضٍ كامل لا صفٌّ من زرَّين صغيرين
+ * ثلاثة أسباب، مرتّبةً بأثرها:
+ * 1. **الهدف بحجم الإبهام لا بحجم الكلمة.** الصفّ الافتراضيّ في Material يعطي كلّ
+ *    زرٍّ عرضَ نصّه؛ و«تراجَع» ستّة أحرف، فيخرج هدفًا بعرض ‎70dp‎ في مركبةٍ تهتزّ.
+ *    وبالعمود يصير عرض كلّ زرٍّ عرضَ المربّع كلّه، وارتفاعه [TOUCH_MIN] بتمامه —
+ *    أي القاعدة السادسة نفسها التي تحكم أزرار هذه الشاشة.
+ * 2. **التراتب يصير رأسيًّا فيُقرأ بلا مقارنة.** الزرّ المملوء أعلى والثانويّ تحته:
+ *    العين تقع على الأوّل، ولا تحتاج أن توازن بين شيئين متجاورين متشابهين.
+ * 3. **لا يتبدّل الترتيب باتّجاه الكتابة.** الصفّ يقلب موضع الزرَّين بين العربيّة
+ *    واللاتينيّة؛ والعمود ثابتٌ في اللغتين، وهو ما يُبنى عليه اعتيادُ اليد.
+ *
+ * وكلاهما داخل فتحة `confirmButton` وحدها بلا `dismissButton`: تلك الفتحة تُخطَّط
+ * في `AlertDialogFlowRow`، وتوزيعُ الزرَّين على الفتحتين كان سيعيد الصفّ الذي
+ * نتجنّبه — ويجعل ترتيبهما رأسيًّا مسألةَ حظٍّ في القياس لا قرارًا.
+ *
+ * ## اللون والتباين
+ * البدء يأخذ اللون الأساسيّ من اللوحة الحيّة (`primary`/`onPrimary`) فيصحّ في
+ * السمتين بلا حساب. أمّا الإنهاء فيأخذ [Danger] حاويةً، ولون محتواه **يتبع
+ * السمة** لأنّ الأحمرين مختلفان اختلافًا يقلب الجواب:
+ * - الداكنة `#FF5A45` سلمونيّ ساطع، إضاءته النسبيّة ‎0.29‎: نسبة تباينه مع الأبيض
+ *   ‎3.1:1‎ وحدها (تكاد ترسب حتّى للنصّ الكبير)، ومع أسود اللوحة ‎6.2:1‎.
+ * - الفاتحة `#C62828` أحمرُ عميق، إضاءته ‎0.137‎: مع الأبيض ‎5.6:1‎ ومع الأسود
+ *   ‎3.7:1‎.
+ *
+ * فلونٌ واحد للمحتوى يُرسب إحدى السمتين حتمًا. ولذلك: أسود اللوحة على الداكنة،
+ * وأبيضُ على الفاتحة — وكلاهما فوق ‎5:1‎.
+ *
+ * @param stopping هل السؤال عن إنهاء تسجيلٍ جارٍ؟ يُمرَّر من [isRecording] لحظةَ
+ *   العرض لا من رايةٍ محفوظة، والعلّة عند موضع النداء.
+ */
+@Composable
+private fun RecordConfirmDialog(
+    stopping: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val danger = Danger
+    val isDark = LocalGtColors.current.isDark
+    // أسودُ اللوحة لا `Color.Black` الصرف: هو أسودُ التطبيق نفسه، ويكسب على
+    // السلمونيّ الساطع ما لا يكسبه الأبيض — والحساب في وثيقة هذه الدالّة
+    val onDanger = if (isDark) LocalGtColors.current.bg else Color.White
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        // أيقونة الرأس تقول نوع الفعل قبل قراءة سطرٍ واحد: نقطةُ تسجيلٍ للبدء
+        // ومربّعُ إيقافٍ للإنهاء، وهما الشكلان اللذان يحملهما زرّ التسجيل نفسه
+        // في هذه الشاشة — فلا يتعلّم المستعمل رمزًا جديدًا لأجل مربّعٍ واحد.
+        icon = {
+            Icon(
+                imageVector = if (stopping) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
+                contentDescription = null,
+                tint = danger,
+            )
+        },
+        title = {
+            Text(
+                text = stringResource(
+                    if (stopping) {
+                        R.string.confirm_record_stop_title
+                    } else {
+                        R.string.confirm_record_start_title
+                    }
+                ),
+                textAlign = TextAlign.Center,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(CONFIRM_TEXT_GAP)) {
                 Text(
-                    stringResource(
+                    text = stringResource(
                         if (stopping) {
                             R.string.confirm_record_stop_body
                         } else {
                             R.string.confirm_record_start_body
                         }
-                    )
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
                 )
-            },
-            confirmButton = {
+                // سطر الطمأنة، وهو أهمّ ما في مربّع الإنهاء: «ما صُوّر حتّى الآن
+                // محفوظٌ ولن يضيع». من يتردّد أمام «أنهِ» إنّما يخشى أن يذهب ما
+                // صوّره، فإن لم يُقل له هذا صراحةً ترك التسجيل جاريًا حتّى يمتلئ
+                // القرص. وهو أخفتُ من المتن وأصغر: طمأنةٌ لا شرط.
+                Text(
+                    text = stringResource(
+                        if (stopping) {
+                            R.string.confirm_record_stop_hint
+                        } else {
+                            R.string.confirm_record_start_hint
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = LocalGtColors.current.textSecondary,
+                    ),
+                )
+            }
+        },
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(CONFIRM_BUTTON_GAP),
+            ) {
+                Button(
+                    onClick = onConfirm,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = TOUCH_MIN),
+                    colors = if (stopping) {
+                        ButtonDefaults.buttonColors(
+                            containerColor = danger,
+                            contentColor = onDanger,
+                        )
+                    } else {
+                        ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    },
+                ) {
+                    Icon(
+                        imageVector = if (stopping) {
+                            Icons.Filled.Stop
+                        } else {
+                            Icons.Filled.PlayArrow
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(CONFIRM_ICON),
+                    )
+                    Spacer(Modifier.size(CONFIRM_ICON_GAP))
+                    Text(
+                        text = stringResource(
+                            if (stopping) R.string.confirm_yes_stop else R.string.confirm_yes_start
+                        ),
+                        maxLines = 1,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                }
+                // الثانويّ يبقى زرّ نصّ: مساحته كاملة كي تُصيبها اليد، ووزنه أخفّ
+                // كي لا ينازع الأوّل. ولونه `onSurfaceVariant` لا اللون الأساسيّ —
+                // زرّ نصٍّ بلون الأكسنت كان سيعود إلى المشكلة نفسها: فعلان
+                // متساويان في الجاذبيّة.
                 TextButton(
-                    onClick = {
-                        confirmRecord = false
-                        vm.toggleRecording()
-                    }
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = TOUCH_MIN),
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
                 ) {
                     Text(
-                        stringResource(
-                            if (stopping) R.string.confirm_yes_stop else R.string.confirm_yes_start
-                        )
+                        text = stringResource(R.string.confirm_no),
+                        maxLines = 1,
+                        style = MaterialTheme.typography.bodyLarge,
                     )
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmRecord = false }) {
-                    Text(stringResource(R.string.confirm_no))
-                }
-            },
-        )
-    }
+            }
+        },
+    )
 }
 
 private fun captureWindow(view: android.view.View, onResult: (Bitmap?) -> Unit) {
@@ -891,14 +1069,53 @@ private fun OverlayStat(dim: HudDim, label: String, value: String, unit: String)
 }
 
 /**
- * خليّة القرص.
+ * خليّة القرص، بتصميم الوجه الذي اختاره المستعمل.
  *
- * لا تستعمل `CompactGauge`: تلك تقرأ ألوان اللوحة الحيّة، فتصير في السمة الفاتحة
- * `#00796B` بينما يحرق الملفّ `#00E5C7` أبدًا — فيختلف ما رآه المصوِّر عمّا حُفظ.
- * وهنا نملك كذلك سماكة القوس ونسبها، فتطابق ثوابت الراسم بلا وسيط.
+ * ## الألوان ثابتة لا من السمة
+ * هي طبقةٌ تقع على صورةٍ فوتوغرافيّة لا على خلفيّة التطبيق، والملفّ المحروق يستعمل
+ * الثلاثيّ الداكن أبدًا؛ فلو تبعت السمةَ لصارت في الوضع الفاتح `#00796B` بينما
+ * يحرق الملفّ `#00E5C7` — أي يختلف ما رآه المصوِّر عمّا حُفظ. ولذلك تُبنى
+ * [GaugePalette] هنا من ثوابت الطبقة ([HUD_ACCENT] و[RING_TRACK] وأخواتها) لا من
+ * `LocalGtColors`.
+ *
+ * ## ما يُمرَّر إلى [drawGaugeFace] ولماذا
+ * - `redZone = Color.Transparent`: الراسم المحروق لا يرسم منطقةً حمراء باهتة على
+ *   المسار، ورسمُها هنا وحدها كان سيُظهر على الشاشة ما ليس في الملفّ.
+ * - `ticks = null`: أرقام تدريجٍ على حلقةٍ قطرها ‎124dp‎ فوق مشهدٍ متحرّك لا تُقرأ،
+ *   وإنّما تُوسّخ. وإسقاطها يُسقط معه «مطرح الأرقام» فتملأ الحلقة صندوقها بالضبط،
+ *   وهو ما ينصّ عليه عقد [HudMetrics.RING_DIAMETER]: الضلع هو القطر الخارجيّ.
+ * - `strokeOfSide = HudMetrics.RING_STROKE_OF_DIAMETER`: سماكةٌ **مرجعيّة** يضربها
+ *   كلُّ تصميمٍ في معامله الخاصّ، فيخرج «الرفيع» رفيعًا و«المقطَّع» سميكًا بلا أن
+ *   تعرف هذه الشاشة جدول المعاملات.
+ *
+ * ## فرقٌ متعمَّد في 0.9.4: الشاشة تتبع التصميم والملفّ لا يتبعه
+ * `core/camera/VideoOverlayPainter` يحرق الوجه الكلاسيكيّ أبدًا في هذا الإصدار.
+ * فمن اختار «المؤشّر» يراه على شاشته ويجد في ملفّه قوسًا كلاسيكيًّا. وهو تراجعٌ عن
+ * قاعدة «المرسوم هو المحروق» مقصورٌ على **شكل** الوجه: المدى والعتبة والحدّ وألوان
+ * المناطق تخرج من [SpeedScale] نفسه في الموضعين، فلا يقول أحدهما «تجاوزتَ» ويسكت
+ * الآخر. وسدُّ الفرق يوجب حمل هندسة التصاميم الستّة إلى القماش المحروق، وذلك عملٌ
+ * لم يدخل هذا الإصدار.
+ *
+ * ## حجم الرقم
+ * الكلاسيكيّ وحده يبقى على [HudDim.gaugeValue] — أي ‎%10.7‎ من الضلع الأقصر، وهو
+ * ما يحرقه الراسم بالضبط: التصميم الافتراضيّ يجب أن يخرج على الشاشة كما يخرج في
+ * الملفّ بالبكسل الواحد. والخمسة الأخرى تشتقّ رقمها من
+ * [GaugeStyle.numberFractionOfSide] لأنّ وجوهها تحتاج ذلك الحيّز: رقمٌ بـ ‎44dp‎ في
+ * ميناء المؤشّر يقع تحت المؤشّر نفسه فيختفي كلّما مرّ به — أي عند كلّ سرعة.
+ * ونتيجةُ ذلك أنّ أرقام الخمسة أصغرُ من الكلاسيكيّ، وهو ثمنٌ مقصود: من اختار
+ * ميناءً اختار أن يقرأ الزاوية.
+ *
+ * @param style تصميم الوجه من الإعدادات، يقرؤه المستدعي من `settings.gaugeStyle`.
  */
 @Composable
-private fun SpeedRing(dim: HudDim, speedKmh: Float, maxKmh: Int, warnKmh: Int, limitKmh: Int) {
+private fun SpeedRing(
+    dim: HudDim,
+    style: GaugeStyle,
+    speedKmh: Float,
+    maxKmh: Int,
+    warnKmh: Int,
+    limitKmh: Int,
+) {
     val target = (speedKmh / maxKmh).coerceIn(0f, 1f)
     val animated by animateFloatAsState(
         targetValue = target,
@@ -913,88 +1130,136 @@ private fun SpeedRing(dim: HudDim, speedKmh: Float, maxKmh: Int, warnKmh: Int, l
     }
     // سالبٌ يعني «لا علامة». يُحسب هنا لا داخل `DrawScope` كي يبقى الرسم بلا شرط
     val limitFraction = if (limitKmh in 1..maxKmh) limitKmh.toFloat() / maxKmh else -1f
-    Box(
-        // القطر خارجيّ: ضلع الخليّة هو حدّ القوس الخارجيّ، وهو تعريف العقد نفسه
-        modifier = Modifier.size(dim.ringDiameter),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = size.minDimension * HudMetrics.RING_STROKE_OF_DIAMETER
-            val radius = (size.minDimension - stroke) / 2f
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val topLeft = Offset(center.x - radius, center.y - radius)
-            val arcSize = Size(radius * 2f, radius * 2f)
-            drawArc(
-                color = RING_TRACK,
-                startAngle = HudMetrics.ARC_START,
-                sweepAngle = HudMetrics.ARC_SWEEP,
-                useCenter = false,
-                topLeft = topLeft,
-                size = arcSize,
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
-            if (animated > 0.001f) {
-                drawArc(
-                    color = activeColor,
-                    startAngle = HudMetrics.ARC_START,
-                    sweepAngle = HudMetrics.ARC_SWEEP * animated,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = Stroke(width = stroke, cap = StrokeCap.Round),
-                )
-            }
-            // علامة الحدّ فوق القوس الحيّ: تحته كان يغطّيها عند التجاوز، وهو
-            // بالضبط الحال الذي تُقرأ فيه. والنسب من العقد فتطابق ما يحرقه الراسم
-            if (limitFraction >= 0f) {
-                val angleRad = Math.toRadians(
-                    (HudMetrics.ARC_START + HudMetrics.ARC_SWEEP * limitFraction).toDouble()
-                )
-                val cosA = cos(angleRad).toFloat()
-                val sinA = sin(angleRad).toFloat()
-                val half = stroke * HudMetrics.LIMIT_MARK_LENGTH_OF_STROKE / 2f
-                drawLine(
-                    color = HUD_DANGER,
-                    start = Offset(
-                        center.x + cosA * (radius - half),
-                        center.y + sinA * (radius - half),
-                    ),
-                    end = Offset(
-                        center.x + cosA * (radius + half),
-                        center.y + sinA * (radius + half),
-                    ),
-                    strokeWidth = stroke * HudMetrics.LIMIT_MARK_WIDTH_OF_STROKE,
-                )
-            }
-        }
-        // الفجوة بين الرقم ووحدته مصرَّحٌ بها لا متروكةٌ لصناديق جدول الطباعة:
-        // الراسم المحروق يوسّط الكتلة نفسها (رقم + فجوة + وحدة) على مركز القوس،
-        // فلزم أن يعرف الطرفان الفجوة بالرقم نفسه
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(dim.gaugeStackGap),
+    val warnFraction = (warnKmh.toFloat() / maxKmh).coerceIn(0f, 1f)
+
+    val palette = GaugePalette(
+        active = activeColor,
+        track = RING_TRACK,
+        redZone = Color.Transparent,
+        // بلا تدريجٍ رقميّ، فلون الأرقام لا يُقرأ منه شيء؛ ويبقى مصرَّحًا لأنّ
+        // [GaugePalette] لا تحتمل غيابه
+        tick = Color.White,
+        tickLine = HUD_TICK_LINE,
+        limit = HUD_DANGER,
+    )
+
+    val density = LocalDensity.current
+    // ضلع **الوجه** الأقصر: قطرُ الحلقة في الأوجه المستديرة، وارتفاعُ الوجه في
+    // الشريط. وعرض الخليّة يبقى [HudDim.ringDiameter] في التصاميم كلّها — وهو ليس
+    // تفصيلًا: لوح الإحصاءات يحسب أقصى عرضه بطرح هذا العدد بعينه من عرض الشاشة،
+    // فخليّةٌ أعرض منه كانت ستتراكب مع اللوح على الشاشات الضيّقة.
+    val faceSide = dim.ringDiameter / style.aspect
+    val numberSize = if (style == GaugeStyle.CLASSIC) {
+        dim.gaugeValue
+    } else {
+        with(density) { (faceSide * style.numberFractionOfSide).toSp() }
+    }
+    val numberBox = if (style == GaugeStyle.CLASSIC) {
+        dim.gaugeValueBox
+    } else {
+        numberSize * HudMetrics.FONT_BOX
+    }
+
+    if (style.numberInsideFace) {
+        Box(
+            // القطر خارجيّ: ضلع الخليّة هو حدّ القوس الخارجيّ، وهو تعريف العقد نفسه.
+            // والنسبة من التصميم لا مثبَّتةً على ‎1‎ وإن كانت اليوم ‎1‎ في كلّ ما يدخل
+            // هذا الفرع: مصدر النسبة واحدٌ فلا يُنسى موضعٌ عند إضافة تصميم
+            modifier = Modifier
+                .width(dim.ringDiameter)
+                .aspectRatio(style.aspect),
+            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = Fmt.speed(speedKmh),
-                style = MaterialTheme.typography.displayMedium.copy(
-                    fontSize = dim.gaugeValue,
-                    lineHeight = dim.gaugeValueBox,
-                    fontWeight = FontWeight.Black,
-                    color = Color.White,
-                    shadow = dim.valueShadow,
-                ),
-            )
-            Text(
-                text = stringResource(R.string.unit_kmh),
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = dim.gaugeUnit,
-                    lineHeight = dim.gaugeUnitBox,
-                    letterSpacing = NO_TRACKING,
-                    color = Color.White,
-                    shadow = dim.unitShadow,
-                ),
+            Canvas(Modifier.fillMaxSize()) {
+                drawGaugeFace(
+                    style = style,
+                    fraction = animated,
+                    warnFraction = warnFraction,
+                    limitFraction = limitFraction,
+                    palette = palette,
+                    strokeOfSide = HudMetrics.RING_STROKE_OF_DIAMETER,
+                    ticks = null,
+                )
+            }
+            // الإزاحة من التصميم: المؤشّر وحده يطلبها، وسببها أنّ مركز الميناء
+            // مشغولٌ بالصرّة — والرقمُ الموسَّط عليها يختفي تحت المؤشّر عند كلّ مرور
+            HudGaugeNumber(
+                dim = dim,
+                numberSize = numberSize,
+                numberBox = numberBox,
+                speedKmh = speedKmh,
+                modifier = Modifier.offset(y = faceSide * style.numberBiasOfSide),
             )
         }
+    } else {
+        // الشريط: لا وسط له يسع رقمًا ([GaugeStyle.numberInsideFace] معدومة)،
+        // فالرقم فوقه في عمودٍ واحد عرضه عرض الخليّة نفسها
+        Column(
+            modifier = Modifier.width(dim.ringDiameter),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            HudGaugeNumber(
+                dim = dim,
+                numberSize = numberSize,
+                numberBox = numberBox,
+                speedKmh = speedKmh,
+            )
+            MiniBarFace(
+                width = dim.ringDiameter,
+                fraction = animated,
+                warnFraction = warnFraction,
+                limitFraction = limitFraction,
+                palette = palette,
+            )
+        }
+    }
+}
+
+/**
+ * رقم القرص ووحدته في طبقة الكاميرا.
+ *
+ * الفجوة بين الرقم ووحدته مصرَّحٌ بها لا متروكةٌ لصناديق جدول الطباعة: الراسم
+ * المحروق يوسّط الكتلة نفسها (رقم + فجوة + وحدة) على مركز القوس، فلزم أن يعرف
+ * الطرفان الفجوة بالرقم نفسه.
+ *
+ * و`lineHeight` مثبَّتٌ على [numberBox]: صناديق Material 3 بـ `sp` فتتمدّد بمقياس
+ * خطّ النظام، ورقمٌ بسطرٍ أقصر من محارفه يُقصّ من أعلاه.
+ */
+@Composable
+private fun HudGaugeNumber(
+    dim: HudDim,
+    numberSize: TextUnit,
+    numberBox: TextUnit,
+    speedKmh: Float,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(dim.gaugeStackGap),
+    ) {
+        Text(
+            text = Fmt.speed(speedKmh),
+            maxLines = 1,
+            style = MaterialTheme.typography.displayMedium.copy(
+                fontSize = numberSize,
+                lineHeight = numberBox,
+                fontWeight = FontWeight.Black,
+                color = Color.White,
+                shadow = dim.valueShadow,
+            ),
+        )
+        Text(
+            text = stringResource(R.string.unit_kmh),
+            maxLines = 1,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = dim.gaugeUnit,
+                lineHeight = dim.gaugeUnitBox,
+                letterSpacing = NO_TRACKING,
+                color = Color.White,
+                shadow = dim.unitShadow,
+            ),
+        )
     }
 }
 

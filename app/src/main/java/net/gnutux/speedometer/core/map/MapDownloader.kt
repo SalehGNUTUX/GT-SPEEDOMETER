@@ -77,6 +77,12 @@ import net.gnutux.speedometer.R
  *   ويُستأنس ببايتات أوّل بلاطة حين يسكت الجدول — و«لا أدري» تعني: امضِ. منعُ أرشيفٍ
  *   سليمٍ أسوأ من قبول واحدٍ مشكوكٍ فيه، لأنّ الأوّل خسارةٌ مؤكّدة والثاني احتمال.
  *
+ * — **والبيانات الخام مثلها**: `PK` في رأس الملفّ يقول «مضغوط» ولا يقول ما فيه، وأشهر
+ *   ما يُنزّله المستعمل اليوم أرشيفُ Geofabrik بامتداد ‎_shp.zip‎ — وفيه ‎.shp‎ و‎.dbf‎
+ *   لا صور. فيُفتح فهرسه ويُطلب فيه مدخلٌ على هيئة `z/x/y.png` قبل أن يبلغ اسمه
+ *   النهائيّ. والاتّجاه الآمن هنا معكوسٌ عن سابقه: مضغوطٌ لا نرى فيه بلاطة يُرفض، لأنّ
+ *   قبوله وعدٌ بخريطةٍ لا وجود لها — وهي شكوى المستعمل التي أنشأت هذا الحارس.
+ *
  * — **قيدٌ معترَفٌ به**: التنزيل يعيش في نطاق العمليّة لا في خدمةٍ أماميّة، فمغادرة
  *   التطبيق طويلًا قد يقتله النظام قبل أن يكتمل. هذا مقبولٌ هنا لأنّ ملفّ `.part` يبقى
  *   كما هو ويُستأنف بالرابط نفسه، والنصّ `mapdl_background_note` يقول ذلك للمستعمل
@@ -303,6 +309,16 @@ class MapDownloader private constructor(context: Context) {
         if (extension in SQLITE_EXTENSIONS && tileFormatOf(plainPart) == TileFormat.VECTOR) {
             runCatching { plainPart.delete() }
             return fail(R.string.mapdl_err_vector)
+        }
+
+        // (7) وبلاطاتٌ لا بياناتٍ خامًا — على `zip` وحدها، وهو نظير الحارس الذي قبله:
+        // `PK` في الرأس يقول «مضغوط» ولا يقول ما فيه، وأشهر ما يُدلّ عليه اليوم أرشيفُ
+        // Geofabrik بامتداد ‎_shp.zip‎: يجتاز الرأس، ويُنقل إلى مجلّد الخرائط، ويُعلَن
+        // خريطةً محلّيّة، ثمّ لا تظهر منه بلاطةٌ واحدة. فيُفتح فهرسه ويُطلب فيه مدخلٌ
+        // على هيئة `z/x/y.png` — والحكم واحدٌ مع [OfflineMaps.holdsTiles] لا نسخةٌ منه.
+        if (extension == ZIP_EXTENSION && !OfflineMaps.holdsTiles(plainPart)) {
+            runCatching { plainPart.delete() }
+            return fail(R.string.mapdl_err_rawdata)
         }
 
         runCatching { if (target.exists()) target.delete() }

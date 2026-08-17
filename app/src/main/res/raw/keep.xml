@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    نغمات التنبيه تُحلّ بـ `Resources.getIdentifier` من `AlertTone.resName`، لا بـ
+    `R.raw.x`. ومقلّص الموارد لا يرى إلّا المراجع الحرفيّة، فلو فُعّل
+    `shrinkResources` يومًا لحذف الملفّات الخمسة وهي مستعمَلة — ولصار التنبيه
+    صامتًا في نسخة الإصدار وحدها بينما يعمل في نسخة التطوير، وهو أسوأ أنواع
+    الأعطال: لا يظهر إلّا عند المستعمل.
+
+    اليوم `isMinifyEnabled = false` فلا تقليص أصلًا، وهذا الملفّ احتياطٌ لغدٍ
+    يُفعَّل فيه، لا إصلاحٌ لعطلٍ قائم.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/alert_beep,@raw/alert_double,@raw/alert_chime,@raw/alert_digital,@raw/alert_soft" />

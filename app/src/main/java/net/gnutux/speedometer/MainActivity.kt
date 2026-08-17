@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
+import android.graphics.PixelFormat
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -178,6 +180,20 @@ class MainActivity : ComponentActivity() {
             val pipOnLeave by vm.settings.pipOnLeave.collectAsStateWithLifecycle()
             LaunchedEffect(trip.status, recordingSession, pipOnLeave) { applyPipParams() }
 
+            // شفافيّة النافذة المصغَّرة: صفةُ نافذةٍ لا حالةَ تركيب، فموضعها هنا.
+            // والشرط مركَّبٌ من الاثنين معًا — منكمشٌ **و**التفضيل مفعَّل — كي لا
+            // تمسّ الشفافيّةُ واجهةَ ملء الشاشة بحال.
+            //
+            // و`onDispose` يعيدها صمّاء: تفكيك التركيب يقع عند تبديل السمة وعند هدم
+            // النشاط، وتركُ النافذة شفّافةً بعده يعني واجهةً كاملة يُرى من خلفها
+            // سطحُ المكتب.
+            val pipTransparent by vm.settings.pipTransparent.collectAsStateWithLifecycle()
+            val wantTranslucent = inPipMode.value && pipTransparent
+            DisposableEffect(wantTranslucent) {
+                applyWindowTranslucency(wantTranslucent)
+                onDispose { applyWindowTranslucency(false) }
+            }
+
             GtSpeedometerTheme(
                 mode = mode,
                 dayStartHour = dayStart,
@@ -206,6 +222,51 @@ class MainActivity : ComponentActivity() {
     private fun applyScreenBrightness(value: Float) {
         runCatching {
             window.attributes = window.attributes.apply { screenBrightness = value }
+        }
+    }
+
+    /**
+     * محاولةُ جعل النافذة تنفذ إلى ما وراءها، ثمّ ردُّها صمّاء.
+     *
+     * ## لماذا لا تكفي شفافيّةُ Compose وحدها
+     * `Modifier.background(Bg.copy(alpha = …))` يمزج اللون بما تحته **في هذه
+     * النافذة**، وتحته سطحُ نافذةٍ صمّاء؛ فالنتيجة `Bg` ممزوجًا بالأسود — أي لونٌ
+     * أغمق لا نافذةٌ يُرى من خلفها. ولا سبيل إلى النفاذ إلّا برفع الصمم عن النافذة
+     * نفسها، وذلك ثلاثة أمور مجتمعة لا واحد:
+     * 1. **صيغة السطح**: [PixelFormat.TRANSLUCENT] كي يحمل السطح قناةَ ألفا. سمة
+     *    التطبيق ترث `Theme.Material.NoActionBar` وهي صمّاء، فسطحها بلا ألفا.
+     * 2. **خلفيّة النافذة**: `windowBackground` عندنا لونٌ صلب (`@color/…`)، وهو
+     *    يُرسم قبل شجرة Compose فيملأ السطح مهما فعلت الشجرة. يُبدَّل شفّافًا —
+     *    ويقع ذلك في `AppRoot` لأنّه صاحبُ هذه الخاصّيّة أصلًا (يضبطها مع السمة)،
+     *    ومالكان لخاصّيّةٍ واحدة يتنازعانها.
+     * 3. **إخبار مدير النوافذ**: [Activity.setTranslucent] — عموميّةٌ منذ **مستوى
+     *    30** (تحقّقناه في `android.jar` للمستوى 35: `public boolean
+     *    setTranslucent(boolean)`، بلا `@SystemApi`) — تُعلم النظام أنّ النافذة لم
+     *    تعد صمّاء فيبقي ما خلفها مرسومًا. ومردودها `Boolean` يقول أنجح التحويل أم
+     *    لا، ونحن لا نبني عليه شيئًا: هو خبرٌ لا شرط.
+     *
+     * ## وهل تظهر الشفافيّة فعلًا؟ لا ضمان
+     * وثائق «صورة في صورة» — دليل المطوّر ووثيقة AOSP معًا — **لا تذكر شفافيّة
+     * النافذة المصغَّرة أصلًا**: لا تَعِد بها ولا تنفيها. ونافذةُ الانكماش يركّبها
+     * النظام في طبقةٍ من `SystemUI` لا التطبيق، وكثيرٌ من المصنّعين يضع تحتها لونًا
+     * صلبًا (خلفيّةَ المهمّة) لأجل حركة الانتقال. فالمكتوب هنا **أقصى ما يملكه
+     * التطبيق**، لا وعدٌ بالنتيجة — وسطر الإعداد يقول ذلك للمستعمل بلفظه.
+     *
+     * وفشلُه هيّنٌ بالبناء: أسوأ ما يقع أن يُمزج لون الخلفيّة بأسودَ فتخرج النافذة
+     * أغمق ممّا اختار، والرقم فوقها صريحُ اللون بظلٍّ تحته (انظر `PipScreen`) فيبقى
+     * مقروءًا في الحالين.
+     *
+     * والنداءات ملفوفة: نافذةٌ في طور الهدم ترمي، وتخصيصُ مصنّعٍ قد يرمي من
+     * [Activity.setTranslucent] نفسها.
+     */
+    private fun applyWindowTranslucency(translucent: Boolean) {
+        runCatching {
+            window.setFormat(
+                if (translucent) PixelFormat.TRANSLUCENT else PixelFormat.OPAQUE
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setTranslucent(translucent)
+            }
         }
     }
 
@@ -351,9 +412,21 @@ private fun AppRoot(
     // أيقوناتٍ بيضاء على شريطٍ أبيض عند الظهيرة، ووميضًا داكنًا عند الإقلاع.
     val palette = LocalGtColors.current
     val window = (context as? Activity)?.window
-    LaunchedEffect(palette.isDark, window) {
+
+    // خلفيّة النافذة تُرسم **قبل** شجرة Compose وتحتها، فلونٌ صلبٌ فيها يُبطل كلَّ
+    // شفافيّةٍ في الشجرة مهما بلغت: كنّا نسأل النافذة أن تنفذ ثمّ نملؤها بلونٍ صمّاء.
+    // فحين تكون النافذة منكمشةً والشفافيّة مطلوبة تُترك الخلفيّة معدومةَ الشفافيّة
+    // ليصل لونُ `PipScreen` وحده إلى السطح. والشرط هو الشرط نفسه الذي يرفع الصمم عن
+    // النافذة في `MainActivity.applyWindowTranslucency`، ولا يجوز أن يفترقا.
+    val pipTransparent by vm.settings.pipTransparent.collectAsStateWithLifecycle()
+    val translucentWindow = isInPip && pipTransparent
+    LaunchedEffect(palette.isDark, window, translucentWindow) {
         val w = window ?: return@LaunchedEffect
-        w.setBackgroundDrawable(ColorDrawable(palette.bg.toArgb()))
+        w.setBackgroundDrawable(
+            ColorDrawable(
+                if (translucentWindow) Color.Transparent.toArgb() else palette.bg.toArgb()
+            )
+        )
         WindowCompat.getInsetsController(w, w.decorView).apply {
             isAppearanceLightStatusBars = !palette.isDark
             isAppearanceLightNavigationBars = !palette.isDark

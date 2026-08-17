@@ -115,6 +115,64 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
     val speedAlertEnabled: StateFlow<Boolean> = pref(KEY_SPEED_ALERT, false)
     fun setSpeedAlertEnabled(enabled: Boolean) = put(KEY_SPEED_ALERT, enabled)
 
+    /**
+     * النغمة المختارة للتنبيه. خمسٌ لأنّ المقصورة تختلف: صفيرةٌ حادّة تُسمع فوق
+     * ضجيج دراجةٍ ناريّة وتُفزع في سيّارةٍ صامتة، وجرسٌ لطيف عكسها.
+     */
+    val alertTone: StateFlow<AlertTone> =
+        data.map { AlertTone.from(it[KEY_ALERT_TONE]) }
+            .stateIn(scope, SharingStarted.Eagerly, AlertTone.DEFAULT)
+
+    fun setAlertTone(tone: AlertTone) = put(KEY_ALERT_TONE, tone.id)
+
+    /**
+     * شدّة التنبيه من ‎10‎ إلى ‎100‎، وهي **نسبةٌ من مجرى المنبّه** لا مستوًى مطلقًا:
+     * مستوى منبّه النظام يبقى السقف، فلا يتجاوز تطبيقٌ ما ضبطه صاحب الجهاز. والقاع
+     * ‎10‎ لا ‎0‎ لأنّ الصفر إطفاءٌ صامت، وللإطفاء مفتاحُه المعلن أعلاه.
+     */
+    val alertVolume: StateFlow<Int> = pref(KEY_ALERT_VOLUME, DEFAULT_ALERT_VOLUME)
+    fun setAlertVolume(percent: Int) = put(KEY_ALERT_VOLUME, percent.coerceIn(10, 100))
+
+    // ===== شكل العدّاد =====
+
+    /**
+     * تصميم القرص. [GaugeStyle.CLASSIC] هو ما كان قبل 0.9.4 حرفًا بحرف، وهو
+     * الافتراضيّ: من لم يختر شيئًا لا يتبدّل عليه شيء.
+     */
+    val gaugeStyle: StateFlow<GaugeStyle> =
+        data.map { GaugeStyle.from(it[KEY_GAUGE_STYLE]) }
+            .stateIn(scope, SharingStarted.Eagerly, GaugeStyle.DEFAULT)
+
+    fun setGaugeStyle(style: GaugeStyle) = put(KEY_GAUGE_STYLE, style.id)
+
+    /** شكل النافذة المصغَّرة: رقمٌ مجرَّد، أو قرصٌ صغير، أو مؤشّر، أو شريط */
+    val pipStyle: StateFlow<PipStyle> =
+        data.map { PipStyle.from(it[KEY_PIP_STYLE]) }
+            .stateIn(scope, SharingStarted.Eagerly, PipStyle.DEFAULT)
+
+    fun setPipStyle(style: PipStyle) = put(KEY_PIP_STYLE, style.id)
+
+    /** حجم محتوى النافذة المصغَّرة داخل إطارها */
+    val pipSize: StateFlow<PipSize> =
+        data.map { PipSize.from(it[KEY_PIP_SIZE]) }
+            .stateIn(scope, SharingStarted.Eagerly, PipSize.DEFAULT)
+
+    fun setPipSize(size: PipSize) = put(KEY_PIP_SIZE, size.id)
+
+    /**
+     * خلفيّةٌ شفّافة للنافذة المصغَّرة.
+     *
+     * مطفأةٌ افتراضًا لأنّ إظهارها ليس مضمونًا على كلّ جهاز: نافذة «صورة في صورة»
+     * يركّبها النظام، وبعض الأجهزة ترسم تحتها أسودَ صلبًا مهما فعل التطبيق. فمن
+     * يفعّلها يرى النتيجة بعينه، ومن لا يفعّلها لا يفاجَأ بمربّعٍ أسود.
+     */
+    val pipTransparent: StateFlow<Boolean> = pref(KEY_PIP_TRANSPARENT, false)
+    fun setPipTransparent(enabled: Boolean) = put(KEY_PIP_TRANSPARENT, enabled)
+
+    /** كثافة خلفيّة النافذة المصغَّرة من ‎10‎ إلى ‎100‎؛ أقلُّها أشفُّها */
+    val pipOpacity: StateFlow<Int> = pref(KEY_PIP_OPACITY, DEFAULT_PIP_OPACITY)
+    fun setPipOpacity(percent: Int) = put(KEY_PIP_OPACITY, percent.coerceIn(10, 100))
+
     // ===== الفيديو =====
 
     /**
@@ -309,6 +367,18 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
          */
         val LIMIT_CHOICES = listOf(NO_SPEED_LIMIT, 30, 40, 50, 60, 80, 90, 100, 110, 120, 140)
 
+        /** شدّة التنبيه الافتراضيّة: مسموعةٌ فوق ضجيج الطريق ودون أن تُفزع */
+        const val DEFAULT_ALERT_VOLUME = 80
+
+        /** كثافة خلفيّة النافذة المصغَّرة الافتراضيّة حين تُفعَّل الشفافيّة */
+        const val DEFAULT_PIP_OPACITY = 65
+
+        /** الشدّات المعروضة في الإعدادات */
+        val ALERT_VOLUME_CHOICES = listOf(20, 40, 60, 80, 100)
+
+        /** نِسَب الشفافيّة المعروضة في الإعدادات */
+        val PIP_OPACITY_CHOICES = listOf(15, 30, 45, 65, 85, 100)
+
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_DAY_START = intPreferencesKey("day_start_hour")
         private val KEY_NIGHT_START = intPreferencesKey("night_start_hour")
@@ -341,6 +411,13 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_UPD_BETA = booleanPreferencesKey("update_beta")
         private val KEY_UPD_LAST = longPreferencesKey("update_last_check")
         private val KEY_UPD_TAG = stringPreferencesKey("update_notified_tag")
+        private val KEY_ALERT_TONE = stringPreferencesKey("alert_tone")
+        private val KEY_ALERT_VOLUME = intPreferencesKey("alert_volume")
+        private val KEY_GAUGE_STYLE = stringPreferencesKey("gauge_style")
+        private val KEY_PIP_STYLE = stringPreferencesKey("pip_style")
+        private val KEY_PIP_SIZE = stringPreferencesKey("pip_size")
+        private val KEY_PIP_TRANSPARENT = booleanPreferencesKey("pip_transparent")
+        private val KEY_PIP_OPACITY = intPreferencesKey("pip_opacity")
     }
 }
 
@@ -397,17 +474,140 @@ enum class CameraScene(val id: String) {
  * مصدر خريطة الرحلة حين يتوفّر أكثر من واحد.
  *
  * [AUTO] هو الترتيب الذي أقرّته 0.7.0 (أرشيفٌ محلّيّ ← OsmAnd ← إنترنت ← مخطَّط).
- * والخياران الآخران **تجاوزٌ صريح**: صورة OsmAnd أدقّ خريطةً وأفقرُ تفاعلًا،
- * وبلاطات الإنترنت عكسها — فأيّهما أفضل سؤالٌ لا جواب واحد له.
+ * وما عداه **تجاوزٌ صريح**: صورة OsmAnd أدقّ خريطةً وأفقرُ تفاعلًا، وبلاطات
+ * الإنترنت عكسها، والأرشيف المحلّيّ بينهما — فأيّها أفضل سؤالٌ لا جواب واحد له.
+ *
+ * **لماذا انفصل [ONLINE] عن [OFFLINE] في 0.9.4؟** كان الاثنان قيمةً واحدة
+ * (`tiles`) تختار بينهما التغطية، فكان الزرّ يعرض «إنترنت» و«أوسماند» فقط ولا
+ * سبيل للمستعمل أن يقول «ارسم من ملفّي أنا». المصادر الثلاثة الآن ثلاثة أسماء،
+ * وما لا يتوفّر منها لا يُعرض أصلًا.
+ *
+ * والمعرّف القديم `tiles` لا يُقابله شيء هنا، فيسقط إلى [DEFAULT]: من ضبط
+ * التفضيل قبل 0.9.4 يعود إلى «تلقائيّ» مرّةً واحدة، وهو أسلم من تخمين قصده.
  */
 enum class MapSourcePreference(val id: String) {
     AUTO("auto"),
+
+    /** بلاطاتٌ حيّة من الشبكة، ولو كان عنده أرشيفٌ يغطّي الموضع */
+    ONLINE("online"),
+
+    /** صورةٌ ساكنة يرسمها OsmAnd من خرائطه المتجهيّة */
     OSMAND("osmand"),
-    TILES("tiles");
+
+    /** أرشيف البلاطات الذي في مجلّد الخرائط، ولو كانت الشبكة متاحة */
+    OFFLINE("offline");
 
     companion object {
         val DEFAULT = AUTO
         fun from(id: String?): MapSourcePreference = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * تصميم قرص العدّاد.
+ *
+ * ستّة تصاميم لا واحد، لأنّ «العدّاد الجيّد» يختلف باختلاف من يقرأه: راكب الدراجة
+ * يلمح لونًا، وسائق السيّارة يقرأ رقمًا، ومن يصوّر يريد أقلَّ ما يمكن من زينة.
+ *
+ * والقاعدة التي تحكم الستّة جميعًا: **المعنى واحد والشكل مختلف**. المدى والعتبة
+ * والحدّ وألوان المناطق تخرج كلّها من [net.gnutux.speedometer.core.alert.SpeedScale]
+ * نفسه مهما كان التصميم، فلا يقول تصميمٌ «تجاوزتَ» ويقول آخر «لم تتجاوز».
+ */
+enum class GaugeStyle(val id: String) {
+    /** قوسٌ مدرَّج بأرقام — تصميم ما قبل 0.9.4 بحذافيره */
+    CLASSIC("classic"),
+
+    /** وجهٌ تناظريّ بمؤشّرٍ يدور، أقربُ ما يكون إلى عدّاد السيّارة */
+    NEEDLE("needle"),
+
+    /** حلقةٌ رفيعة بلا تدريج ورقمٌ كبير في وسطها */
+    MINIMAL("minimal"),
+
+    /** قوسٌ مقطَّع إلى شراتٍ تُضاء تباعًا */
+    SEGMENTS("segments"),
+
+    /** حلقتان متراكزتان: مسارٌ خارجيّ وتقدّمٌ داخليّ */
+    DUAL_RING("dual_ring"),
+
+    /** شريطٌ أفقيّ يمتلئ — أقلُّها ارتفاعًا وأوضحُها في عرضٍ ضيّق */
+    BAR("bar");
+
+    companion object {
+        val DEFAULT = CLASSIC
+        fun from(id: String?): GaugeStyle = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * شكل محتوى النافذة المصغَّرة.
+ *
+ * ليست هي [GaugeStyle] بعينها، وهذا مقصود: النافذة بعرض إصبعين وتُقرأ بطرف
+ * العين، فما يليق بقرصٍ يملأ الشاشة لا يليق بها. تصاميمُها مختصرةٌ عمدًا.
+ */
+enum class PipStyle(val id: String) {
+    /** الرقم وحده ووحدته — شكل ما قبل 0.9.4 */
+    NUMBER("number"),
+
+    /** حلقةٌ تحيط بالرقم فتُقرأ النسبة بلا قراءة الرقم */
+    RING("ring"),
+
+    /** قوسٌ صغير بمؤشّر */
+    NEEDLE("needle"),
+
+    /** شريطٌ رفيع تحت الرقم */
+    BAR("bar");
+
+    companion object {
+        val DEFAULT = NUMBER
+        fun from(id: String?): PipStyle = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * حجم محتوى النافذة المصغَّرة **داخل إطارها**، لا حجم الإطار نفسه: الإطار يحجّمه
+ * المستعمل بأصبعيه ويحفظه النظام، ولا يملك التطبيق فرضه. وهذا الإعداد يقرّر كم
+ * من الإطار يشغله الرقم.
+ */
+enum class PipSize(val id: String, val numberFraction: Float) {
+    SMALL("small", 0.28f),
+    MEDIUM("medium", 0.38f),
+    LARGE("large", 0.50f);
+
+    companion object {
+        val DEFAULT = MEDIUM
+        fun from(id: String?): PipSize = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
+/**
+ * نغمة تنبيه تجاوز الحدّ.
+ *
+ * ملفّاتٌ في `res/raw` لا `ToneGenerator`: النغمة المولَّدة لا تُختار ولا يُضبط
+ * مستواها بعد إنشائها، وهما ما طلبه المستعمل. والملفّات الخمسة مجتمعةً دون ‎25‎
+ * كيلوبايت لأنّها قصيرةٌ بترميز Vorbis.
+ *
+ * @param resName اسم المورد في `res/raw` بلا امتداد؛ يُحلّ بـ `getIdentifier`
+ *   لا بـ `R.raw.x` كي تبقى الإضافة نغمةً جديدة بملفٍّ ونصٍّ فحسب.
+ */
+enum class AlertTone(val id: String, val resName: String) {
+    /** صفيرةٌ واحدة حادّة — الافتراضيّ، وأقربُ ما يكون إلى نغمة ما قبل 0.9.4 */
+    BEEP("beep", "alert_beep"),
+
+    /** نبضتان متتاليتان */
+    DOUBLE("double", "alert_double"),
+
+    /** جرسٌ متلاشٍ، أهدؤها */
+    CHIME("chime", "alert_chime"),
+
+    /** رنّةٌ رقميّة متعاقبة، أشدُّها إلحاحًا */
+    DIGITAL("digital", "alert_digital"),
+
+    /** نبضةٌ خفيفة لمن يريد تذكيرًا لا إنذارًا */
+    SOFT("soft", "alert_soft");
+
+    companion object {
+        val DEFAULT = BEEP
+        fun from(id: String?): AlertTone = entries.firstOrNull { it.id == id } ?: DEFAULT
     }
 }
 
