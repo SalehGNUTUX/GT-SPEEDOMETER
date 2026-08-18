@@ -69,6 +69,7 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     // تصميم وجه القرص من الإعدادات. افتراضه [GaugeStyle.CLASSIC]، فمن لم يختر شيئًا
     // يرى قرص ما قبل 0.9.4 بلا فرق
     val gaugeStyle by vm.settings.gaugeStyle.collectAsStateWithLifecycle()
+    val numberScale by vm.settings.speedTextScale.collectAsStateWithLifecycle()
 
     // عمودٌ خارجيّ لا يتمرّر: القرص والبلاطات وحدها تتمرّر داخل `weight(1f)`، وصفّ
     // الأزرار مثبَّت تحته خارج منطقة التمرير. قبلها كان «إنهاء» ينزلق تحت حافّة الشاشة
@@ -114,6 +115,7 @@ fun SpeedometerScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                         .width(gaugeWidth),
                     limitKmh = scale.limitKmh,
                     style = gaugeStyle,
+                    numberScalePercent = numberScale,
                 )
 
                 // شريط التموضع تحت القرص: كان يحتلّ شريطًا كاملًا في الأعلى قبل

@@ -69,6 +69,11 @@ fun SpeedGauge(
     modifier: Modifier = Modifier,
     limitKmh: Int = 0,
     style: GaugeStyle = GaugeStyle.CLASSIC,
+    /**
+     * حجم الرقم نسبةً مئويّة من حجمه المرجعيّ ([GaugeStyle.numberFractionOfSide]).
+     * الافتراضيّ ‎100‎ فيبقى من لم يغيّر شيئًا على ما كان بالضبط.
+     */
+    numberScalePercent: Int = 100,
 ) {
     val target = (speedKmh / maxKmh).coerceIn(0f, 1f)
     val animated by animateFloatAsState(
@@ -130,7 +135,7 @@ fun SpeedGauge(
         val numberSize = if (style == GaugeStyle.CLASSIC) {
             BASE_NUMBER_SP.sp
         } else {
-            with(density) { (faceSide * style.numberFractionOfSide).toSp() }
+            with(density) { (faceSide * style.numberFractionOfSide * numberScalePercent / 100f).toSp() }
         }
         val numberStyle = MaterialTheme.typography.displayLarge.copy(
             fontSize = numberSize,

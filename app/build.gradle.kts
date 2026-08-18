@@ -21,8 +21,8 @@ android {
         applicationId = "net.gnutux.speedometer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.9.5-beta"
+        versionCode = 15
+        versionName = "0.9.6-beta"
     }
 
     androidResources {

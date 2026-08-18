@@ -92,6 +92,7 @@ import net.gnutux.speedometer.core.settings.DualLayout
 import net.gnutux.speedometer.core.settings.GaugeStyle
 import net.gnutux.speedometer.core.settings.LiteMode
 import net.gnutux.speedometer.core.settings.PipSize
+import net.gnutux.speedometer.core.settings.ScreenOrientation
 import net.gnutux.speedometer.core.settings.PipStyle
 import net.gnutux.speedometer.core.settings.ThemeMode
 import net.gnutux.speedometer.core.update.UpdateChecker
@@ -151,6 +152,8 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val pipSize by s.pipSize.collectAsStateWithLifecycle()
     val pipTransparent by s.pipTransparent.collectAsStateWithLifecycle()
     val pipOpacity by s.pipOpacity.collectAsStateWithLifecycle()
+    val speedTextScale by s.speedTextScale.collectAsStateWithLifecycle()
+    val orientation by s.screenOrientation.collectAsStateWithLifecycle()
 
     // مصدر الحقيقة نفسه الذي تقرؤه الخريطة، فلا تقول الإعدادات «وُجدت» بينما ترسم
     // الخريطة بلاطات إنترنت
@@ -335,6 +338,29 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                             note = stringResource(R.string.settings_gauge_style_note),
                         )
                         GaugeStylePicker(selected = gaugeStyle, onSelect = s::setGaugeStyle)
+                        RowLabel(
+                            title = stringResource(R.string.settings_speed_text),
+                            note = stringResource(R.string.settings_speed_text_note),
+                        )
+                        ChoiceRow(
+                            options = AppSettings.SPEED_TEXT_CHOICES.map {
+                                stringResource(R.string.percent_value, it)
+                            },
+                            selectedIndex = AppSettings.SPEED_TEXT_CHOICES
+                                .indexOf(speedTextScale)
+                                .coerceAtLeast(0),
+                            onSelect = { s.setSpeedTextScale(AppSettings.SPEED_TEXT_CHOICES[it]) },
+                        )
+                        RowLabel(
+                            title = stringResource(R.string.settings_orientation),
+                            note = stringResource(R.string.settings_orientation_note),
+                        )
+                        ChoiceRow(
+                            options = ScreenOrientation.entries.map { orientationLabel(it) },
+                            selectedIndex = ScreenOrientation.entries.indexOf(orientation)
+                                .coerceAtLeast(0),
+                            onSelect = { s.setScreenOrientation(ScreenOrientation.entries[it]) },
+                        )
                     }
                 }
                 // بطاقةٌ ثانية: النافذة المصغّرة سطحٌ آخر غير الشاشة، وخلطُ إعداداتها
@@ -1080,6 +1106,30 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                         )
                     }
                 }
+                item(key = "about-2") {
+                    SettingCard {
+                        RowLabel(
+                            title = stringResource(R.string.settings_share_app),
+                            note = stringResource(R.string.settings_share_note),
+                        )
+                        ActionRow(
+                            label = stringResource(R.string.settings_share_link),
+                            onClick = {
+                                if (!shareApp(context, BuildConfig.VERSION_NAME, withApk = false)) {
+                                    mapsNotice = MapsNotice(R.string.settings_share_failed, null, ok = false)
+                                }
+                            },
+                        )
+                        ActionRow(
+                            label = stringResource(R.string.settings_share_apk),
+                            onClick = {
+                                if (!shareApp(context, BuildConfig.VERSION_NAME, withApk = true)) {
+                                    mapsNotice = MapsNotice(R.string.settings_share_failed, null, ok = false)
+                                }
+                            },
+                        )
+                    }
+                }
             }
             item(key = "tail-spacer") { Spacer(Modifier.height(24.dp)) }
         }
@@ -1193,6 +1243,15 @@ private fun pipStyleLabel(style: PipStyle): String = when (style) {
     PipStyle.NEEDLE -> stringResource(R.string.pip_style_needle)
     PipStyle.BAR -> stringResource(R.string.pip_style_bar)
 }
+
+@Composable
+private fun orientationLabel(value: ScreenOrientation): String = stringResource(
+    when (value) {
+        ScreenOrientation.AUTO -> R.string.settings_orientation_auto
+        ScreenOrientation.PORTRAIT -> R.string.settings_orientation_portrait
+        ScreenOrientation.LANDSCAPE -> R.string.settings_orientation_landscape
+    }
+)
 
 @Composable
 private fun pipSizeLabel(size: PipSize): String = when (size) {
@@ -1861,6 +1920,55 @@ private fun mapKindLabel(kind: MapFileKind): String = when (kind) {
  *
  * @return هل أُطلق المُختار فعلًا؟ و`false` تعني «قل للمستعمل إنّها تعذّرت».
  */
+/**
+ * مشاركة التطبيق: نصًّا وحده، أو نصًّا مع حزمة التثبيت.
+ *
+ * **ولماذا الملفّ خيارٌ ثانٍ لا وحيد؟** أكثرُ من يُشارك يريد رابطًا يُنقر، وحزمةٌ بحجم
+ * ‎14‎ ميغابايت في محادثةٍ عبءٌ لا يُطلب. لكنّ الملفّ هو الطريق الوحيد لمن لا إنترنت
+ * عنده — وهو حالٌ شائعةٌ في الطريق نفسه الذي بُني هذا التطبيق له.
+ *
+ * وحزمةُ التطبيق تُقرأ من `applicationInfo.sourceDir`: هي النسخة العاملة بعينها، فلا
+ * تنزيلَ ولا نسخةَ ثانية تُبنى. وتُنسخ إلى المخبأ باسمٍ مفهوم لأنّ `base.apk` اسمٌ
+ * يُربك من يستقبله، ولأنّ `sourceDir` خارج ما يُعلنه `file_paths.xml` أصلًا.
+ *
+ * @return هل أُطلق المُختار فعلًا؟ و`false` تعني «قل للمستعمل إنّها تعذّرت».
+ */
+private fun shareApp(context: Context, versionName: String, withApk: Boolean): Boolean {
+    val text = context.getString(R.string.settings_share_text, versionName)
+    val send = Intent(Intent.ACTION_SEND).apply {
+        putExtra(Intent.EXTRA_TEXT, text)
+        putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.app_name))
+        type = "text/plain"
+    }
+
+    if (withApk) {
+        val uri = runCatching {
+            val source = File(context.applicationInfo.sourceDir)
+            val staged = File(context.cacheDir, "share").apply { mkdirs() }
+                .resolve("GT-SPEEDOMETER-$versionName.apk")
+            // النسخ في كلّ مرّة لا مرّةً واحدة: تحديثُ التطبيق يُبقي الاسم نفسه، فملفٌّ
+            // مخبَّأٌ من إصدارٍ سابق يُرسل قديمًا باسمٍ يقول إنّه الجديد
+            source.inputStream().use { input ->
+                staged.outputStream().use { output -> input.copyTo(output) }
+            }
+            FileProvider.getUriForFile(context, "${context.packageName}.files", staged)
+        }.getOrNull() ?: return false
+
+        send.apply {
+            // النوع الرسميّ لحزم أندرويد؛ به تظهر تطبيقات النقل والتخزين في المُختار
+            type = "application/vnd.android.package-archive"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    return runCatching {
+        context.startActivity(
+            Intent.createChooser(send, context.getString(R.string.settings_share_chooser))
+        )
+    }.isSuccess
+}
+
 private fun shareMapFile(context: Context, file: File): Boolean {
     val uri = runCatching {
         FileProvider.getUriForFile(context, "${context.packageName}.files", file)

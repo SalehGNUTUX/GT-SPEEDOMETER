@@ -150,6 +150,9 @@ class TripEngine(private val context: Context) {
                 gaugeMaxKmh = scale.gaugeMaxKmh,
                 warnKmh = scale.warnKmh,
                 limitKmh = scale.limitKmh,
+                // التصميم من التفضيلات مباشرةً: قراءةٌ لحظيّة لقيمةٍ في الذاكرة، وهي
+                // تقع مع كلّ عيّنةٍ في خيط الموقع لا في خيط الرسم
+                gaugeStyle = settings.gaugeStyle.value,
             )
         )
     }

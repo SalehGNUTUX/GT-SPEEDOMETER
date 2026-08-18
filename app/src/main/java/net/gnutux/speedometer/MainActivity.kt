@@ -3,6 +3,7 @@ package net.gnutux.speedometer
 import android.Manifest
 import android.app.Activity
 import android.app.PictureInPictureParams
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.graphics.drawable.ColorDrawable
@@ -49,7 +50,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,6 +75,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.gnutux.speedometer.core.settings.ScreenOrientation
 import net.gnutux.speedometer.core.trip.TripStatus
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.screens.CameraScreen
@@ -148,6 +149,25 @@ class MainActivity : ComponentActivity() {
             val dayStart by vm.settings.dayStartHour.collectAsStateWithLifecycle()
             val nightStart by vm.settings.nightStartHour.collectAsStateWithLifecycle()
             val keepOn by vm.settings.keepScreenOn.collectAsStateWithLifecycle()
+            val orientation by vm.settings.screenOrientation.collectAsStateWithLifecycle()
+
+            // اتّجاه الشاشة صفةٌ في النشاط لا حالةَ تركيب، فيُضبط هنا وحده.
+            //
+            // و`SENSOR` لا `UNSPECIFIED` في التلقائيّ: الثاني يردّ الأمر إلى ما في البيان
+            // وإلى قفل الدوران في النظام، فمن أقفل دورانَ جهازه لا يستفيد من «تلقائيّ»
+            // شيئًا. والأوّل يتبع الحسّاس فعلًا — وهو ما يعنيه الاسم.
+            //
+            // ولا نلمس الاتّجاه في النافذة المصغَّرة: نظام «صورة في صورة» يتولّى وضعها،
+            // وفرضُ اتّجاهٍ عليها يقاتل النظام على نافذةٍ ليست لنا.
+            LaunchedEffect(orientation, inPipMode.value) {
+                requestedOrientation = if (inPipMode.value) {
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                } else when (orientation) {
+                    ScreenOrientation.AUTO -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                    ScreenOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    ScreenOrientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                }
+            }
 
             // القياس يجري والشاشة على المقود؛ إطفاؤها يقطع متابعة الراكب. صار خيارًا
             // في 0.4.0 لأنّ من يشحن بطّاريّةً صغيرة يحتاج عكسه.
@@ -638,26 +658,37 @@ private fun ExitDialog(
         isTripActive -> stringResource(R.string.exit_body_trip)
         else -> stringResource(R.string.exit_body)
     }
-    // الزرّان كانا بلونٍ واحد، فيُقرآن قبل أن يُميَّزا — والخطأ هنا يُنهي تسجيلًا جاريًا.
-    // اللون يسبق النصّ إلى العين: الأحمر لما يُتلِف، والأخضر للبقاء. وهو نفس عقد
-    // الألوان في بقيّة التطبيق (`danger` للإتلاف و`accent` للفعل الآمن) فلا يتعلّم
-    // المستعمل اصطلاحًا خاصًّا بهذه المحاورة وحدها.
+    // **زرّان مملوءان لا نصّان ملوّنان.** تلوين النصّ وحده يترك الزرّين شكلًا واحدًا،
+    // فيُقرآن قبل أن يُميَّزا — والخطأ هنا يُنهي تسجيلًا جاريًا. المساحة الممتلئة تُلمح
+    // قبل أن تُقرأ، وهو المطلوب في تطبيقٍ يُستعمل على مقود دراجة.
+    //
+    // واللونان من عقد الألوان نفسه في بقيّة التطبيق: `danger` لما يُتلف و`accent`
+    // للفعل الآمن، فلا يتعلّم المستعمل اصطلاحًا خاصًّا بهذه المحاورة وحدها.
+    //
+    // ولون النصّ `bg` في الحالين: في الداكن شبهُ أسودَ على أحمرَ وفيروزيٍّ ساطعين، وفي
+    // الفاتح شبهُ أبيضَ على أحمرَ وأخضرَ غامقين — فالتباين عالٍ في السمتين بقيمةٍ واحدة.
     val colors = LocalGtColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.exit_title)) },
         text = { Text(body) },
         confirmButton = {
-            TextButton(
+            Button(
                 onClick = onConfirm,
-                colors = ButtonDefaults.textButtonColors(contentColor = colors.danger),
-            ) { Text(stringResource(R.string.exit_confirm)) }
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.danger,
+                    contentColor = colors.bg,
+                ),
+            ) { Text(stringResource(R.string.exit_confirm), fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
-            TextButton(
+            Button(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = colors.accent),
-            ) { Text(stringResource(R.string.action_cancel)) }
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.accent,
+                    contentColor = colors.bg,
+                ),
+            ) { Text(stringResource(R.string.action_cancel), fontWeight = FontWeight.Bold) }
         },
         containerColor = Surface,
     )

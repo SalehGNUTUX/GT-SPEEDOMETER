@@ -193,6 +193,14 @@
     <string name="settings_about_repo">المستودع</string>
     <string name="settings_about_repo_url">https://github.com/SalehGNUTUX/GT-SPEEDOMETER</string>
     <string name="settings_about_developer_name">SalehGNUTUX</string>
+    <string name="settings_share_app">مشاركة التطبيق</string>
+    <string name="settings_share_link">🔗 مشاركة الرابط</string>
+    <string name="settings_share_apk">📦 مشاركة ملفّ التثبيت</string>
+    <string name="settings_share_note">الرابط يُرسل نصًّا، وملفّ التثبيت يُرسل نسخةَ التطبيق نفسها — تنفع لمن لا إنترنت عنده.</string>
+    <string name="settings_share_chooser">مشاركة GT-SPEEDOMETER</string>
+    <string name="settings_share_failed">تعذّرت المشاركة — لا تطبيق يقبلها على هذا الجهاز</string>
+    <!-- نصّ المشاركة: %1$s رقم الإصدار. الوسوم بلا مسافاتٍ داخلها كي تبقى وسمًا واحدًا -->
+    <string name="settings_share_text">GT-SPEEDOMETER — عدّاد سرعة حرٌّ لأندرويد، ميزته العدّاد فوق كاميرا حيّة مع تسجيل الفيديو.\n\nيسجّل رحلاتك بصيغة GPX، ويعمل دون إنترنت، وبلا إعلانات ولا تتبّع ولا خدمات Google.\n\nالإصدار %1$s\nhttps://salehgnutux.github.io/GT-SPEEDOMETER/\n\n#GT_SPEEDOMETER #عداد_السرعة #GNUTUX #برمجيات_حرة #أندرويد #GPX #مصدر_مفتوح #FOSS #OpenSource #Android</string>
 
     <!-- 0.7.0 — جسر OsmAnd -->
     <string name="settings_section_osmand">خرائط OsmAnd</string>
@@ -408,6 +416,13 @@
     <string name="settings_section_gauge">تصميم العدّاد</string>
     <string name="settings_gauge_style">شكل القرص</string>
     <string name="settings_gauge_style_note">يسري على شاشة العدّاد وطبقة الكاميرا والنافذة المصغّرة. المدى والعتبة وحدّ السرعة لا تتبدّل — يتبدّل الشكل وحده.</string>
+    <string name="settings_speed_text">حجم رقم السرعة</string>
+    <string name="settings_speed_text_note">حجم الرقم داخل القرص، نسبةً من حجمه المعتاد. يسري على شاشة العدّاد.</string>
+    <string name="settings_orientation">اتّجاه الشاشة</string>
+    <string name="settings_orientation_note">التلقائيّ يتبع حسّاس الجهاز ولو كان دورانه مقفلًا في النظام. والعرضيّ وضعُ التصوير المعتاد لمشاهد الطريق — والطبقة المحروقة تتبع الاتّجاه في الحالين.</string>
+    <string name="settings_orientation_auto">تلقائيّ</string>
+    <string name="settings_orientation_portrait">طوليّ</string>
+    <string name="settings_orientation_landscape">عرضيّ</string>
     <string name="gauge_style_classic">كلاسيكيّ</string>
     <string name="gauge_style_needle">مؤشّر تناظريّ</string>
     <string name="gauge_style_minimal">مقتضب</string>

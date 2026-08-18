@@ -3,6 +3,7 @@ package net.gnutux.speedometer.core.camera
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.view.WindowManager
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Handler
@@ -452,6 +453,28 @@ class CameraSession(
         cameraOwner?.registry?.currentState = target.coerceAtLeast(Lifecycle.State.CREATED)
     }
 
+
+    /**
+     * إبلاغ حالات الاستعمال باتّجاه الشاشة الحاليّ.
+     *
+     * `targetRotation` ليس تفصيلًا تجميليًّا: هو ما يُكتب في بيانات الملفّ فيقرؤه كلّ
+     * مشغّل. ولا يتحدّث من تلقائه هنا لأنّ النشاط يعلن `configChanges` للاتّجاه
+     * فيعالجه بنفسه بلا إعادة إنشاء — والقيمة الافتراضيّة تُلتقط لحظة البناء وتبقى.
+     *
+     * ولا يُستدعى أثناء تسجيلٍ جارٍ: تبديل الاتّجاه في منتصف مقطعٍ يُخرج ملفًّا نصفُه
+     * بميلٍ ونصفُه بآخر. من بدأ التسجيل طولًا يُكمله طولًا، والاتّجاه الجديد لمقطعٍ جديد.
+     */
+    private fun applyRotation() {
+        if (_sessionHolding.value) return
+        val rotation = runCatching {
+            @Suppress("DEPRECATION")
+            (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+                .defaultDisplay.rotation
+        }.getOrNull() ?: return
+        preview?.targetRotation = rotation
+        videoCapture?.targetRotation = rotation
+    }
+
     /**
      * السطح يُركَّب حين يكون هناك ما يُرسم فيه فقط. حين يغيب المضيف تحت STARTED —
      * أو تغادر الشاشة أصلًا — يُنزع المزوّد ويبقى الارتباط: هذا ما يجعل التسجيل
@@ -572,6 +595,12 @@ class CameraSession(
                         .build()
                 )
             }
+            // الاتّجاه يُبلَّغ عند كلّ تهيئة: `targetRotation` يُقرأ افتراضًا **مرّةً عند
+            // البناء**، والنشاط يعالج تبدّل الاتّجاه بنفسه (`configChanges`) فلا يُعاد
+            // إنشاؤه ولا تُعاد الحالات. فبلا هذا السطر يخرج الملفّ المسجَّل بعد إدارة
+            // الجهاز بميلٍ قدره تسعون درجة — الصورة على الشاشة سليمة والملفّ مقلوب.
+            applyRotation()
+
             // إعادة تركيب السطح وحدها كافية للعودة إلى التبويب أثناء التسجيل: تُعيد
             // الصورة إلى الشاشة بلا ربطٍ جديد، وإعادة الربط تقتل التسجيل الجاري
             applySurface()

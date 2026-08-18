@@ -1,6 +1,12 @@
 package net.gnutux.speedometer.core.camera
 
 import android.graphics.Canvas
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Canvas as ComposeCanvas
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -22,7 +28,10 @@ import android.text.style.StyleSpan
 import androidx.camera.effects.Frame
 import net.gnutux.speedometer.core.alert.SpeedScale
 import net.gnutux.speedometer.core.alert.SpeedZone
+import net.gnutux.speedometer.core.settings.GaugeStyle
 import net.gnutux.speedometer.ui.Fmt
+import net.gnutux.speedometer.ui.components.GaugePalette
+import net.gnutux.speedometer.ui.components.drawGaugeFace
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -53,6 +62,14 @@ data class HudSnapshot(
     val warnKmh: Int = 100,
     /** حدّ السائق؛ صفرٌ يعني بلا حدّ فلا علامةَ حمراء ولا حكمَ لها على اللون */
     val limitKmh: Int = 0,
+    /**
+     * التصميم المختار من الإعدادات — يُحرَق كما يُرسم على الشاشة.
+     *
+     * في اللقطة لا في حقلٍ مستقلٍّ على الراسم: هو من «ما يُرسم» لا من «كيف يُهيَّأ
+     * الراسم»، ولقطةٌ واحدةٌ لا تتغيّر تعني أنّ الإطار الواحد لا يُرسم نصفُه بتصميمٍ
+     * ونصفُه بآخر إن بدّل المستعمل الاختيار وهو يسجّل.
+     */
+    val gaugeStyle: GaugeStyle = GaugeStyle.CLASSIC,
 )
 
 /**
@@ -88,6 +105,36 @@ class VideoOverlayPainter {
      */
     @Volatile
     var snapshot: HudSnapshot = HudSnapshot()
+
+    // ————— جسر رسم وجه العدّاد —————
+    //
+    // تُنشأ مرّةً وتُعاد تدويرها كبقيّة أدوات هذا الملفّ: خيط الرسم يُنادى لكلّ إطار،
+    // وتخصيصٌ في كلّ نداءٍ يُغذّي كنّاسَ المهملات فيقطّع البثّ.
+
+    /** يشغّل أوامر `DrawScope` على قماشٍ أصليّ. بلا حالةٍ بين النداءات، فتكفي نسخة */
+    private val drawScope = CanvasDrawScope()
+
+    /**
+     * كثافةٌ ‎1‎: مقاييس الوجه كلُّها نِسبٌ من الضلع لا وحدات `dp`، والإطار يُقاس
+     * بالبكسل. فالكثافة الحقيقيّة للجهاز لا معنى لها هنا، وتمريرها كان يضاعف
+     * السماكات على الشاشات عالية الكثافة.
+     */
+    private val unitDensity = Density(1f)
+
+    /**
+     * ألوان الوجه المحروق — ثوابت [HudMetrics] نفسها التي كانت تُرسم بها الأقواس،
+     * لا ألوان السمة: الملفّ يُشاهَد خارج التطبيق، فلا سمةَ فاتحةً ولا داكنة له.
+     */
+    private val burnPalette = GaugePalette(
+        active = ComposeColor(HudMetrics.COLOR_ACCENT),
+        // المسار أسودُ شفيف كما كان `track` بالضبط: الطبقة تقع على صورةٍ فوتوغرافيّة،
+        // فمسارٌ صلبٌ يحجب المشهد ومسارٌ فاتحٌ يذوب في السماء
+        track = ComposeColor.Black.copy(alpha = HudMetrics.TRACK_ALPHA),
+        redZone = ComposeColor(HudMetrics.COLOR_DANGER),
+        tick = ComposeColor.White.copy(alpha = HudMetrics.TRACK_ALPHA),
+        tickLine = ComposeColor.White.copy(alpha = HudMetrics.TRACK_ALPHA),
+        limit = ComposeColor(HudMetrics.COLOR_DANGER),
+    )
 
     /**
      * أداة لكلّ دور. النسخة السابقة كانت تتشارك Paint واحدة وتقلب `textAlign`
@@ -566,30 +613,40 @@ class VideoOverlayPainter {
         // فنصف قطر مسار القوس هو المتبقّي بعد نصف سماكته من كلّ جانب
         val thickness = m.ringStroke
         val radius = (m.ringDiameter - thickness) / 2f
-        arcBox.set(cx - radius, cy - radius, cx + radius, cy + radius)
-
-        track.strokeWidth = thickness
-        canvas.drawArc(arcBox, HudMetrics.ARC_START, HudMetrics.ARC_SWEEP, false, track)
 
         val fraction = (s.speedKmh / s.gaugeMaxKmh).coerceIn(0f, 1f)
-        if (fraction > 0.001f) {
-            progress.strokeWidth = thickness
-            // الحكم من العقد المشترك بقيمٍ بدائيّة: لا تخصيصَ كائنٍ على خيط الرسم،
-            // ولا نسخةَ ثانية من الشرط تنحرف عن نسخة الشاشة بعد تعديل
-            progress.color = when (
-                SpeedScale.zoneOf(s.speedKmh, s.gaugeMaxKmh, s.warnKmh, s.limitKmh)
-            ) {
-                SpeedZone.DANGER -> HudMetrics.COLOR_DANGER
-                SpeedZone.WARN -> HudMetrics.COLOR_WARN
-                SpeedZone.NORMAL -> HudMetrics.COLOR_ACCENT
-            }
-            canvas.drawArc(arcBox, HudMetrics.ARC_START, fraction * HudMetrics.ARC_SWEEP, false, progress)
-        }
 
-        // علامة الحدّ **بعد** القوس الحيّ: لو رُسمت قبله لغطّاها القوس عند تجاوز
-        // الحدّ — أي في اللحظة التي تُقرأ فيها. المواصفة: المرسوم هو المحروق، وهذه
-        // العلامة نفسها تُرسم على قوس الشاشة بالنسب ذاتها
-        drawLimitMark(canvas, cx, cy, radius, thickness, s)
+        // **الوجه يرسمه `drawGaugeFace` نفسه الذي يرسم الشاشة.**
+        //
+        // كان هنا قوسٌ كلاسيكيٌّ مكتوبٌ بيده، فمن اختار «مؤشّرًا» أو «شراتٍ» وجد في
+        // ملفّه قوسًا لا يشبه شاشته (الدَّين الأوّل في خارطة الطريق). ونسخُ التصاميم
+        // الستّة إلى `android.graphics.Canvas` كان يعني هندستين تتباعدان عند أوّل
+        // تعديل — وهو عين ما تمنعه قاعدة «الاشتقاق الواحد».
+        //
+        // والجسر `CanvasDrawScope`: يشغّل أوامر `DrawScope` على أيّ قماشٍ أصليّ، فلا
+        // تركيبَ هنا ولا `Context` — وهما وحدهما ما يمنعه هذا الملفّ، لا Compose كلُّها.
+        val side = m.ringDiameter
+        canvas.save()
+        canvas.translate(cx - side / 2f, cy - side / 2f)
+        drawScope.draw(unitDensity, LayoutDirection.Ltr, ComposeCanvas(canvas), Size(side, side)) {
+            drawGaugeFace(
+                style = s.gaugeStyle,
+                fraction = fraction,
+                warnFraction = (s.warnKmh.toFloat() / s.gaugeMaxKmh).coerceIn(0f, 1f),
+                // الاصطلاح نفسه في `SpeedScale.limitFraction`: السالب يعني «لا حدّ»
+                limitFraction = if (s.limitKmh in 1..s.gaugeMaxKmh) {
+                    s.limitKmh.toFloat() / s.gaugeMaxKmh
+                } else {
+                    -1f
+                },
+                palette = burnPalette,
+                // بلا تدريجٍ رقميّ: أرقامه تحتاج `TextMeasurer`، وقياسُ نصٍّ لكلّ شرطةٍ
+                // في كلّ إطار عملٌ لا يحتمله خيط الرسم. والقوس وحده يكفي في ملفٍّ
+                // يُشاهَد لا يُقرأ منه رقمُ تدريج.
+                ticks = null,
+            )
+        }
+        canvas.restore()
 
         val value = gaugeText
         gaugeValue.textSize = m.gaugeValueText

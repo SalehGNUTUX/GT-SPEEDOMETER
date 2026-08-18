@@ -145,6 +145,31 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     fun setGaugeStyle(style: GaugeStyle) = put(KEY_GAUGE_STYLE, style.id)
 
+    /**
+     * حجم رقم السرعة داخل القرص، نسبةً من الحجم المرجعيّ.
+     *
+     * نسبةٌ لا حجمٌ مطلق: القرص نفسه يتمدّد مع الشاشة، فرقمٌ بحجمٍ ثابتٍ يصير ضخمًا في
+     * لوحٍ وضئيلًا في هاتفٍ صغير. والنسبة تحفظ التناسب في الاثنين.
+     *
+     * والافتراضيّ ‎100‎ — أي ما كان قبل هذا الخيار حرفًا بحرف.
+     */
+    val speedTextScale: StateFlow<Int> = pref(KEY_SPEED_TEXT_SCALE, DEFAULT_SPEED_TEXT_SCALE)
+    fun setSpeedTextScale(percent: Int) =
+        put(KEY_SPEED_TEXT_SCALE, percent.coerceIn(MIN_SPEED_TEXT_SCALE, MAX_SPEED_TEXT_SCALE))
+
+    /**
+     * اتّجاه الشاشة: تلقائيٌّ يتبع الجهاز، أو طوليٌّ مثبَّت، أو عرضيٌّ مثبَّت.
+     *
+     * والتلقائيّ هو الافتراضيّ لا الطوليّ: التصوير العرضيّ هو المعتاد لمشاهد الطريق،
+     * ومن ثبّت جهازه على المقود عرضًا كان يجد التطبيق يعاند اتّجاهه.
+     */
+    val screenOrientation: StateFlow<ScreenOrientation> =
+        data.map { ScreenOrientation.from(it[KEY_SCREEN_ORIENTATION]) }
+            .stateIn(scope, SharingStarted.Eagerly, ScreenOrientation.DEFAULT)
+
+    fun setScreenOrientation(value: ScreenOrientation) =
+        put(KEY_SCREEN_ORIENTATION, value.id)
+
     /** شكل النافذة المصغَّرة: رقمٌ مجرَّد، أو قرصٌ صغير، أو مؤشّر، أو شريط */
     val pipStyle: StateFlow<PipStyle> =
         data.map { PipStyle.from(it[KEY_PIP_STYLE]) }
@@ -373,6 +398,19 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         /** كثافة خلفيّة النافذة المصغَّرة الافتراضيّة حين تُفعَّل الشفافيّة */
         const val DEFAULT_PIP_OPACITY = 65
 
+        /**
+         * حدود حجم رقم السرعة ‎%‎.
+         *
+         * الأدنى ‎60‎ لا أقلّ: دونه يصير الرقم أصغر من نصّ الوحدة تحته فينقلب الهرم
+         * البصريّ. والأعلى ‎160‎: فوقه يخرج الرقم عن القرص في التصاميم ذات التدريج.
+         */
+        const val MIN_SPEED_TEXT_SCALE = 60
+        const val MAX_SPEED_TEXT_SCALE = 160
+        const val DEFAULT_SPEED_TEXT_SCALE = 100
+
+        /** خياراتٌ معروضة لا شريطُ انزلاق: خمسُ درجاتٍ تُختار بقفّاز، والانزلاق لا يُضبط به */
+        val SPEED_TEXT_CHOICES = listOf(60, 80, 100, 130, 160)
+
         /** الشدّات المعروضة في الإعدادات */
         val ALERT_VOLUME_CHOICES = listOf(20, 40, 60, 80, 100)
 
@@ -414,6 +452,8 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_ALERT_TONE = stringPreferencesKey("alert_tone")
         private val KEY_ALERT_VOLUME = intPreferencesKey("alert_volume")
         private val KEY_GAUGE_STYLE = stringPreferencesKey("gauge_style")
+        private val KEY_SPEED_TEXT_SCALE = intPreferencesKey("speed_text_scale")
+        private val KEY_SCREEN_ORIENTATION = stringPreferencesKey("screen_orientation")
         private val KEY_PIP_STYLE = stringPreferencesKey("pip_style")
         private val KEY_PIP_SIZE = stringPreferencesKey("pip_size")
         private val KEY_PIP_TRANSPARENT = booleanPreferencesKey("pip_transparent")
@@ -619,6 +659,28 @@ enum class AlertTone(val id: String, val resName: String) {
  * لأنّ الجهاز قويّ» و«مطفأٌ لأنّي أطفأتُه» يجب أن يبقى محفوظًا: الأوّل يتبدّل مع
  * الجهاز والثاني لا يتبدّل.
  */
+/**
+ * اتّجاه الشاشة المطلوب.
+ *
+ * القيم تُترجَم إلى `ActivityInfo.SCREEN_ORIENTATION_*` في النشاط، ولا تُخزَّن أرقامها:
+ * أرقام أندرويد تفصيلُ منصّةٍ قد يتبدّل، والمعرّف النصّيّ عقدُنا مع ملفّ التفضيلات.
+ */
+enum class ScreenOrientation(val id: String) {
+    /** يتبع الجهاز وحسّاسه — وهو الافتراضيّ */
+    AUTO("auto"),
+
+    /** طوليٌّ مثبَّت */
+    PORTRAIT("portrait"),
+
+    /** عرضيٌّ مثبَّت — وضع التصوير المعتاد لمشاهد الطريق */
+    LANDSCAPE("landscape");
+
+    companion object {
+        val DEFAULT = AUTO
+        fun from(id: String?): ScreenOrientation = entries.firstOrNull { it.id == id } ?: DEFAULT
+    }
+}
+
 enum class LiteMode(val id: String) {
     AUTO("auto"),
     ON("on"),
