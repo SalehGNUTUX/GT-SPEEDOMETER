@@ -405,6 +405,14 @@ class MapDownloader private constructor(context: Context) {
             return fail(R.string.mapdl_err_rawdata)
         }
 
+        // (8) والمتجهيّ يُفحص بتوقيعه: `PMTiles` في أوّل البايتات ثمّ رقم النسخة.
+        // الحارس نفسه الذي يمنع ملفًّا أُعيدت تسميته من دخول مجلّد الخرائط، لصيغةٍ
+        // أخرى — لا استثناء لها لأنّها الأحدث.
+        if (extension == VectorMaps.EXTENSION && !VectorMaps.looksValid(plainPart)) {
+            runCatching { plainPart.delete() }
+            return fail(R.string.mapdl_err_content)
+        }
+
         runCatching { if (target.exists()) target.delete() }
         val moved = runCatching { plainPart.renameTo(target) }.getOrDefault(false)
         if (!moved) return fail(R.string.mapdl_err_net)
@@ -777,7 +785,8 @@ class MapDownloader private constructor(context: Context) {
         private val SQLITE_EXTENSIONS = setOf("mbtiles", "sqlite", "sqlitedb")
 
         /** ما يقبله [OfflineMaps] في مسحه؛ ما عداه يُرفض قبل أوّل بايت */
-        private val ALLOWED_EXTENSIONS = SQLITE_EXTENSIONS + ZIP_EXTENSION + "gemf"
+        private val ALLOWED_EXTENSIONS =
+            SQLITE_EXTENSIONS + ZIP_EXTENSION + "gemf" + VectorMaps.EXTENSION
 
         /** غلافٌ لا صيغة: يُقبل فوق كلٍّ من [ALLOWED_EXTENSIONS] ويُنزع قبل الاعتماد */
         private const val GZ_SUFFIX = ".gz"

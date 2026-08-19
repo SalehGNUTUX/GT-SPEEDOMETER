@@ -170,12 +170,21 @@ class OfflineMaps private constructor(context: Context) {
         val rasters = mutableListOf<File>()
         val vectors = mutableListOf<File>()
         val rawData = mutableListOf<File>()
+        val pmtiles = mutableListOf<File>()
 
         for (candidate in candidates.values) {
             val file = candidate.file
             val lower = file.name.lowercase()
             if (file.extension.equals(OBF_EXT, ignoreCase = true)) {
                 vectors += file
+                continue
+            }
+            // ‎.pmtiles‎ متجهيٌّ أيضًا، لكنّه **يُرسم عندنا** بمحرّك MapLibre لا يُحال
+            // إلى OsmAnd. فيُفصل عن `vectors` كي لا يُقال لصاحبه «افتحها في تطبيقٍ
+            // آخر» وهي تعمل هنا. والتوقيع يُفحص كما يُفحص رأس النقطيّ: الامتداد وعدٌ
+            // لا برهان.
+            if (file.extension.equals(VectorMaps.EXTENSION, ignoreCase = true)) {
+                if (VectorMaps.looksValid(file)) pmtiles += file else rawData += file
                 continue
             }
             // بياناتٌ خام يفضحها اسمها: ‎.osm.pbf‎ و‎.gpkg‎ و‎.shp‎ ليست بلاطًا بحال،
@@ -204,6 +213,7 @@ class OfflineMaps private constructor(context: Context) {
             altFolderPath = brandFolders.firstOrNull()?.absolutePath.orEmpty(),
             files = rasters.sortedBy { it.name },
             vectorFiles = vectors.sortedBy { it.name },
+            pmtilesFiles = pmtiles.sortedBy { it.name },
             rawDataFiles = rawData.sortedBy { it.name },
             // «محجوب» لا «غير موجود»: على أندرويد 11 فما فوق لا يُقرأ `Android/data`
             // لتطبيقٍ آخر بحال، ولا تُقرأ الملفّات غير الإعلاميّة في التخزين المشترك
@@ -555,7 +565,8 @@ class OfflineMaps private constructor(context: Context) {
 
         /** ما يستحقّ أن نفتحه أو نصنّفه؛ ما عداه يُتخطّى بلا فتحٍ ولا كلفة */
         private val INTERESTING_EXT =
-            setOf("mbtiles", "gemf", "zip", "sqlitedb", "sqlite", OBF_EXT) + RAW_DATA_EXT
+            setOf("mbtiles", "gemf", "zip", "sqlitedb", "sqlite", OBF_EXT, VectorMaps.EXTENSION) +
+                RAW_DATA_EXT
 
         /** ما لا يُلتفت إليه خارج مجلّداتنا: انظر تعليل التخطّي في [collectInto] */
         private val OWN_FOLDER_ONLY_EXT = RAW_DATA_EXT + ZIP_EXT
@@ -918,6 +929,8 @@ data class OfflineMapLibrary(
     val files: List<File> = emptyList(),
     /** خرائط OsmAnd المتجهيّة `.obf`: وُجدت، ولا يرسمها osmdroid */
     val vectorFiles: List<File> = emptyList(),
+    /** أرشيفات ‎.pmtiles‎ الصالحة — يرسمها المحرّك المتجهيّ عندنا */
+    val pmtilesFiles: List<File> = emptyList(),
     /** بياناتُ OSM خام: وُجدت، وليست خريطةً أصلًا — لا صورةَ فيها تُعرض */
     val rawDataFiles: List<File> = emptyList(),
     /** تعذّر بلوغ مجلّدات التطبيقات الأخرى: قيدُ نظامٍ لا خطأُ مستعمل */

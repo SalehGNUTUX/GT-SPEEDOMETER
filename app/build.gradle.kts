@@ -23,11 +23,41 @@ android {
         targetSdk = 35
         versionCode = 15
         versionName = "0.9.6-beta"
+
     }
 
     androidResources {
         localeFilters += listOf("ar", "en")
     }
+
+    /**
+     * نكهتان: **خفيفة** و**كاملة**.
+     *
+     * `libmaplibre.so` وحدها ‎21‎ م.ب لمعماريّتَي ARM، فالحزمة تقفز من ‎13‎ إلى ‎35‎ —
+     * أي أكثر من ضعف، وهو تجاوزٌ لمعيار القبول في خارطة الطريق. وأكثر المستعملين لا
+     * يحتاج المتجهيّ: من يقيس سرعته على دراجةٍ لا يفتح خريطةً كاملةً لبلد.
+     *
+     * فالخفيفة هي ما كان بحذافيره — لا مكتبة ولا شيفرة متجهيّة أصلًا — والكاملة تزيدها
+     * المحرّك. ولا يدفع أحدٌ ثمن ما لا يستعمل.
+     *
+     * والشيفرة المتجهيّة كلُّها في `src/full/`، عدا [VectorMaps] فهي في `main`: لا
+     * تستورد MapLibre بحال (فحصُ توقيعٍ وبناءُ نصّ)، وتحتاجها الخفيفة لتصنيف الملفّات.
+     */
+    flavorDimensions += "engine"
+    productFlavors {
+        create("lite") {
+            dimension = "engine"
+            // لا لاحقةَ في المعرّف: النكهتان تطبيقٌ واحد، وتبديلُ المعرّف يجعل
+            // الترقية من إحداهما إلى الأخرى تثبيتًا جديدًا تضيع معه التفضيلات
+            versionNameSuffix = "-lite"
+        }
+        create("full") {
+            dimension = "engine"
+            versionNameSuffix = "-full"
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        }
+    }
+
 
     signingConfigs {
         if (keystorePropsFile.exists()) {
@@ -98,6 +128,7 @@ dependencies {
     implementation(libs.androidx.camera.effects)
 
     implementation(libs.osmdroid.android)
+    "fullImplementation"(libs.maplibre.android)
 
     // واجهة OsmAnd الخارجيّة: تُستدعى وقت التشغيل إن كان OsmAnd مثبَّتًا، وغيابه
     // لا يعطّل شيئًا — الربط بالخدمة يفشل بهدوء فيعود التطبيق إلى مساره الخاصّ

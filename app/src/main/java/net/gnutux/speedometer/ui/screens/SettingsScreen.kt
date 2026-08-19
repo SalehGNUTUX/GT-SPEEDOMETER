@@ -100,6 +100,7 @@ import net.gnutux.speedometer.core.update.UpdateState
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.components.GaugePalette
+import net.gnutux.speedometer.ui.components.VectorMapsAvailable
 import net.gnutux.speedometer.ui.components.aspect
 import net.gnutux.speedometer.ui.components.drawGaugeFace
 import net.gnutux.speedometer.ui.theme.Accent
@@ -2280,6 +2281,14 @@ private fun MapDownloadRows(
         title = stringResource(R.string.mapdl_title),
         note = stringResource(R.string.mapdl_note),
     )
+    // سطرٌ زائدٌ في النكهة الكاملة وحدها: وعدُ ‎.pmtiles‎ في نكهةٍ لا تحمل محرّكًا
+    // متجهيًّا كذبٌ صريح — يُنزَّل الملفّ ثمّ لا يُرسم منه شيء
+    if (VectorMapsAvailable) {
+        Text(
+            text = stringResource(R.string.mapdl_note_vector),
+            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+        )
+    }
 
     val running = state as? DownloadState.Running
     val working = state as? DownloadState.Working

@@ -328,7 +328,8 @@
 
     <!-- 0.9.2 — تنزيل أرشيف خرائط -->
     <string name="mapdl_title">تنزيل أرشيف خرائط</string>
-    <string name="mapdl_note">ألصق رابطًا مباشرًا لأرشيف بلاطات (‎.mbtiles‎ أو ‎.sqlite‎ أو ‎.gemf‎ أو ‎.zip‎) فيُنزَّل إلى مجلّد الخرائط ويُستعمل تلقائيًّا.</string>
+    <string name="mapdl_note">ألصق رابطًا مباشرًا لأرشيف بلاطات (‎.mbtiles‎ أو ‎.sqlite‎ أو ‎.sqlitedb‎ أو ‎.gemf‎ أو ‎.zip‎) فيُنزَّل إلى مجلّد الخرائط ويُستعمل تلقائيًّا. وكلُّها تُقبل مضغوطةً بـ‎.gz‎ فتُفكّ وحدها.</string>
+    <string name="mapdl_note_vector">وهذه النكهة تقرأ ‎.pmtiles‎ أيضًا: خريطةٌ متجهيّةٌ لبلدٍ كامل في ملفٍّ واحد، تُرسم على الجهاز دون اتّصال.</string>
     <string name="mapdl_url_hint">https://…/maps.mbtiles</string>
     <string name="mapdl_start">نزّل</string>
     <string name="mapdl_cancel">إلغاء</string>
@@ -339,7 +340,7 @@
     <string name="mapdl_resuming">استئنافٌ لما نُزّل سابقًا</string>
     <string name="mapdl_done">تمّ: %1$s</string>
     <string name="mapdl_err_url">رابطٌ غير صالح — يجب أن يبدأ بـ http أو https</string>
-    <string name="mapdl_err_ext">امتدادٌ غير مدعوم. المدعوم: mbtiles · sqlite · sqlitedb · gemf · zip</string>
+    <string name="mapdl_err_ext">امتدادٌ غير مدعوم. المدعوم: mbtiles · sqlite · sqlitedb · gemf · zip · pmtiles، ولكلٍّ منها صيغةٌ مضغوطة بـ‎.gz‎</string>
     <string name="mapdl_err_space">لا مساحة كافية على الجهاز (يلزم %1$s)</string>
     <string name="mapdl_err_net">تعذّر الاتّصال أو انقطع التنزيل</string>
     <string name="mapdl_err_wifi">لا واي‑فاي الآن، والتنزيل مقصورٌ عليه</string>
@@ -401,6 +402,9 @@
     <string name="map_source_online_note">بلاطاتٌ حيّة من الشبكة</string>
     <string name="map_source_osmand_note">صورةٌ يرسمها OsmAnd من خرائطه، دون اتّصال</string>
     <string name="map_source_offline_note">أرشيف البلاطات الذي في مجلّد الخرائط</string>
+    <string name="map_source_vector">متجهيّة</string>
+    <string name="map_source_vector_note">أرشيف ‎.pmtiles‎ يُرسم على الجهاز — خريطة بلدٍ كاملة دون اتّصال</string>
+    <string name="map_source_na_vector">لا أرشيف ‎.pmtiles‎ صالحًا في مجلّد الخرائط</string>
     <string name="map_source_na_online">لا اتّصال الآن</string>
     <string name="map_source_na_osmand">OsmAnd غير متاح</string>
     <string name="map_source_na_offline">لا أرشيف بلاطاتٍ يغطّي هذا المسار</string>
@@ -410,7 +414,7 @@
     <string name="mapdl_err_rawdata">هذا ملفّ بيانات OSM خام (شكل ESRI أو GeoPackage أو PBF) لا أرشيفَ بلاطات. المطلوب أرشيفٌ صوره PNG أو JPEG مرتّبةً على هيئة ‎z/x/y‎.</string>
     <string name="mapdl_where_geofabrik">https://download.geofabrik.de/</string>
     <string name="mapdl_where_geofabrik_label">Geofabrik — بيانات OSM لكلّ بلد</string>
-    <string name="mapdl_where_geofabrik_note">مصدرٌ حرٌّ ممتاز، لكنّ ملفّاته **بياناتٌ خام أو متجهيّة**: ‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg.zip‎ لا يرسمها هذا التطبيق، وملفّ ‎shortbread‎ بصيغة MBTiles متجهيّة (MVT). لرسمها داخل التطبيق يلزم محرّكٌ متجهيّ، وهو مقصد الإصدار 0.10.0. وحتّى ذلك الحين تُحوَّل ‎.osm.pbf‎ إلى ‎.obf‎ ببرنامج OsmAndMapCreator ثمّ تُقرأ عبر OsmAnd.</string>
+    <string name="mapdl_where_geofabrik_note">مصدرٌ حرٌّ ممتاز، لكنّ ملفّاته **بياناتٌ خام أو متجهيّة**: ‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg.zip‎ لا يرسمها التطبيق مباشرةً، وملفّ ‎shortbread‎ بصيغة MBTiles متجهيّة (MVT) كذلك.\n\nولها طريقان: تُحوَّل ‎.osm.pbf‎ إلى ‎.pmtiles‎ بأداة ‎pmtiles‎ أو ‎planetiler‎ فتقرؤها النكهة الكاملة مباشرةً، أو تُحوَّل إلى ‎.obf‎ ببرنامج OsmAndMapCreator فتُقرأ عبر OsmAnd.</string>
 
     <!-- ===== 0.9.4 — تصاميم العدّاد ===== -->
     <string name="settings_section_gauge">تصميم العدّاد</string>

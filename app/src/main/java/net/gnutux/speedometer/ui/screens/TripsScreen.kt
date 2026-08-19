@@ -56,7 +56,11 @@ import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.trip.TripTrack
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
+import net.gnutux.speedometer.core.map.VectorMaps
+import net.gnutux.speedometer.core.settings.MapSourcePreference
 import net.gnutux.speedometer.ui.components.RouteMap
+import net.gnutux.speedometer.ui.components.VectorMapsAvailable
+import net.gnutux.speedometer.ui.components.VectorRouteMap
 import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
@@ -365,6 +369,26 @@ private fun TripDetail(
         } else {
             // الخلفيّة والزوايا صارتا داخل RouteMap نفسه، وإلّا رسمت البلاطات
             // المربّعة فوق الاستدارة فبدا الإطار متبدّل الشكل مع كلّ تكبير.
+            // المتجهيّ حين يُختار **ويوجد** أرشيفٌ صالح؛ وإلّا فالنقطيّة كما كانت.
+            // شرطان لا واحد: اختيارٌ بلا أرشيفٍ يُخرج شاشةً سوداء، وأرشيفٌ بلا اختيارٍ
+            // يخطف الخريطة ممّن لم يطلبها. وقاعدة «الافتراضيّ يحفظ ما كان» تقتضي
+            // أنّ من لم يبدّل المصدر لا يتبدّل عليه شيء.
+            val vectorArchive = remember(mapSource) {
+                if (VectorMapsAvailable && mapSource == MapSourcePreference.VECTOR) {
+                    VectorMaps.firstAvailable(context)
+                } else {
+                    null
+                }
+            }
+            if (vectorArchive != null) {
+                VectorRouteMap(
+                    archive = vectorArchive,
+                    points = drawPoints,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(320.dp),
+                )
+            } else
             RouteMap(
                 // نقاطُ **الرسم** لا نقاط الرحلة: التخفيف هنا لا في `TripTrack`،
                 // فالملفّ والإحصاءات وعدّاد النقاط أسفل الشاشة تبقى على الأصل

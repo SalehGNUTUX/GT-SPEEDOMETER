@@ -86,6 +86,7 @@ import net.gnutux.speedometer.core.map.MapBindForce
 import net.gnutux.speedometer.core.map.MapBinding
 import net.gnutux.speedometer.core.map.MapSource
 import net.gnutux.speedometer.core.map.OfflineMaps
+import net.gnutux.speedometer.core.map.VectorMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndProjection
 import net.gnutux.speedometer.core.map.OsmAndShot
@@ -273,6 +274,7 @@ private class MapSourceOption(
 private fun mapSourceOptions(
     ready: MapReady?,
     osmAndReady: Boolean,
+    vectorReady: Boolean,
 ): List<MapSourceOption> {
     fun option(
         source: MapSourcePreference,
@@ -312,6 +314,15 @@ private fun mapSourceOptions(
             // التغطية لا مجرّد وجود الملفّ: أرشيف مدينةٍ أخرى يُرضي شرط «عندي خريطة»
             // ويُخرج فراغًا رماديًّا، وذلك أسوأ ما يمكن أن يُعرض على من اختار بنفسه.
             available = ready?.offlineCovers ?: true,
+        ),
+        option(
+            source = MapSourcePreference.VECTOR,
+            label = R.string.map_source_vector,
+            note = R.string.map_source_vector_note,
+            reason = R.string.map_source_na_vector,
+            // وجودُ أرشيفٍ صالحٍ شرطٌ للعرض: اختيارٌ بلا أرشيفٍ يُخرج شاشةً سوداء،
+            // وهو ما تمنعه القاعدة نفسها المبسوطة عند خيار «محلّيّة» فوقه.
+            available = vectorReady,
         ),
     )
 }
@@ -452,7 +463,14 @@ fun RouteMap(
         osmAndReady = osmAndReady,
         osmAndPending = osmAndStatus.state == OsmAndState.CHECKING,
     )
-    val sourceOptions = mapSourceOptions(current, osmAndReady)
+    // يُسأل مرّةً عند تبدّل المكتبة لا في كلّ إعادة تركيب: `firstAvailable` تقرأ
+    // القرص وتفحص توقيع الملفّ، وذلك في كلّ إطارٍ كلفةٌ بلا مقابل
+    // شرطان: النكهة تحمل محرّكًا، ويوجد أرشيفٌ صالح. وفي الخفيفة الأوّل كاذبٌ ثابتًا
+    // فيُحذف الخيار من القائمة أصلًا — لا خيارٌ معطَّلٌ يسأل المستعمل عن سببه
+    val vectorReady = remember(context) {
+        VectorMapsAvailable && VectorMaps.firstAvailable(context) != null
+    }
+    val sourceOptions = mapSourceOptions(current, osmAndReady, vectorReady)
 
     // مقاس الصورة يُطلب بالبكسل، ولا يُعرف قبل أوّل تخطيط. نأخذه من التخطيط نفسه
     // بدل `BoxWithConstraints` كي لا تُقرأ خصائص مُستقبِلٍ ضمنيّ من لامدا متداخلة.

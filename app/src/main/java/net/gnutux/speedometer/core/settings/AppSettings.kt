@@ -535,7 +535,16 @@ enum class MapSourcePreference(val id: String) {
     OSMAND("osmand"),
 
     /** أرشيف البلاطات الذي في مجلّد الخرائط، ولو كانت الشبكة متاحة */
-    OFFLINE("offline");
+    OFFLINE("offline"),
+
+    /**
+     * أرشيف ‎.pmtiles‎ متجهيًّا يرسمه MapLibre عندنا (0.10.0).
+     *
+     * صنفٌ خامسٌ لا بديلٌ عن `OFFLINE`: النقطيّ والمتجهيّ يتعايشان، ومن عنده أرشيفٌ
+     * نقطيٌّ يعمل اليوم لا ينكسر عليه شيء. وحين لا يوجد ‎.pmtiles‎ صالحٌ يعود السلوك
+     * إلى ما كان بلا خطأ.
+     */
+    VECTOR("vector");
 
     companion object {
         val DEFAULT = AUTO
