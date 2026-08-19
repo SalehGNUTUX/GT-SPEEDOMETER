@@ -172,10 +172,35 @@ push_branch() {
 #  البناء وجمع الحزم والنشر — دوالّ مشتركة بين مسار الإصدار الكامل ومسار الدفع
 # ---------------------------------------------------------------------------
 
+# النكهات كما يعلنها ملفّ البناء، أو لا شيء إن لم تُعلَن.
+#
+# تُكتشف ولا تُكتب هنا: الفرع الذي لا نكهات فيه يبقى هذا السكربت صالحًا له بلا
+# تبديل، والفرع الذي فيه نكهتان لا يحتاج أن يُذكّرنا بأسمائهما. ولو كُتبت هنا
+# لانحرفت عن `build.gradle.kts` عند أوّل تعديلٍ على أحدهما.
+detect_flavors() {
+  FLAVORS=()
+  [[ -f "$GRADLE_FILE" ]] || return 0
+  grep -q 'productFlavors' "$GRADLE_FILE" || return 0
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && FLAVORS+=("$f")
+  done < <(sed -n '/productFlavors {/,/^    }/p' "$GRADLE_FILE" |
+           grep -oE 'create\("[A-Za-z0-9]+"\)' | sed -E 's/create\("(.*)"\)/\1/')
+}
+
+# «lite» ← «Lite»: أسماء مهامّ Gradle تُبنى بأوّل حرفٍ كبير
+cap() { printf '%s%s' "$(printf '%s' "${1:0:1}" | tr '[:lower:]' '[:upper:]')" "${1:1}"; }
+
 build_apks() {
-  local tasks=()
-  if [[ "$VARIANT" == "debug"   || "$VARIANT" == "both" ]]; then tasks+=(":app:assembleDebug"); fi
-  if [[ "$VARIANT" == "release" || "$VARIANT" == "both" ]]; then tasks+=(":app:assembleRelease"); fi
+  detect_flavors
+  local tasks=() v f
+  for v in debug release; do
+    [[ "$VARIANT" == "$v" || "$VARIANT" == "both" ]] || continue
+    if (( ${#FLAVORS[@]} == 0 )); then
+      tasks+=(":app:assemble$(cap "$v")")
+    else
+      for f in "${FLAVORS[@]}"; do tasks+=(":app:assemble$(cap "$f")$(cap "$v")"); done
+    fi
+  done
   say "./gradlew ${tasks[*]}"
   if ! run ./gradlew --console=plain "${tasks[@]}"; then
     warn "فشل البناء. أُعيدت ملفّات المشروع إلى ما كانت: ${SYNC_FILES[*]:-}"
@@ -193,21 +218,28 @@ collect_artifacts() {
     if (( ! DRY_RUN )); then printf '\n# حزم الإصدار المبنيّة محلّيًّا\ndist/\n' >> .gitignore; fi
     say "أُضيف dist/ إلى .gitignore"
   fi
+  detect_flavors
   ARTIFACTS=()
-  local v src out
+  local v f src out dir label
   for v in debug release; do
     [[ "$VARIANT" == "$v" || "$VARIANT" == "both" ]] || continue
-    src="app/build/outputs/apk/${v}/app-${v}.apk"
-    [[ -f "$src" ]] || src="app/build/outputs/apk/${v}/app-${v}-unsigned.apk"
-    if (( DRY_RUN )); then
-      ARTIFACTS+=("${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${v}.apk"); continue
-    fi
-    [[ -f "$src" ]] || die "لم أجد حزمة ${v} في app/build/outputs/apk/${v}/"
-    out="${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${v}.apk"
-    cp "$src" "$out"
-    ( cd "$DIST" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
-    ARTIFACTS+=("$out" "${out}.sha256")
-    ok "$(basename "$out")  —  $(du -h "$out" | cut -f1)"
+    # حلقةٌ واحدة للحالتين: بلا نكهاتٍ يدور مرّةً بلاحقةٍ فارغة، وبنكهتين مرّتين.
+    # وبهذا يبقى اسم الحزمة على الفرع القديم كما كان بالحرف: `…-release.apk`
+    for f in "${FLAVORS[@]-}" ; do
+      if [[ -z "$f" ]]; then
+        dir="app/build/outputs/apk/${v}"; src="${dir}/app-${v}.apk"; label="$v"
+      else
+        dir="app/build/outputs/apk/${f}/${v}"; src="${dir}/app-${f}-${v}.apk"; label="${f}-${v}"
+      fi
+      [[ -f "$src" ]] || src="${src%.apk}-unsigned.apk"
+      out="${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${label}.apk"
+      if (( DRY_RUN )); then ARTIFACTS+=("$out"); continue; fi
+      [[ -f "$src" ]] || die "لم أجد حزمة ${label} في ${dir}/"
+      cp "$src" "$out"
+      ( cd "$DIST" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
+      ARTIFACTS+=("$out" "${out}.sha256")
+      ok "$(basename "$out")  —  $(du -h "$out" | cut -f1)"
+    done
   done
 }
 

@@ -48,6 +48,21 @@ done
 SRC="app/src/main/java"
 [[ -d "$SRC" ]] || { echo "شغّله من جذر المشروع (لم أجد $SRC)" >&2; exit 1; }
 
+# منذ 0.10.0 صار للمشروع نكهتان (`lite` و`full`)، ولكلٍّ منهما شجرةُ مصدرٍ خاصّة.
+# والفحوص كلُّها كانت تمسح `main` وحدها — فنصٌّ مستعمَلٌ بلا مقابلٍ في شيفرة نكهةٍ
+# كان يمرّ من الفاحص ويكسر البناء. **والفاحص الذي لا يرى ليس فاحصًا.**
+SRC_ROOTS=("$SRC")
+for extra in app/src/full/java app/src/lite/java; do
+  [[ -d "$extra" ]] && SRC_ROOTS+=("$extra")
+done
+
+# جذور الحزمة في كلّ شجرة، لمطابقة البيان: النكهتان تعرّفان المسار النسبيّ نفسه
+# (`ui/components/VectorRouteMap.kt`) فيُدمج الجميع ويُوحَّد قبل المقارنة.
+PKG_ROOTS=()
+for r in "${SRC_ROOTS[@]}"; do
+  [[ -d "$r/net/gnutux/speedometer" ]] && PKG_ROOTS+=("$r/net/gnutux/speedometer")
+done
+
 PKG_ROOT="$SRC/net/gnutux/speedometer"
 PROBLEMS=0
 DELETABLE=()
@@ -89,6 +104,7 @@ ui/SpeedoViewModel.kt
 ui/components/GaugeStyles.kt
 ui/components/GpsStatusBar.kt
 ui/components/RouteMap.kt
+ui/components/VectorRouteMap.kt
 ui/components/RouteSketch.kt
 ui/components/SpeedGauge.kt
 ui/components/StatTile.kt
@@ -115,7 +131,7 @@ printf '%s\n' "${C_DIM}$(pwd)${C_RESET}"
 # ===========================================================================
 head2 "تعريفات مكرّرة"
 DUPES="$(
-  find "$SRC" -name '*.kt' -print0 | while IFS= read -r -d '' f; do
+  find "${SRC_ROOTS[@]}" -name '*.kt' -print0 | while IFS= read -r -d '' f; do
     awk -v file="$f" '
       /^package /            { pkg = $2; sub(/;$/, "", pkg); next }
       /^[a-z ]*(class|interface|object)[ \t]/ {
@@ -145,7 +161,9 @@ fi
 head2 "مطابقة بيان الإصدار"
 if [[ -d "$PKG_ROOT" ]]; then
   printf '%s\n' "$MANIFEST" | grep -v '^$' | sort > /tmp/.gt_keep
-  (cd "$PKG_ROOT" && find . -name '*.kt' | sed 's|^\./||' | sort) > /tmp/.gt_have
+  for pr in "${PKG_ROOTS[@]}"; do
+    (cd "$pr" && find . -name '*.kt' | sed 's|^\./||')
+  done | sort -u > /tmp/.gt_have
   EXTRA="$(comm -13 /tmp/.gt_keep /tmp/.gt_have)"
   MISSING="$(comm -23 /tmp/.gt_keep /tmp/.gt_have)"
   if [[ -n "$EXTRA" ]]; then
@@ -154,7 +172,11 @@ if [[ -d "$PKG_ROOT" ]]; then
     while IFS= read -r r; do
       [[ -z "$r" ]] && continue
       printf '      %s\n' "$r"
-      DELETABLE+=("$PKG_ROOT/$r")
+      # الملفّ قد يكون في شجرة نكهةٍ لا في `main`، فيُبحث عنه في الجذور كلِّها:
+      # طباعةُ مسارٍ لا وجود له تُضلّل، و`--fix` عليه لا يحذف شيئًا
+      for pr in "${PKG_ROOTS[@]}"; do
+        [[ -f "$pr/$r" ]] && DELETABLE+=("$pr/$r")
+      done
     done <<< "$EXTRA"
   fi
   if [[ -n "$MISSING" ]]; then
@@ -176,7 +198,7 @@ head2 "موارد النصوص"
 STRINGS="app/src/main/res/values/strings.xml"
 if [[ -f "$STRINGS" ]]; then
   grep -oE '<string name="[^"]+"' "$STRINGS" | sed 's/.*name="//; s/"//' | sort -u > /tmp/.gt_str
-  grep -rhoE 'R\.string\.[A-Za-z0-9_]+' "$SRC" | sed 's/R\.string\.//' | sort -u > /tmp/.gt_used
+  grep -rhoE 'R\.string\.[A-Za-z0-9_]+' "${SRC_ROOTS[@]}" | sed 's/R\.string\.//' | sort -u > /tmp/.gt_used
   LOST="$(comm -13 /tmp/.gt_str /tmp/.gt_used)"
   DUPS="$(grep -oE '<string name="[^"]+"' "$STRINGS" | sort | uniq -d)"
   if [[ -n "$LOST" ]]; then
@@ -267,7 +289,7 @@ if [[ -d "$RES" ]]; then
     kind="$(basename "$(dirname "$f")")"; kind="${kind%%-*}"
     case "$n" in ic_launcher*) [[ "$kind" == mipmap ]] && continue ;; esac
     if ! grep -rqF "$kind/$n" "$RES" "app/src/main/AndroidManifest.xml" 2>/dev/null \
-       && ! grep -rqE "R\.$kind\.$n\b" "$SRC" 2>/dev/null; then
+       && ! grep -rqE "R\.$kind\.$n\b" "${SRC_ROOTS[@]}" 2>/dev/null; then
       DEAD+=("$f")
     fi
   done < <(find "$RES/drawable" -type f 2>/dev/null)
@@ -303,7 +325,7 @@ while IFS= read -r f; do
       grep -q '@OptIn(' "$f" || UNOPTED+=("$(basename "$f") ← $sym")
     fi
   done
-done < <(find "$SRC" -name '*.kt' 2>/dev/null)
+done < <(find "${SRC_ROOTS[@]}" -name '*.kt' 2>/dev/null)
 if (( ${#UNOPTED[@]} )); then
   warn "واجهةٌ تجريبيّة بلا @OptIn (سيسقط بناء Gradle):"
   printf '      %s\n' "${UNOPTED[@]}"

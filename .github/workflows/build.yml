@@ -34,13 +34,17 @@ jobs:
       - name: فحص الشجرة
         run: bash CLEANUP.sh
 
-      # المنطق النقيّ: تنبيهٌ ومقياس. لا جهازَ ولا محاكيًا يلزمه
+      # المنطق النقيّ: تنبيهٌ ومقياس. لا جهازَ ولا محاكيًا يلزمه.
+      # `testLiteDebugUnitTest` لا `testDebugUnitTest`: بالنكهات صار لكلّ نكهةٍ مهمّتُها،
+      # والمنطق المختبَر في `main` مشترَكٌ بينهما فتكفي واحدة
       - name: اختبارات الوحدة
-        run: ./gradlew --no-daemon :app:testDebugUnitTest
+        run: ./gradlew --no-daemon :app:testLiteDebugUnitTest
 
-      # الحكم النهائيّ
-      - name: ترجمة الحزمة
-        run: ./gradlew --no-daemon :app:assembleDebug
+      # الحكم النهائيّ — **النكهتان معًا**: الخفيفة لا تترجم شيفرة MapLibre والكاملة
+      # تترجمها، فبناءُ واحدةٍ لا يشهد للأخرى. وقد كسرت بدائلُ النكهة الخفيفة الترجمةَ
+      # فعلًا حين اختلف توقيعها عن توقيع الكاملة.
+      - name: ترجمة النكهتين
+        run: ./gradlew --no-daemon :app:assembleLiteDebug :app:assembleFullDebug
 
       # تقارير الاختبار تُحفَظ عند الفشل وحده: عند النجاح لا أحد يقرؤها
       - name: تقارير الاختبار

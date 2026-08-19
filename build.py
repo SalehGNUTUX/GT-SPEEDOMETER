@@ -346,6 +346,33 @@ def apk_url(version: str, kind: str) -> str:
     return f"{REPO}/releases/download/{tag}/GT-SPEEDOMETER-{version}-beta-{kind}.apk"
 
 
+#: أوّل إصدارٍ بنكهتين. ما قبله حزمةٌ واحدة، وما بعده «خفيفة» و«كاملة».
+FLAVOR_SINCE = (0, 10, 0)
+
+
+def _num(version: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in version.split("."))
+
+
+def download_links(version: str) -> str:
+    """
+    روابط حزم إصدارٍ بعينه.
+
+    الجدول يعرض تاريخ المشروع كلَّه، وأسماء الحزم تبدّلت في ‎0.10.0‎ حين صارت نكهتان.
+    فالرابط يُبنى بحسب **رقم الإصدار** لا بحسب حال المشروع اليوم — وإلّا صارت روابط
+    الإصدارات القديمة كلُّها إلى ملفّاتٍ لا وجود لها.
+    """
+    if _num(version) >= FLAVOR_SINCE:
+        return (
+            f'<a href="{apk_url(version, "lite-release")}">خفيفة</a>\n'
+            f'          <a href="{apk_url(version, "full-release")}">كاملة</a>'
+        )
+    return (
+        f'<a href="{apk_url(version, "release")}">release</a>\n'
+        f'          <a href="{apk_url(version, "debug")}">debug</a>'
+    )
+
+
 def release_rows(items: list[tuple[str, str]]) -> str:
     out = []
     for i, (version, note) in enumerate(items):
@@ -356,8 +383,7 @@ def release_rows(items: list[tuple[str, str]]) -> str:
         <th scope="row"><span class="v">{version}</span>{badge}</th>
         <td class="note">{esc(note)}</td>
         <td class="dl">
-          <a href="{apk_url(version, 'release')}">release</a>
-          <a href="{apk_url(version, 'debug')}">debug</a>
+          {download_links(version)}
           <a href="{REPO}/releases/tag/v{version}-beta" class="ghost">التفاصيل</a>
         </td>
       </tr>""")
