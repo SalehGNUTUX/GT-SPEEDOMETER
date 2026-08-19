@@ -5,6 +5,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import android.app.Activity
+import android.provider.DocumentsContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.compose.animation.core.animateFloatAsState
@@ -170,12 +172,30 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val downloadWifiOnly by s.mapDownloadWifiOnly.collectAsStateWithLifecycle()
     var downloadUrl by remember { mutableStateOf("") }
 
-    // مُنتقي المستندات: `OpenDocument` لا `GetContent` — الأوّل يمنح إذنَ قراءةٍ صريحًا
-    // للعنوان الذي يُعاد، والثاني قد يعطي عنوانًا مؤقّتًا ينتهي قبل أن يكتمل نسخُ أرشيفٍ
-    // بمئات الميغابايت. ولا إذنَ تخزينٍ في البيان: منتقي النظام يمنح الوصول لما اختاره
-    // المستعمل وحده، وهو ما تقتضيه سياسة أندرويد ‎11‎ فما فوق.
-    val pickMap = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) downloader.importFrom(uri)
+    /*
+     * مُنتقي الملفّات: **مُختارٌ بين التطبيقات** لا منتقي المستندات وحده.
+     *
+     * كان `ACTION_OPEN_DOCUMENT` وحده، وهو لا يعرض إلّا مزوّدات `DocumentsProvider` —
+     * أي منتقي النظام. وأكثر مديري الملفّات لا يُعلن نفسه مزوّدًا، فلا يظهر أصلًا؛
+     * ومنتقي النظام يمنع تصفّح `Android/data` منذ أندرويد ‎11‎ فيردّ «الوصول محدود»،
+     * وهناك بالضبط تسكن خرائطُ النكهة الأخرى.
+     *
+     * فأُضيف `ACTION_GET_CONTENT` إلى مُختارٍ واحد: يقبله كلُّ مدير ملفّاتٍ تقريبًا،
+     * فيختار المستعمل الذي يبلغ ما يريد — ومن عنده مديرٌ بإذن `MANAGE_EXTERNAL_STORAGE`
+     * يصل إلى ما يمنعه منتقي النظام. والاختيار يُعرض في كلّ مرّة لا يُحفَظ: مديرُ
+     * الملفّات الذي يكفي اليوم قد لا يبلغ موضعَ الغد.
+     *
+     * و`EXTRA_INITIAL_URI` يفتحه على مجلّد خرائطنا حين يحترمه المزوّد — وهو رجاءٌ لا
+     * أمر، فبعضهم يتجاهله. ومن هناك يتنقّل المستعمل كيف شاء.
+     *
+     * والعنوان العائد قد يكون مؤقّتًا مع `GET_CONTENT` (لا إذنَ دائمًا فيه)، وذلك
+     * مقبولٌ هنا: النسخ يبدأ فورًا وينتهي قبل أن يُغلق التطبيق.
+     */
+    val pickMap = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data
+        if (result.resultCode == Activity.RESULT_OK && uri != null) downloader.importFrom(uri)
     }
 
     // ————— قائمة الخرائط المحلّيّة: حالةٌ مرفوعة إلى الشاشة لا إلى بطاقتها —————
@@ -720,7 +740,7 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                                 downloader.clear()
                             },
                             onStart = { downloader.start(downloadUrl, downloadWifiOnly) },
-                            onPick = { pickMap.launch(MAP_PICK_MIME_TYPES) },
+                            onPick = { pickMap.launch(mapPickIntent(context)) },
                             onCancel = downloader::cancel,
                             wifiOnly = downloadWifiOnly,
                             onWifiOnlyChange = s::setMapDownloadWifiOnly,
@@ -2623,6 +2643,40 @@ private fun lastCheckLabel(millis: Long): String =
             SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(millis)),
         )
     }
+
+/**
+ * نيّةُ اختيار أرشيفٍ من التخزين: منتقي المستندات ومديرو الملفّات في مُختارٍ واحد.
+ *
+ * `EXTRA_INITIAL_URI` يُبنى من مجلّد خرائطنا عبر `DocumentsContract`: يُفتح المنتقي
+ * هناك مباشرةً عند من يحترمه، فلا يبدأ المستعمل تصفّحه من جذر الجهاز في كلّ مرّة.
+ */
+private fun mapPickIntent(context: Context): Intent {
+    val base = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        type = MAP_PICK_MIME
+        putExtra(Intent.EXTRA_MIME_TYPES, MAP_PICK_MIME_TYPES)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        runCatching {
+            val folder = OfflineMaps.primaryFolder(context)
+            val docs = DocumentsContract.buildDocumentUri(
+                EXTERNAL_DOCS_AUTHORITY,
+                "primary:${folder.absolutePath.substringAfter("/storage/emulated/0/", "")}",
+            )
+            putExtra(DocumentsContract.EXTRA_INITIAL_URI, docs)
+        }
+    }
+    // البديل يظهر في المُختار بجانب منتقي النظام: مديرو الملفّات يُعلنون هذا لا ذاك
+    val alternative = Intent(Intent.ACTION_GET_CONTENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        type = MAP_PICK_MIME
+        putExtra(Intent.EXTRA_MIME_TYPES, MAP_PICK_MIME_TYPES)
+    }
+    return Intent.createChooser(base, context.getString(R.string.mapdl_pick))
+        .putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(alternative))
+}
+
+private const val MAP_PICK_MIME = "*/*"
+private const val EXTERNAL_DOCS_AUTHORITY = "com.android.externalstorage.documents"
 
 /**
  * ما يُعرَض في منتقي المستندات: **كلّ الأنواع** لا نوعًا بعينه.
