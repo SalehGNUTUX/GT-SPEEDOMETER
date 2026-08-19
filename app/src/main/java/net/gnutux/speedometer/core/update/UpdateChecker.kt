@@ -297,12 +297,41 @@ class UpdateChecker private constructor(context: Context) {
     }
 
     /** انظر تحذير التوقيع في رأس الملفّ: `release` أوّلًا دائمًا، و`debug` عند العدم */
+    /**
+     * اختيار الحزمة التي تخصّ **هذه النسخة** من بين حزم الإصدار.
+     *
+     * منذ ‎0.10.0‎ يحمل الإصدار حزمتين: `lite` بلا محرّكٍ متجهيّ و`full` معه. وحزمة
+     * النكهة الأخرى ليست تحديثًا لهذه: أحسنُ ما يقع أن يرفضها المثبّت لاختلاف
+     * التوقيع، وأسوؤه أن يجد صاحبُ الخفيفة نفسه يحمّل ‎22‎ ميغابايت زائدة لم يطلبها،
+     * أو يفقد صاحبُ الكاملة محرّكه في «تحديث».
+     *
+     * فالمرشَّح يجب أن يحمل **اسم نكهتنا**، ومتى كان الإصدار بحزم نكهاتٍ ولم نجد
+     * نكهتنا فيه فلا تحديث — ولا تُقترَح البديلة. و«لا شيء» أصدق من حزمةٍ خاطئة.
+     *
+     * والإصدارات القديمة (ما قبل ‎0.10.0‎) حزمةٌ واحدة بلا اسم نكهة، فتُقبل كما كانت:
+     * من ثبّت واحدةً منها يُحدَّث إلى ما يليها بلا انقطاع.
+     */
     private fun pickAsset(assets: List<Asset>): Asset? {
         val packages = assets.filter { it.name.endsWith(APK_SUFFIX, ignoreCase = true) }
-        return packages.firstOrNull { it.name.contains(RELEASE_MARK, ignoreCase = true) }
-            ?: packages.firstOrNull { it.name.contains(DEBUG_MARK, ignoreCase = true) }
-            ?: packages.firstOrNull()
+        if (packages.isEmpty()) return null
+
+        val flavored = packages.filter { it.name.containsFlavorMark() }
+        val pool = if (flavored.isEmpty()) {
+            packages   // إصدارٌ قديمٌ بحزمةٍ واحدة
+        } else {
+            val mine = flavored.filter { it.name.contains(BuildConfig.FLAVOR, ignoreCase = true) }
+            if (mine.isEmpty()) return null   // نكهتنا ليست في هذا الإصدار
+            mine
+        }
+
+        return pool.firstOrNull { it.name.contains(RELEASE_MARK, ignoreCase = true) }
+            ?: pool.firstOrNull { it.name.contains(DEBUG_MARK, ignoreCase = true) }
+            ?: pool.firstOrNull()
     }
+
+    /** هل في الاسم علامةُ نكهة؟ — به يُفرَّق إصدارُ النكهتين عن إصدارٍ قديمٍ بحزمةٍ واحدة */
+    private fun String.containsFlavorMark(): Boolean =
+        FLAVOR_MARKS.any { contains(it, ignoreCase = true) }
 
     // ————————————————————————— التنزيل —————————————————————————
 
@@ -623,6 +652,15 @@ class UpdateChecker private constructor(context: Context) {
 
         private const val RELEASE_MARK = "release"
         private const val DEBUG_MARK = "debug"
+
+        /**
+         * أسماء النكهات كما تظهر في أسماء الحزم.
+         *
+         * مكتوبةٌ لا مشتقّةٌ من `BuildConfig`: النسخة العاملة تعرف نكهتها هي وحدها،
+         * وهذه القائمة تُميّز «إصدارٌ بحزم نكهات» من «إصدارٌ قديمٌ بحزمةٍ واحدة» —
+         * وذلك حكمٌ على أسماء غيرنا لا على أنفسنا.
+         */
+        private val FLAVOR_MARKS = listOf("lite", "full")
 
         private const val CHANNEL_ID = "update_channel"
 

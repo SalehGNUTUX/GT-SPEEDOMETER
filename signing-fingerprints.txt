@@ -1,1 +1,6 @@
 release b9db56070c073eb8ff1ea16ff12d6e55e6617e7561b08661b937c25d064c0c1a
+releaseFull 16b4cd4fad3cf24f4e5b4f0ddba1c31bcb51fa752f2c454a417528f104e8c4a6
+# «release» توقيع النكهة الخفيفة (net.gnutux.speedometer) — وهو المفتاح الأصليّ،
+# فيبقى التحديث متّصلًا لكلّ من ثبّت قبل 0.10.0.
+# و«releaseFull» توقيع النكهة الكاملة (net.gnutux.speedometer.full) — تطبيقٌ مستقلّ.
+# ضياعُ أيٍّ منهما = فقدان القدرة على تحديث كلّ نسخةٍ منشورةٍ منه إلى الأبد.

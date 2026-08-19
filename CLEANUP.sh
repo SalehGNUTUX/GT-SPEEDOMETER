@@ -232,7 +232,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     ok "لا سرّ متتبَّعًا"
   fi
   # لا تقل «متجاهَل» عن ملفٍّ أثبتنا للتوّ أنّه متتبَّع
-  for f in keystore.properties *.jks; do
+  for f in keystore.properties keystore-full.properties *.jks; do
     [[ -e "$f" ]] || continue
     git ls-files --error-unmatch "$f" >/dev/null 2>&1 && continue
     printf '%s\n' "      ${C_DIM}موجودٌ محلّيًّا ومتجاهَل — احتفظ بنسخةٍ خارج الجهاز: $f${C_RESET}"
