@@ -188,7 +188,7 @@
     <string name="map_no_offline_title">لا خرائط محلّيّة على الجهاز</string>
     <string name="map_no_offline_body">نزّل خريطة منطقتك من تطبيقٍ يعتمد OpenStreetMap مثل OsmAnd، أو ضع أرشيف بلاطاتٍ في مجلّد الخرائط، ليعمل المسار دون اتّصال.</string>
     <string name="map_no_offline_action">أين أضع الخرائط؟</string>
-    <string name="map_obf_found">وُجدت خرائط OsmAnd بصيغة ‎.obf‎ (%1$s) — وهي صيغةٌ متجهيّة لا يرسمها هذا التطبيق. تُفتح في OsmAnd، ولرسم المسار هنا دون اتّصال يلزم أرشيف بلاطات.</string>
+    <string name="map_obf_found">وُجدت خرائط متجهيّة (%1$s) لا يرسمها المحرّك النقطيّ.\n\nملفّات ‎.obf‎ تُفتح في OsmAnd. وملفّات ‎.mbtiles‎ المتجهيّة (‎shortbread‎ من Geofabrik مثلًا) تُحوَّل إلى ‎.pmtiles‎ بأمرٍ واحد — ‎pmtiles convert اسم_الملفّ.mbtiles الناتج.pmtiles‎ — فتقرؤها النكهة الكاملة.</string>
     <string name="settings_about_developer">المطوّر</string>
     <string name="settings_about_repo">المستودع</string>
     <string name="settings_about_repo_url">https://github.com/SalehGNUTUX/GT-SPEEDOMETER</string>

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
+import java.util.Locale
 import android.os.Build
 import android.os.Environment
 import androidx.annotation.StringRes
@@ -185,6 +186,15 @@ class OfflineMaps private constructor(context: Context) {
             // لا برهان.
             if (file.extension.equals(VectorMaps.EXTENSION, ignoreCase = true)) {
                 if (VectorMaps.looksValid(file)) pmtiles += file else rawData += file
+                continue
+            }
+            // أرشيفُ سكليت متجهيُّ البلاطات (MVT) — كـ`shortbread` من Geofabrik: رأسه
+            // سليمٌ ويُفتح، لكنّ قارئنا يُخرج بروتوبَف صورةً فيفشل فكّ ترميزها صامتًا.
+            // فيُصنَّف متجهيًّا هنا كما يُرفض في المُنزِّل، بالحكم نفسه لا بنسخةٍ عنه.
+            if (file.extension.lowercase() in SQLITE_TILE_EXT &&
+                tileFormatOf(file) == TileFormat.VECTOR
+            ) {
+                vectors += file
                 continue
             }
             // بياناتٌ خام يفضحها اسمها: ‎.osm.pbf‎ و‎.gpkg‎ و‎.shp‎ ليست بلاطًا بحال،
@@ -535,6 +545,9 @@ class OfflineMaps private constructor(context: Context) {
         private const val ANDROID_DATA_DIR = "Android/data"
         private const val APP_FILES_DIR = "files"
         private const val OBF_EXT = "obf"
+
+        /** امتدادات أرشيفات سكليت التي يُسأل عن صيغة بلاطاتها */
+        private val SQLITE_TILE_EXT = setOf("mbtiles", "sqlite", "sqlitedb")
         private const val ZIP_EXT = "zip"
 
         /** سقفٌ على المسح: مجلّد بلاطٍ مفكوك يحوي عشرات الآلاف من الملفّات */
@@ -603,6 +616,77 @@ class OfflineMaps private constructor(context: Context) {
          * الملاحظة — وذلك أهون من مسحٍ يقف.
          */
         private const val MAX_ZIP_ENTRIES = 2_000
+
+        /**
+         * صيغةُ بلاطات أرشيف MBTiles: نقطيّةٌ تُرسم، أم متجهيّةٌ لا يقرؤها محرّكنا؟
+         *
+         * **حكمٌ واحدٌ لا اثنان.** كان في [MapDownloader] وحده، فكان الأرشيف المتجهيّ
+         * يُرفض عند التنزيل ويُقبل حين يضعه المستعمل بيده في المجلّد — فيُبشَّر
+         * بخريطةٍ لن تُرسم له أبدًا، ثمّ يُقال له في موضعٍ آخر «لا أرشيف يغطّي المسار».
+         * خبران متناقضان عن ملفٍّ واحد. فصار الحكم هنا، يناديه الاثنان.
+         *
+         * ويُسأل `metadata` عن `format` أوّلًا، ويُستأنس ببايتات أوّل بلاطة حين يسكت
+         * الجدول. و«لا أدري» تعني: امضِ — فمنعُ أرشيفٍ سليمٍ أسوأ من قبول واحدٍ
+         * مشكوكٍ فيه، لأنّ الأوّل خسارةٌ مؤكّدة والثاني احتمال.
+         */
+    internal fun tileFormatOf(file: File): TileFormat = runCatching {
+        val db = SQLiteDatabase.openDatabase(
+            file.absolutePath,
+            null,
+            // كما في [OfflineMaps]: قراءةٌ فقط وبلا مُقارِناتٍ محلّيّة، فلا نكتب في
+            // أرشيفٍ لم نُنشئه ولا نفشل على بطاقةٍ مركّبة للقراءة
+            SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
+        )
+        try {
+            declaredFormat(db)?.let { declared ->
+                return@runCatching if (declared in RASTER_FORMATS) {
+                    TileFormat.RASTER
+                } else {
+                    TileFormat.VECTOR
+                }
+            }
+            firstTileFormat(db)
+        } finally {
+            runCatching { db.close() }
+        }
+    }.getOrDefault(TileFormat.UNKNOWN)
+
+    private fun declaredFormat(db: SQLiteDatabase): String? = runCatching {
+        db.rawQuery("SELECT value FROM metadata WHERE name = 'format' LIMIT 1", null).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() }
+
+    private fun firstTileFormat(db: SQLiteDatabase): TileFormat {
+        val blob = runCatching {
+            db.rawQuery("SELECT tile_data FROM tiles LIMIT 1", null).use { c ->
+                if (c.moveToFirst()) c.getBlob(0) else null
+            }
+        }.getOrNull()
+        if (blob == null || blob.isEmpty()) return TileFormat.UNKNOWN
+        return when {
+            blob.startsWith(PNG_MAGIC) -> TileFormat.RASTER
+            blob.startsWith(JPEG_MAGIC) -> TileFormat.RASTER
+            // `RIFF‹أربع بايتات طول›WEBP`: العلامتان معًا شرط، فـ`RIFF` وحدها تسبق
+            // صيغًا شتّى ليس منها صورة
+            blob.startsWith(RIFF_MAGIC) &&
+                blob.size >= WEBP_TAG_OFFSET + WEBP_TAG.size &&
+                blob.matchesAt(WEBP_TAG_OFFSET, WEBP_TAG) -> TileFormat.RASTER
+
+            else -> TileFormat.VECTOR
+        }
+    }
+
+        /** ما تعلنه مواصفة MBTiles صيغةً نقطيّة؛ وما عداه — `pbf` و`mvt` — متجهيّ */
+        private val RASTER_FORMATS = setOf("png", "jpg", "jpeg", "webp")
+
+        private val PNG_MAGIC = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
+        private val JPEG_MAGIC = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+        private val RIFF_MAGIC = "RIFF".toByteArray(Charsets.US_ASCII)
+        private val WEBP_TAG = "WEBP".toByteArray(Charsets.US_ASCII)
+
+        /** `RIFF` ثمّ أربع بايتاتِ طولٍ ثمّ `WEBP` */
+        private const val WEBP_TAG_OFFSET = 8
 
         /**
          * أفي هذا المضغوط بلاطاتٌ فعلًا؟
@@ -971,6 +1055,19 @@ data class OfflineMapLibrary(
 }
 
 /** تصنيف ملفٍّ وُجد في مجلّد الخرائط: أيرسمه التطبيق أم لا، ولماذا */
+/** صيغة بلاطات أرشيف MBTiles كما يحكم بها [OfflineMaps.tileFormatOf] */
+internal fun ByteArray.startsWith(prefix: ByteArray): Boolean = matchesAt(0, prefix)
+
+internal fun ByteArray.matchesAt(offset: Int, pattern: ByteArray): Boolean {
+    if (offset < 0 || size < offset + pattern.size) return false
+    for (index in pattern.indices) {
+        if (this[offset + index] != pattern[index]) return false
+    }
+    return true
+}
+
+internal enum class TileFormat { RASTER, VECTOR, UNKNOWN }
+
 enum class MapFileKind {
     /** أرشيف بلاطٍ نقطيّ فُتح فعلًا: هذا وحده ما يُرسم */
     ARCHIVE,

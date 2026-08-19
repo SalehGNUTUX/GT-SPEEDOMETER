@@ -390,7 +390,7 @@ class MapDownloader private constructor(context: Context) {
 
         // (6) نقطيّةٌ لا متجهيّة — على قواعد SQLite وحدها؛ `zip` و`gemf` لا `metadata`
         // فيهما ولا جدولَ بلاطاتٍ يُستعلم عنه بـSQL
-        if (extension in SQLITE_EXTENSIONS && tileFormatOf(plainPart) == TileFormat.VECTOR) {
+        if (extension in SQLITE_EXTENSIONS && OfflineMaps.tileFormatOf(plainPart) == TileFormat.VECTOR) {
             runCatching { plainPart.delete() }
             return fail(R.string.mapdl_err_vector)
         }
@@ -524,54 +524,6 @@ class MapDownloader private constructor(context: Context) {
      *
      * و[TileFormat.UNKNOWN] تعني «امضِ»: عجزُنا عن الحكم ليس حكمًا.
      */
-    private fun tileFormatOf(file: File): TileFormat = runCatching {
-        val db = SQLiteDatabase.openDatabase(
-            file.absolutePath,
-            null,
-            // كما في [OfflineMaps]: قراءةٌ فقط وبلا مُقارِناتٍ محلّيّة، فلا نكتب في
-            // أرشيفٍ لم نُنشئه ولا نفشل على بطاقةٍ مركّبة للقراءة
-            SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
-        )
-        try {
-            declaredFormat(db)?.let { declared ->
-                return@runCatching if (declared in RASTER_FORMATS) {
-                    TileFormat.RASTER
-                } else {
-                    TileFormat.VECTOR
-                }
-            }
-            firstTileFormat(db)
-        } finally {
-            runCatching { db.close() }
-        }
-    }.getOrDefault(TileFormat.UNKNOWN)
-
-    private fun declaredFormat(db: SQLiteDatabase): String? = runCatching {
-        db.rawQuery("SELECT value FROM metadata WHERE name = 'format' LIMIT 1", null).use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    }.getOrNull()?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotEmpty() }
-
-    private fun firstTileFormat(db: SQLiteDatabase): TileFormat {
-        val blob = runCatching {
-            db.rawQuery("SELECT tile_data FROM tiles LIMIT 1", null).use { c ->
-                if (c.moveToFirst()) c.getBlob(0) else null
-            }
-        }.getOrNull()
-        if (blob == null || blob.isEmpty()) return TileFormat.UNKNOWN
-        return when {
-            blob.startsWith(PNG_MAGIC) -> TileFormat.RASTER
-            blob.startsWith(JPEG_MAGIC) -> TileFormat.RASTER
-            // `RIFF‹أربع بايتات طول›WEBP`: العلامتان معًا شرط، فـ`RIFF` وحدها تسبق
-            // صيغًا شتّى ليس منها صورة
-            blob.startsWith(RIFF_MAGIC) &&
-                blob.size >= WEBP_TAG_OFFSET + WEBP_TAG.size &&
-                blob.matchesAt(WEBP_TAG_OFFSET, WEBP_TAG) -> TileFormat.RASTER
-
-            else -> TileFormat.VECTOR
-        }
-    }
-
     /**
      * نقل البايتات مع تقدّمٍ مخنوق.
      *
@@ -832,17 +784,6 @@ class MapDownloader private constructor(context: Context) {
 
         private val ZIP_MAGIC = byteArrayOf(0x50, 0x4B)
 
-        /** ما تعلنه مواصفة MBTiles صيغةً نقطيّة؛ وما عداه — `pbf` و`mvt` — متجهيّ */
-        private val RASTER_FORMATS = setOf("png", "jpg", "jpeg", "webp")
-
-        private val PNG_MAGIC = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
-        private val JPEG_MAGIC = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
-        private val RIFF_MAGIC = "RIFF".toByteArray(Charsets.US_ASCII)
-        private val WEBP_TAG = "WEBP".toByteArray(Charsets.US_ASCII)
-
-        /** `RIFF` ثمّ أربع بايتاتِ طولٍ ثمّ `WEBP` */
-        private const val WEBP_TAG_OFFSET = 8
-
         @Volatile
         private var instance: MapDownloader? = null
 
@@ -881,16 +822,6 @@ class MapDownloader private constructor(context: Context) {
 }
 
 /** مقارنة توقيعٍ ثنائيّ: `startsWith` النصّيّة لا تصلح لبايتاتٍ فيها صفر */
-private fun ByteArray.startsWith(prefix: ByteArray): Boolean = matchesAt(0, prefix)
-
-private fun ByteArray.matchesAt(offset: Int, pattern: ByteArray): Boolean {
-    if (offset < 0 || size < offset + pattern.size) return false
-    for (index in pattern.indices) {
-        if (this[offset + index] != pattern[index]) return false
-    }
-    return true
-}
-
 /**
  * حكم فحص الصيغة.
  *
@@ -898,7 +829,6 @@ private fun ByteArray.matchesAt(offset: Int, pattern: ByteArray): Boolean {
  * الأرشيف الذي لا `metadata` فيه ولا بلاطةَ تُستخرج. وجمعُها مع [VECTOR] كان يعني رفضَ
  * كلّ أرشيف OsmAnd و Locus سليمٍ نزّله المستعمل بنفسه.
  */
-private enum class TileFormat { RASTER, VECTOR, UNKNOWN }
 
 /**
  * حالة التنزيل كما تُعرض.
