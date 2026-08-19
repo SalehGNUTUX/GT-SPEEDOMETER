@@ -5,6 +5,7 @@ local.properties
 .DS_Store
 build/
 .kotlin/
+__pycache__/
 captures/
 .externalNativeBuild/
 .cxx/
