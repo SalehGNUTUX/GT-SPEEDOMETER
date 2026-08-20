@@ -22,6 +22,7 @@ fun VectorRouteMap(
     archive: File,
     points: List<TrackPoint>,
     modifier: Modifier = Modifier,
+    onError: (String) -> Unit = {},
 ) {
     // لا شيء عمدًا
 }

@@ -1913,6 +1913,7 @@ private fun MapFileRow(
 @Composable
 private fun mapKindLabel(kind: MapFileKind): String = when (kind) {
     MapFileKind.ARCHIVE -> stringResource(R.string.map_kind_archive)
+    MapFileKind.PMTILES -> stringResource(R.string.map_kind_pmtiles)
     MapFileKind.VECTOR -> stringResource(R.string.map_kind_vector)
     MapFileKind.RAW_DATA -> stringResource(R.string.map_kind_rawdata)
 }

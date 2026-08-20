@@ -380,15 +380,6 @@ private fun TripDetail(
                     null
                 }
             }
-            if (vectorArchive != null) {
-                VectorRouteMap(
-                    archive = vectorArchive,
-                    points = drawPoints,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(320.dp),
-                )
-            } else
             RouteMap(
                 // نقاطُ **الرسم** لا نقاط الرحلة: التخفيف هنا لا في `TripTrack`،
                 // فالملفّ والإحصاءات وعدّاد النقاط أسفل الشاشة تبقى على الأصل
@@ -402,6 +393,7 @@ private fun TripDetail(
                     .height(320.dp),
                 mapSource = mapSource,
                 onMapSourceChange = vm.settings::setMapSource,
+                vectorArchive = vectorArchive,
                 // ملفّ الرحلة نفسه لا نسخةٌ مصغَّرة في المخبأ: OsmAnd يقرؤه مباشرةً
                 // حين يرسم الخريطة، فتُوفَّر كتابةُ ملفٍّ ثانٍ لكلّ رحلةٍ تُفتح.
                 gpxFile = trip.file,

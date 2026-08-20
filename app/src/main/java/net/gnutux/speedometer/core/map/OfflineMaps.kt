@@ -1050,6 +1050,10 @@ data class OfflineMapLibrary(
      */
     val entries: List<MapFileEntry>
         get() = files.map { MapFileEntry(it, MapFileKind.ARCHIVE) } +
+            // أرشيفات ‎.pmtiles‎ كانت تُصنَّف ولا تُعرض: يجدها المحرّك المتجهيّ ويرسم
+            // منها، ثمّ يقول قسمُ «ما في مجلّد الخرائط» «لا ملفّات بعد». فلا يستطيع
+            // صاحبها حذفَها ولا مشاركتَها، وهي أكبر ما في المجلّد حجمًا.
+            pmtilesFiles.map { MapFileEntry(it, MapFileKind.PMTILES) } +
             vectorFiles.map { MapFileEntry(it, MapFileKind.VECTOR) } +
             rawDataFiles.map { MapFileEntry(it, MapFileKind.RAW_DATA) }
 }
@@ -1074,6 +1078,9 @@ enum class MapFileKind {
 
     /** خريطة OsmAnd متجهيّة `.obf`: تُفتح في OsmAnd ولا يرسمها osmdroid */
     VECTOR,
+
+    /** أرشيف ‎.pmtiles‎ متجهيّ: ترسمه النكهة الكاملة، ولا يرسمه المحرّك النقطيّ */
+    PMTILES,
 
     /** بيانات OSM خام (‎shp‎ · ‎gpkg‎ · ‎pbf‎): ليست خريطةً أصلًا */
     RAW_DATA,

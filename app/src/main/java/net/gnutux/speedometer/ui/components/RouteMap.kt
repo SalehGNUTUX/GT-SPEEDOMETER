@@ -366,6 +366,14 @@ fun RouteMap(
     mapSource: MapSourcePreference = MapSourcePreference.AUTO,
     onMapSourceChange: (MapSourcePreference) -> Unit = {},
     gpxFile: File? = null,
+    /**
+     * أرشيفٌ متجهيٌّ يُرسم بدل البلاطات النقطيّة.
+     *
+     * يُمرَّر ولا تُستبدَل [RouteMap] كلُّها به: أزرارُ مصدر الخريطة وشارةُ المصدر
+     * المعروض وبقيّة الأطراف تسكن هنا، فاستبدالُ المركّب كان يُخفيها — فيجد المستعمل
+     * خريطةً متجهيّةً بلا سبيلٍ إلى العودة منها إلى غيرها.
+     */
+    vectorArchive: File? = null,
     noticeVisible: Boolean = false,
     onDismissNotice: () -> Unit = {},
     onOpenOsmAnd: () -> Unit = {},
@@ -475,6 +483,7 @@ fun RouteMap(
     // مقاس الصورة يُطلب بالبكسل، ولا يُعرف قبل أوّل تخطيط. نأخذه من التخطيط نفسه
     // بدل `BoxWithConstraints` كي لا تُقرأ خصائص مُستقبِلٍ ضمنيّ من لامدا متداخلة.
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
+    var vectorError by remember { mutableStateOf<String?>(null) }
     val screenDensity = LocalDensity.current.density
     val trackColor = RouteBlue.toArgb()
 
@@ -528,6 +537,32 @@ fun RouteMap(
             .onSizeChanged { boxSize = it }
     ) {
         when {
+            // المتجهيّ أوّلًا: اختيارُه صريحٌ من المستعمل، فلا يزاحمه اشتقاقُ الوضع
+            vectorArchive != null -> {
+                VectorRouteMap(
+                    archive = vectorArchive,
+                    points = points,
+                    modifier = Modifier.matchParentSize(),
+                    onError = { vectorError = it },
+                )
+                MapSourceBadge(
+                    label = R.string.map_source_vector,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp),
+                )
+                // خبرُ الفشل لا يُبتلع: المحرّك يرسم سوادًا صامتًا، فيُقال ما جرى
+                vectorError?.let { reason ->
+                    Text(
+                        text = stringResource(R.string.map_vector_failed, reason),
+                        style = MaterialTheme.typography.bodySmall.copy(color = Danger),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp),
+                    )
+                }
+            }
+
             mode == MapMode.TILES && current != null -> {
                 // `key` لا `remember` وحده: `AndroidView` يمسك عرضه مدى حياة عقدته، فتبديل
                 // المزوّد بعد رصدِ ملفٍّ جديد يحتاج عقدةً جديدة لا وسمًا جديدًا.
