@@ -19,6 +19,7 @@ import java.net.URLDecoder
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
+import java.util.zip.ZipFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -354,10 +355,13 @@ class MapDownloader private constructor(context: Context) {
         folder: File,
         part: File,
         plainPart: File,
-        target: File,
+        targetIn: File,
         extension: String,
         compressed: Boolean,
     ) {
+        // الوجهة قد يتبدّل امتدادها إن كان المنزَّل غلافًا حول أرشيفٍ متجهيّ
+        var target = targetIn
+
         if (compressed) {
             _state.value = DownloadState.Working(R.string.mapdl_decompressing)
 
@@ -401,8 +405,21 @@ class MapDownloader private constructor(context: Context) {
         // خريطةً محلّيّة، ثمّ لا تظهر منه بلاطةٌ واحدة. فيُفتح فهرسه ويُطلب فيه مدخلٌ
         // على هيئة `z/x/y.png` — والحكم واحدٌ مع [OfflineMaps.holdsTiles] لا نسخةٌ منه.
         if (extension == ZIP_EXTENSION && !OfflineMaps.holdsTiles(plainPart)) {
+            // مضغوطٌ لا بلاطاتٍ فيه: قد يكون **غلافًا** حول أرشيفٍ متجهيّ لا بياناتٍ
+            // خامًا. وهكذا توزّع BBBike خرائطها لكلّ بلد:
+            // `morocco.osm.pmtiles-shortbread.zip` وفيه `morocco.pmtiles` ومعه README.
+            // فلولا هذا الاستخراج لرُدّ أنفعُ ما يبلغه المستعمل اليوم — والمبدأ نفسه
+            // الذي يُفكّ به `.gz`: الغلاف ليس صيغة.
+            val unwrapped = unwrapVectorArchive(plainPart, folder)
             runCatching { plainPart.delete() }
-            return fail(R.string.mapdl_err_rawdata)
+            if (unwrapped == null) return fail(R.string.mapdl_err_rawdata)
+            target = File(folder, target.nameWithoutExtension + "." + VectorMaps.EXTENSION)
+            runCatching { if (target.exists()) target.delete() }
+            val moved = runCatching { unwrapped.renameTo(target) }.getOrDefault(false)
+            if (!moved) return fail(R.string.mapdl_err_net)
+            runCatching { OfflineMaps.of(app).rescan() }
+            _state.value = DownloadState.Done(target.name)
+            return
         }
 
         // (8) والمتجهيّ يُفحص بتوقيعه: `PMTiles` في أوّل البايتات ثمّ رقم النسخة.
@@ -421,6 +438,59 @@ class MapDownloader private constructor(context: Context) {
         // ويفتحها ليعرف أنّ التطبيق رآه
         runCatching { OfflineMaps.of(app).rescan() }
         _state.value = DownloadState.Done(target.name)
+    }
+
+    /**
+     * استخراج أرشيفٍ متجهيٍّ من داخل مضغوط.
+     *
+     * يُقبل مدخلٌ واحدٌ فقط بامتداد ‎.pmtiles‎، ويُتحقّق من توقيعه بعد الاستخراج كما
+     * يُتحقّق من كلّ ما يدخل مجلّد الخرائط. والاسم يُبنى من اسم الوجهة لا من اسم
+     * المدخل: مسارٌ داخل مضغوطٍ قد يحمل `..` فيكتب خارج المجلّد.
+     *
+     * والمساحة تُفحص قبل أوّل بايت: أرشيف بلدٍ يبلغ مئات الميغابايت، وامتلاء القرص
+     * في منتصف الاستخراج يُعطب ما ليس لنا.
+     */
+    private suspend fun unwrapVectorArchive(archive: File, folder: File): File? {
+        val entryName = runCatching {
+            ZipFile(archive).use { zip ->
+                zip.entries().asSequence()
+                    .firstOrNull {
+                        !it.isDirectory &&
+                            it.name.substringAfterLast('.').lowercase(Locale.US) ==
+                            VectorMaps.EXTENSION
+                    }
+                    ?.let { it.name to it.size }
+            }
+        }.getOrNull() ?: return null
+
+        val (name, declaredSize) = entryName
+        if (declaredSize > 0) {
+            val free = runCatching { folder.usableSpace }.getOrDefault(Long.MAX_VALUE)
+            if (declaredSize + SPACE_MARGIN_BYTES > free) {
+                fail(R.string.mapdl_err_space, formatBytes(declaredSize))
+                return null
+            }
+        }
+
+        _state.value = DownloadState.Working(R.string.mapdl_unwrapping)
+        val out = File(folder, "unwrapped." + VectorMaps.EXTENSION + PART_SUFFIX)
+        val ok = runCatching {
+            ZipFile(archive).use { zip ->
+                val entry = zip.getEntry(name) ?: return@runCatching false
+                zip.getInputStream(entry).use { input ->
+                    FileOutputStream(out).use { output ->
+                        pump(input, output, 0L, declaredSize.takeIf { it > 0 }, resumed = false)
+                    }
+                }
+            }
+            true
+        }.getOrDefault(false)
+
+        if (!ok || !VectorMaps.looksValid(out)) {
+            runCatching { out.delete() }
+            return null
+        }
+        return out
     }
 
     /**

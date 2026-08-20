@@ -3,6 +3,11 @@ package net.gnutux.speedometer.core.map
 import android.content.Context
 import java.io.File
 import java.io.FileInputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.zip.GZIPInputStream
+import org.json.JSONObject
 
 /**
  * أرشيفات البلاطات **المتجهيّة** بصيغة PMTiles.
@@ -81,9 +86,76 @@ object VectorMaps {
      * زائدٌ بلا فائدة.
      */
     fun styleJson(context: Context, archive: File): String =
-        context.assets.open(STYLE_ASSET).bufferedReader().use { it.readText() }
+        context.assets.open(styleAssetFor(archive)).bufferedReader().use { it.readText() }
             .replace(URL_PLACEHOLDER, sourceUrl(archive))
 
-    private const val STYLE_ASSET = "map/style-vector.json"
+    /**
+     * أيّ نمطٍ يوافق هذا الأرشيف؟
+     *
+     * **مخطّطان شائعان لا واحد**، وأسماء طبقاتهما مختلفةٌ كلّيًّا: `shortbread` يسمّيها
+     * `place_labels` و`streets` و`water_polygons`، وProtomaps يسمّيها `places` و`roads`
+     * و`water`. ونمطٌ على أحدهما يُطبَّق على الآخر **يُخرج خريطةً فارغةً بلا خطأ** —
+     * كلُّ طبقةٍ تشير إلى مصدرٍ لا وجود له فلا تُرسم، والمحرّك لا يشتكي.
+     *
+     * فالمخطّط يُقرأ من بيانات الملفّ نفسه لا يُخمَّن. و`shortbread` هو ما توزّعه
+     * BBBike لكلّ بلد — وهو أيسر ما يبلغه المستعمل — فيكون الافتراضيّ عند الشكّ.
+     */
+    private fun styleAssetFor(archive: File): String {
+        val layers = layerNamesOf(archive)
+        return when {
+            PROTOMAPS_MARKERS.any { it in layers } -> PROTOMAPS_STYLE
+            else -> SHORTBREAD_STYLE
+        }
+    }
+
+    /**
+     * أسماء طبقات المتّجهات المعلَنة في بيانات الأرشيف.
+     *
+     * ترويسة PMTiles ‎3‎: ‎127‎ بايتًا فيها موضعُ بيانات JSON وطولُها، وبايتُ ضغطٍ
+     * داخليّ عند الإزاحة ‎97‎ (‎2‎ = gzip). فلا يُقرأ من الملفّ إلّا ترويسته وكتلةُ
+     * بياناته — لا الأرشيف كلُّه، وهو بمئات الميغابايت.
+     */
+    private fun layerNamesOf(archive: File): Set<String> = runCatching {
+        RandomAccessFile(archive, "r").use { file ->
+            val header = ByteArray(HEADER_BYTES)
+            file.readFully(header)
+            val buffer = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+            val metaOffset = buffer.getLong(METADATA_OFFSET_AT)
+            val metaLength = buffer.getLong(METADATA_LENGTH_AT).toInt()
+            if (metaLength <= 0 || metaLength > MAX_METADATA_BYTES) return emptySet()
+
+            val raw = ByteArray(metaLength)
+            file.seek(metaOffset)
+            file.readFully(raw)
+
+            val text = if (header[INTERNAL_COMPRESSION_AT].toInt() == COMPRESSION_GZIP) {
+                GZIPInputStream(raw.inputStream()).bufferedReader().use { it.readText() }
+            } else {
+                raw.toString(Charsets.UTF_8)
+            }
+
+            val layers = JSONObject(text).optJSONArray("vector_layers") ?: return emptySet()
+            buildSet {
+                for (i in 0 until layers.length()) {
+                    layers.optJSONObject(i)?.optString("id")?.takeIf { it.isNotEmpty() }?.let(::add)
+                }
+            }
+        }
+    }.getOrDefault(emptySet())
+
+    /** طبقاتٌ لا توجد إلّا في مخطّط Protomaps؛ ما عداها يُقرأ shortbread */
+    private val PROTOMAPS_MARKERS = setOf("earth", "landcover", "places")
+
+    private const val SHORTBREAD_STYLE = "map/style-shortbread.json"
+    private const val PROTOMAPS_STYLE = "map/style-vector.json"
     private const val URL_PLACEHOLDER = "__PMTILES_URL__"
+
+    private const val HEADER_BYTES = 127
+    private const val METADATA_OFFSET_AT = 24
+    private const val METADATA_LENGTH_AT = 32
+    private const val INTERNAL_COMPRESSION_AT = 97
+    private const val COMPRESSION_GZIP = 2
+
+    /** حارسٌ على قراءةٍ من ملفٍّ قد يكون مشوّهًا: بياناتُ أرشيفِ بلدٍ لا تبلغ هذا */
+    private const val MAX_METADATA_BYTES = 8 * 1024 * 1024
 }
