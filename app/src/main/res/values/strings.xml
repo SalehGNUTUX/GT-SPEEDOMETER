@@ -347,14 +347,18 @@
     <string name="mapdl_err_content">الملفّ المنزَّل ليس أرشيف بلاطاتٍ صالحًا</string>
     <string name="mapdl_err_http">ردَّ الخادم بالرمز %1$s</string>
     <string name="mapdl_background_note">أبقِ التطبيق مفتوحًا حتّى يكتمل. إن انقطع فما نُزّل يبقى، ويُستأنف عند إعادة المحاولة بالرابط نفسه.</string>
-    <string name="mapdl_where">من أين أجلب أرشيفًا؟</string>
+    <string name="mapdl_where">من أين أجلب خريطة؟</string>
+    <string name="mapdl_where_bbbike">https://data.bbbike.org/osm/region/</string>
+    <string name="mapdl_where_bbbike_label">BBBike — خريطة جاهزة لكلّ بلد ومدينة</string>
+    <string name="mapdl_where_bbbike_note">افتح قارّتك ثمّ بلدك، وانزل إلى الجدول. نزّل الملفّ الذي في اسمه «pmtiles» — مثل ‎morocco.osm.pmtiles-shortbread.zip‎ — وألصق رابطه هنا أو اجلبه بزرّ «من التخزين». يُستخرج وحده ويعمل دون إنترنت.\n\nولا تُنزّل غيره من ذلك الجدول: ‎mbtiles‎ متجهيّةٌ لا يقرؤها المحرّك، و‎garmin‎ لأجهزة ملاحةٍ أخرى، و‎pbf‎ و‎shp‎ و‎geopackage‎ بياناتٌ خام.</string>
     <string name="mapdl_where_url">https://wiki.openstreetmap.org/wiki/MBTiles</string>
-    <string name="mapdl_where_note">خادم بلاطات OpenStreetMap يمنع التنزيل بالجملة صراحةً، فلا تُجلب منه خريطةُ دولة. وصفحة الويكي تشرح الصيغة وأدوات توليد الأرشيف من بيانات OSM الحرّة.</string>
+    <string name="mapdl_where_label">ويكي OpenStreetMap — شرح الصيغ</string>
+    <string name="mapdl_where_note">للفهم لا للتنزيل: خادم بلاطات OpenStreetMap يمنع الجلب بالجملة صراحةً، فلا تُجلب منه خريطةُ دولة. وهذه الصفحة تشرح الصيغ وأدوات توليدها.</string>
 
     <!-- 0.9.3 — أرشيف مضغوط وبلاطات متجهيّة -->
     <string name="mapdl_decompressing">فكُّ الضغط…</string>
     <string name="mapdl_unwrapping">استخراج الخريطة من المضغوط…</string>
-    <string name="mapdl_err_vector">هذا أرشيفُ بلاطاتٍ **متجهيّة** (Mapbox Vector Tiles) للتحليل لا صورَ خرائط، ولا يرسمه التطبيق. المطلوب أرشيفٌ نقطيّ صوره PNG أو JPEG.</string>
+    <string name="mapdl_err_vector">هذا أرشيفُ بلاطاتٍ متجهيّة (Mapbox Vector Tiles) بصيغة MBTiles للتحليل لا صورَ خرائط، ولا يرسمه التطبيق. المطلوب أرشيفٌ نقطيّ صوره PNG أو JPEG.</string>
     <string name="mapdl_err_gzip">تعذّر فكّ ضغط الملفّ</string>
     <string name="mapdl_pick">من التخزين</string>
     <string name="mapdl_pick_note">أو اجلب أرشيفًا نزّلتَه بالفعل إلى جهازك، أو نقلتَه إليه من الحاسوب — يمرّ من الفحوص نفسها ثمّ يُنقل إلى مجلّد الخرائط.</string>
@@ -415,8 +419,8 @@
     <string name="map_rawdata_found">وُجد ملفّ بيانات OSM خام (%1$s) — بيانات لا صور، فلا يرسمه التطبيق. ملفّات Geofabrik بامتداد ‎.shp.zip‎ و‎.gpkg.zip‎ و‎.osm.pbf‎ كلّها من هذا النوع.</string>
     <string name="mapdl_err_rawdata">هذا ملفّ بيانات OSM خام (شكل ESRI أو GeoPackage أو PBF) لا أرشيفَ بلاطات. المطلوب أرشيفٌ صوره PNG أو JPEG مرتّبةً على هيئة ‎z/x/y‎.</string>
     <string name="mapdl_where_geofabrik">https://download.geofabrik.de/</string>
-    <string name="mapdl_where_geofabrik_label">Geofabrik — بيانات OSM لكلّ بلد</string>
-    <string name="mapdl_where_geofabrik_note">مصدرٌ حرٌّ ممتاز، لكنّ ملفّاته **بياناتٌ خام أو متجهيّة**: ‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg.zip‎ لا يرسمها التطبيق مباشرةً، وملفّ ‎shortbread‎ بصيغة MBTiles متجهيّة (MVT) كذلك.\n\nولها طريقان: تُحوَّل ‎.osm.pbf‎ إلى ‎.pmtiles‎ بأداة ‎pmtiles‎ أو ‎planetiler‎ فتقرؤها النكهة الكاملة مباشرةً، أو تُحوَّل إلى ‎.obf‎ ببرنامج OsmAndMapCreator فتُقرأ عبر OsmAnd.</string>
+    <string name="mapdl_where_geofabrik_label">Geofabrik — بياناتٌ خام (تحتاج أدواتٍ على الحاسوب)</string>
+    <string name="mapdl_where_geofabrik_note">مصدرٌ حرٌّ ممتاز، لكنّ ملفّاته بياناتٌ خام أو متجهيّة: ‎.osm.pbf‎ و‎.shp.zip‎ و‎.gpkg.zip‎ لا يرسمها التطبيق مباشرةً، وملفّ ‎shortbread‎ بصيغة MBTiles متجهيّة (MVT) كذلك.\n\nولها طريقان: تُحوَّل ‎.osm.pbf‎ إلى ‎.pmtiles‎ بأداة ‎pmtiles‎ أو ‎planetiler‎ فتقرؤها النكهة الكاملة مباشرةً، أو تُحوَّل إلى ‎.obf‎ ببرنامج OsmAndMapCreator فتُقرأ عبر OsmAnd.</string>
 
     <!-- ===== 0.9.4 — تصاميم العدّاد ===== -->
     <string name="settings_section_gauge">تصميم العدّاد</string>

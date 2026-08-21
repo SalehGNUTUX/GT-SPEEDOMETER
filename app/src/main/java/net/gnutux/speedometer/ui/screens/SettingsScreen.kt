@@ -2379,8 +2379,26 @@ private fun MapDownloadRows(
         else -> Unit
     }
 
+    RowLabel(title = stringResource(R.string.mapdl_where))
+
+    // **المصدر الأوّل هو ما يُنزَّل منه ملفٌّ يعمل بلا أداةٍ على الحاسوب.**
+    //
+    // كان الويكي أوّلًا، وهو صفحة شرحٍ لا يُنزَّل منها شيء — فيذهب إليها من يريد
+    // خريطةً فيعود بلا شيء. وBBBike تعطي `pmtiles` جاهزةً لكلّ بلدٍ ومدينة، وهو
+    // بالضبط ما يقرؤه محرّكنا. فصار أوّلًا، ومعه **اسم الملفّ الذي يُنزَّل** لا
+    // إحالةٌ إلى جدولٍ فيه سبع صيغٍ ستٌّ منها لا تعمل — وهي التجربة التي مرّ بها
+    // المستعمل فعلًا: نزّل ثلاثة ملفّاتٍ فرُدّت كلُّها.
     LinkRow(
-        title = stringResource(R.string.mapdl_where),
+        title = stringResource(R.string.mapdl_where_bbbike_label),
+        url = stringResource(R.string.mapdl_where_bbbike),
+    )
+    Text(
+        text = stringResource(R.string.mapdl_where_bbbike_note),
+        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+    )
+
+    LinkRow(
+        title = stringResource(R.string.mapdl_where_label),
         url = stringResource(R.string.mapdl_where_url),
     )
     Text(
