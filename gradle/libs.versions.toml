@@ -15,7 +15,6 @@ osmdroid = "6.1.20"
 annotation = "1.9.1"
 
 junit = "4.13.2"
-maplibre = "13.5.0"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }
@@ -46,7 +45,6 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 # محرّك الخرائط المتجهيّة (0.10.0). رخصتها BSD ثنائيّة الشرط — متوافقة مع GPL-3.0
-maplibre-android = { group = "org.maplibre.gl", name = "android-sdk", version.ref = "maplibre" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

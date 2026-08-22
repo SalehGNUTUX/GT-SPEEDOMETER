@@ -184,7 +184,7 @@ class OfflineMaps private constructor(context: Context) {
             // إلى OsmAnd. فيُفصل عن `vectors` كي لا يُقال لصاحبه «افتحها في تطبيقٍ
             // آخر» وهي تعمل هنا. والتوقيع يُفحص كما يُفحص رأس النقطيّ: الامتداد وعدٌ
             // لا برهان.
-            if (file.extension.equals(VectorMaps.EXTENSION, ignoreCase = true)) {
+            if (file.extension.equals(PmtilesRasterArchive.EXTENSION, ignoreCase = true)) {
                 // **ويُفتح فعلًا لا يُصدَّق امتدادُه.** صار المحرّك النقطيّ يرسم منه
                 // بنفسه (انظر [PmtilesRasterArchive])، فمن فُتح دخل الأرشيفات
                 // العاملة، ومن لم يُفتح فبياناتٌ لا خريطة.
@@ -311,7 +311,7 @@ class OfflineMaps private constructor(context: Context) {
         val ext = file.extension.lowercase()
         if (ext == ZIP_EXT && !allowZip) return null
         // المتجهيّ يُرسم نقطيًّا عندنا، فيدخل من المدخل نفسه ولا يحتاج مسارًا ثانيًا
-        if (ext == VectorMaps.EXTENSION) return PmtilesRasterArchive.open(file, density)
+        if (ext == PmtilesRasterArchive.EXTENSION) return PmtilesRasterArchive.open(file, density)
         if (ext in SQLITE_EXT) return openSqliteArchive(file)
         if (ext !in registeredExtensions()) return null
         return runCatching { ArchiveFileFactory.getArchiveFile(file) }.getOrNull()
@@ -634,7 +634,7 @@ class OfflineMaps private constructor(context: Context) {
 
         /** ما يستحقّ أن نفتحه أو نصنّفه؛ ما عداه يُتخطّى بلا فتحٍ ولا كلفة */
         private val INTERESTING_EXT =
-            setOf("mbtiles", "gemf", "zip", "sqlitedb", "sqlite", OBF_EXT, VectorMaps.EXTENSION) +
+            setOf("mbtiles", "gemf", "zip", "sqlitedb", "sqlite", OBF_EXT, PmtilesRasterArchive.EXTENSION) +
                 RAW_DATA_EXT
 
         /** ما لا يُلتفت إليه خارج مجلّداتنا: انظر تعليل التخطّي في [collectInto] */

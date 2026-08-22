@@ -413,7 +413,7 @@ class MapDownloader private constructor(context: Context) {
             val unwrapped = unwrapVectorArchive(plainPart, folder)
             runCatching { plainPart.delete() }
             if (unwrapped == null) return fail(R.string.mapdl_err_rawdata)
-            target = File(folder, target.nameWithoutExtension + "." + VectorMaps.EXTENSION)
+            target = File(folder, target.nameWithoutExtension + "." + PmtilesRasterArchive.EXTENSION)
             runCatching { if (target.exists()) target.delete() }
             val moved = runCatching { unwrapped.renameTo(target) }.getOrDefault(false)
             if (!moved) return fail(R.string.mapdl_err_net)
@@ -425,7 +425,7 @@ class MapDownloader private constructor(context: Context) {
         // (8) والمتجهيّ يُفحص بتوقيعه: `PMTiles` في أوّل البايتات ثمّ رقم النسخة.
         // الحارس نفسه الذي يمنع ملفًّا أُعيدت تسميته من دخول مجلّد الخرائط، لصيغةٍ
         // أخرى — لا استثناء لها لأنّها الأحدث.
-        if (extension == VectorMaps.EXTENSION && !VectorMaps.looksValid(plainPart)) {
+        if (extension == PmtilesRasterArchive.EXTENSION && !PmtilesRasterArchive.looksLikePmtiles(plainPart)) {
             runCatching { plainPart.delete() }
             return fail(R.string.mapdl_err_content)
         }
@@ -457,7 +457,7 @@ class MapDownloader private constructor(context: Context) {
                     .firstOrNull {
                         !it.isDirectory &&
                             it.name.substringAfterLast('.').lowercase(Locale.US) ==
-                            VectorMaps.EXTENSION
+                            PmtilesRasterArchive.EXTENSION
                     }
                     ?.let { it.name to it.size }
             }
@@ -473,7 +473,7 @@ class MapDownloader private constructor(context: Context) {
         }
 
         _state.value = DownloadState.Working(R.string.mapdl_unwrapping)
-        val out = File(folder, "unwrapped." + VectorMaps.EXTENSION + PART_SUFFIX)
+        val out = File(folder, "unwrapped." + PmtilesRasterArchive.EXTENSION + PART_SUFFIX)
         val ok = runCatching {
             ZipFile(archive).use { zip ->
                 val entry = zip.getEntry(name) ?: return@runCatching false
@@ -486,7 +486,7 @@ class MapDownloader private constructor(context: Context) {
             true
         }.getOrDefault(false)
 
-        if (!ok || !VectorMaps.looksValid(out)) {
+        if (!ok || !PmtilesRasterArchive.looksLikePmtiles(out)) {
             runCatching { out.delete() }
             return null
         }
@@ -808,7 +808,7 @@ class MapDownloader private constructor(context: Context) {
 
         /** ما يقبله [OfflineMaps] في مسحه؛ ما عداه يُرفض قبل أوّل بايت */
         private val ALLOWED_EXTENSIONS =
-            SQLITE_EXTENSIONS + ZIP_EXTENSION + "gemf" + VectorMaps.EXTENSION
+            SQLITE_EXTENSIONS + ZIP_EXTENSION + "gemf" + PmtilesRasterArchive.EXTENSION
 
         /** غلافٌ لا صيغة: يُقبل فوق كلٍّ من [ALLOWED_EXTENSIONS] ويُنزع قبل الاعتماد */
         private const val GZ_SUFFIX = ".gz"

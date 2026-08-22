@@ -13,11 +13,6 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
-val keystoreFullPropsFile = rootProject.file("keystore-full.properties")
-val keystoreFullProps = Properties().apply {
-    if (keystoreFullPropsFile.exists()) keystoreFullPropsFile.inputStream().use { load(it) }
-}
-
 android {
     namespace = "net.gnutux.speedometer"
     compileSdk = 35
@@ -36,14 +31,14 @@ android {
     }
 
     /**
-     * مفتاحٌ لكلّ نكهة.
+     * مفتاحُ الإصدار الوحيد.
      *
-     * النكهتان تطبيقان مستقلّان على الجهاز (معرّفان مختلفان)، فلكلٍّ مفتاحُه: توقيعٌ
-     * واحدٌ لتطبيقين مستقلّين يعني أنّ تسريب مفتاحٍ واحدٍ يمسّهما معًا.
+     * **وضياعه يعني فقدان القدرة على تحديث كلّ نسخةٍ منشورةٍ إلى الأبد.** انسخ
+     * `gt-speedometer-release.jks` وملفَّ خصائصه خارج جهاز التطوير.
      *
-     * **وضياع أيٍّ من المفتاحين يعني فقدان القدرة على تحديث كلّ نسخةٍ منشورةٍ منه إلى
-     * الأبد.** انسخهما خارج جهاز التطوير: `gt-speedometer-release.jks` و
-     * `gt-speedometer-full.jks` ومعهما ملفّا خصائصهما.
+     * وكان معه مفتاحٌ ثانٍ للنكهة «الكاملة» أيّام المحرّك المتجهيّ. أُزيلت النكهة
+     * (انظر `docs/تجربة-الخرائط-المتجهية.md`) والمفتاح لم يُصدَر به شيءٌ قطُّ إلى
+     * الناس، فلا مستعملَ يتيمَ خلفه.
      */
     signingConfigs {
         if (keystorePropsFile.exists()) {
@@ -54,62 +49,7 @@ android {
                 keyPassword = keystoreProps.getProperty("keyPassword")
             }
         }
-        if (keystoreFullPropsFile.exists()) {
-            create("releaseFull") {
-                storeFile = rootProject.file(keystoreFullProps.getProperty("storeFile"))
-                storePassword = keystoreFullProps.getProperty("storePassword")
-                keyAlias = keystoreFullProps.getProperty("keyAlias")
-                keyPassword = keystoreFullProps.getProperty("keyPassword")
-            }
-        }
     }
-
-    /**
-     * نكهتان: **خفيفة** و**كاملة**.
-     *
-     * `libmaplibre.so` وحدها ‎21‎ م.ب لمعماريّتَي ARM، فالحزمة تقفز من ‎13‎ إلى ‎35‎ —
-     * أي أكثر من ضعف، وهو تجاوزٌ لمعيار القبول في خارطة الطريق. وأكثر المستعملين لا
-     * يحتاج المتجهيّ: من يقيس سرعته على دراجةٍ لا يفتح خريطةً كاملةً لبلد.
-     *
-     * فالخفيفة هي ما كان بحذافيره — لا مكتبة ولا شيفرة متجهيّة أصلًا — والكاملة تزيدها
-     * المحرّك. ولا يدفع أحدٌ ثمن ما لا يستعمل.
-     *
-     * والشيفرة المتجهيّة كلُّها في `src/full/`، عدا [VectorMaps] فهي في `main`: لا
-     * تستورد MapLibre بحال (فحصُ توقيعٍ وبناءُ نصّ)، وتحتاجها الخفيفة لتصنيف الملفّات.
-     */
-    flavorDimensions += "engine"
-    productFlavors {
-        /**
-         * الخفيفة تحتفظ بالمعرّف الأصليّ `net.gnutux.speedometer` **عمدًا**.
-         *
-         * كلُّ من ثبّت التطبيق قبل هذا الإصدار يحمل هذا المعرّف، وحجم ما عنده ‎13‎ م.ب
-         * بلا محرّكٍ متجهيّ — وهو الخفيفة بعينها. فلو أُعطيت لاحقةً لصار كلُّ مستعملٍ
-         * قائمٍ يتيمًا: تطبيقه لا يوافق أيّ حزمةٍ نُصدرها بعدُ، ولا يصله تحديثٌ أبدًا.
-         *
-         * وبهذا يبقى التحديث متّصلًا لمن كان، ولا تتضاعف حزمةُ أحدٍ في ظهره.
-         */
-        create("lite") {
-            dimension = "engine"
-            versionNameSuffix = "-lite"
-            signingConfig = signingConfigs.findByName("release")
-        }
-
-        /**
-         * والكاملة تطبيقٌ مستقلّ بمعرّفه ومفتاحه.
-         *
-         * فتتعايشان على الجهاز الواحد: يجرّب المستعمل المتجهيّ دون أن يمسّ ما عنده،
-         * وإن لم يعجبه أزاله وبقيت رحلاته كما هي. وثمنُه أنّهما تطبيقان لا واحد —
-         * فتفضيلاتهما وملفّاتهما منفصلة، وهو ما يقتضيه استقلالهما.
-         */
-        create("full") {
-            dimension = "engine"
-            applicationIdSuffix = ".full"
-            versionNameSuffix = "-full"
-            signingConfig = signingConfigs.findByName("releaseFull")
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-        }
-    }
-
 
     buildTypes {
         release {
@@ -117,9 +57,7 @@ android {
             // لـ CameraX و Compose، وعطبٌ يظهر في التجريبيّ وحده يصعب تتبّعه
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // **لا توقيعَ هنا.** توقيعُ نوع البناء يتقدّم على توقيع النكهة في AGP،
-            // فلو بقي لوُقّعت النكهتان بمفتاحٍ واحد — وهو نقيض استقلالهما. والتوقيع
-            // معلَنٌ في كلّ نكهةٍ على حدة أعلاه.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -169,7 +107,6 @@ dependencies {
     implementation(libs.androidx.camera.effects)
 
     implementation(libs.osmdroid.android)
-    "fullImplementation"(libs.maplibre.android)
 
     // واجهة OsmAnd الخارجيّة: تُستدعى وقت التشغيل إن كان OsmAnd مثبَّتًا، وغيابه
     // لا يعطّل شيئًا — الربط بالخدمة يفشل بهدوء فيعود التطبيق إلى مساره الخاصّ

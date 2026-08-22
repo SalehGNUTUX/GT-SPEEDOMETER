@@ -49,20 +49,37 @@ class ShortbreadPainter(private val density: Float) {
     }
     private val path = Path()
 
+    /** إزاحة النافذة بالبكسل؛ تُضبط في [paint] ويقرؤها بناءُ المسارات */
+    private var offsetX = 0f
+    private var offsetY = 0f
+
     /**
-     * يرسم البلاطة كاملةً ويردّ الصورة.
+     * يرسم **نافذةً** من المربّع المتجهيّ ويردّ صورةً ضلعُها [SIZE].
      *
-     * [size] ضلعُ البلاطة بالبكسل، و[zoom] لازمٌ لا زينة: عرضُ الطريق واختيارُ ما
-     * يُرسم يتبعان التكبير، وبلاطةُ ‎z8‎ لا تُرسم بعرض بلاطة ‎z16‎.
+     * ## لماذا نافذةٌ لا بلاطةٌ كاملة
+     * ليُقرَّب إلى ما وراء مدى الأرشيف. الأرشيف يقف عند ‎z14‎، ومن أراد ‎z18‎ فربعُ
+     * ربعِ ربعِ بلاطةٍ منه — ‎1/256‎ من مساحتها — مرسومٌ على ‎256‎ بكسلًا.
+     *
+     * وكان يُرسم بالقصّ: تُرسم البلاطة كلُّها بضلعٍ مضاعَف ثمّ يُقتطع منها الربع. وذلك
+     * يضاعف الذاكرة أربعًا مع كلّ درجة — ‎z18‎ يعني صورةً بضلع ‎4096‎ أي أربعةً وستّين
+     * ميغابايتًا حيّةً لبلاطةٍ واحدة، فحُدَّ بدرجتين. أمّا هنا فالنافذة تدخل في الحساب
+     * قبل الرسم لا بعده، فالذاكرة ثابتةٌ مهما عمُق التقريب.
+     *
+     * @param window أيُّ جزءٍ من المربّع يُرسم، وبأيّ تكبير.
+     * @param zoom تكبير **الشاشة** لا الأرشيف: عرضُ الطريق واختيارُ ما يُرسم يتبعانه.
      */
-    fun paint(tileBytes: ByteArray, zoom: Int, size: Int): Bitmap {
+    fun paint(tileBytes: ByteArray, zoom: Int, window: Window): Bitmap {
+        val size = SIZE
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Palette.LAND)
 
         val layers = MvtTile.decode(tileBytes, WANTED_LAYERS)
         val extent = layers.values.firstOrNull()?.extent ?: 4096
-        val scale = size.toFloat() / extent
+        // إحداثيّات المربّع إلى بكسلات النافذة: تكبيرٌ ثمّ إزاحةٌ إلى ربعها المطلوب
+        val scale = (size.toFloat() * window.span) / extent
+        offsetX = -window.column * size.toFloat()
+        offsetY = -window.row * size.toFloat()
 
         drawFills(canvas, layers["ocean"], scale) { Palette.OCEAN }
         drawFills(canvas, layers["land"], scale) { Palette.landcover(it) }
@@ -233,8 +250,9 @@ class ShortbreadPainter(private val density: Float) {
             val kind = feature.properties["kind"].orEmpty()
             val size = placeTextSize(kind, zoom) ?: continue
             prepareText(size * density)
-            val x = ring[0] * scale
-            val y = ring[1] * scale
+            val x = ring[0] * scale + offsetX
+            val y = ring[1] * scale + offsetY
+            if (x < -SIZE || x > 2 * SIZE || y < -SIZE || y > 2 * SIZE) continue
             canvas.drawText(name, x, y, halo)
             canvas.drawText(name, x, y, text)
         }
@@ -270,10 +288,10 @@ class ShortbreadPainter(private val density: Float) {
         path.rewind()
         for (ring in rings) {
             if (ring.size < 4) continue
-            path.moveTo(ring[0] * scale, ring[1] * scale)
+            path.moveTo(ring[0] * scale + offsetX, ring[1] * scale + offsetY)
             var i = 2
             while (i + 1 < ring.size) {
-                path.lineTo(ring[i] * scale, ring[i + 1] * scale)
+                path.lineTo(ring[i] * scale + offsetX, ring[i + 1] * scale + offsetY)
                 i += 2
             }
             if (close) path.close()
@@ -282,10 +300,10 @@ class ShortbreadPainter(private val density: Float) {
 
     private fun buildSinglePath(ring: IntArray, scale: Float) {
         path.rewind()
-        path.moveTo(ring[0] * scale, ring[1] * scale)
+        path.moveTo(ring[0] * scale + offsetX, ring[1] * scale + offsetY)
         var i = 2
         while (i + 1 < ring.size) {
-            path.lineTo(ring[i] * scale, ring[i + 1] * scale)
+            path.lineTo(ring[i] * scale + offsetX, ring[i + 1] * scale + offsetY)
             i += 2
         }
     }
@@ -310,7 +328,22 @@ class ShortbreadPainter(private val density: Float) {
         val fromZoom: Int,
     )
 
+    /**
+     * نافذةٌ داخل مربّعٍ متجهيّ.
+     *
+     * [span] كم بلاطةَ شاشةٍ يملأ هذا المربّع (‎1‎ بلا تقريبٍ زائد، ‎4‎ عند درجتين…)،
+     * و[column] و[row] موضعُ النافذة في تلك الشبكة.
+     */
+    class Window(val span: Int, val column: Int, val row: Int) {
+        companion object {
+            val WHOLE = Window(1, 0, 0)
+        }
+    }
+
     companion object {
+        /** ضلع بلاطة الشاشة؛ ثابتٌ مهما عمُق التقريب — وذاك بيت القصيد */
+        const val SIZE = 256
+
         /** ما نفكّه من البلاطة؛ وما عداه من الستّ والعشرين طبقةً لا يُرسم فلا يُفكّ */
         private val WANTED_LAYERS = setOf(
             "ocean", "land", "water_polygons", "water_lines", "buildings",

@@ -178,6 +178,7 @@ push_branch() {
 # تبديل، والفرع الذي فيه نكهتان لا يحتاج أن يُذكّرنا بأسمائهما. ولو كُتبت هنا
 # لانحرفت عن `build.gradle.kts` عند أوّل تعديلٍ على أحدهما.
 detect_flavors() {
+  # لا نكهاتٍ اليوم؛ تبقى الدالّة لأنّ كلفتها صفرٌ وتعمل إن عادت
   FLAVORS=()
   [[ -f "$GRADLE_FILE" ]] || return 0
   grep -q 'productFlavors' "$GRADLE_FILE" || return 0

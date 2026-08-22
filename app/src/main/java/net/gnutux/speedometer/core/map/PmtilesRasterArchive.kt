@@ -39,10 +39,10 @@ class PmtilesRasterArchive private constructor(
     /**
      * أعلى تكبيرٍ يُقدَّم.
      *
-     * أعلى من مدى الأرشيف بدرجتين عمدًا: المربّع المتجهيّ يُرسم بأيّ مقاسٍ شئنا، فبلاطة
-     * ‎z14‎ تُرسم أربعَ مرّاتٍ بتفاصيلها كاملةً لتغطّي ‎z15‎ — خطوطٌ حادّةٌ وأسماءٌ
-     * مقروءة، لا تمطيطُ صورةٍ جاهزة. وهذا ما لا يستطيعه أرشيفٌ نقطيّ أصلًا، وهو
-     * الفرق الذي يراه المستعمل حين يقرّب على رحلةٍ في حيٍّ واحد.
+     * أعلى من مدى الأرشيف عمدًا: المربّع المتجهيّ يُرسم بأيّ مقاسٍ شئنا، فبلاطة ‎z14‎
+     * تُعطي ‎z18‎ بخطوطٍ حادّةٍ وأسماءٍ مقروءة، لا تمطيطَ صورةٍ جاهزة. وهذا ما لا
+     * يستطيعه أرشيفٌ نقطيٌّ بحال، وهو الفرق الذي يراه المستعمل حين يقرّب على رحلةٍ
+     * في حيٍّ واحد.
      */
     val deepestZoom: Int get() = reader.maxZoom + OVERZOOM_LEVELS
 
@@ -57,6 +57,13 @@ class PmtilesRasterArchive private constructor(
 
     override fun getTileSources(): MutableSet<String> = mutableSetOf()
 
+    /**
+     * **متزامنةٌ لأنّ الراسم ليس آمنًا للخيوط.** osmdroid يسأل عن البلاطات في خيوطٍ
+     * متوازية، والراسم يحمل `Paint` و`Path` وإزاحةَ نافذةٍ مشتركة — فخيطان فيه يعني
+     * بلاطةً تُرسم بإزاحة أختها. والتزامن هنا لا يكلّف: القراءة من الملفّ متزامنةٌ
+     * أصلًا، والمخبأ يجيب أكثر الطلبات قبل بلوغ هذا القفل.
+     */
+    @Synchronized
     override fun getInputStream(pTileSource: ITileSource?, pMapTileIndex: Long): InputStream? {
         cache.get(pMapTileIndex)?.let { return ByteArrayInputStream(it) }
 
@@ -73,24 +80,12 @@ class PmtilesRasterArchive private constructor(
 
         val tile = reader.tile(sourceZoom, sourceX, sourceY) ?: return null
         val png = runCatching {
-            val size = TILE_SIZE shl depth
-            if (size > MAX_RENDER_SIZE) return null
-            val full = painter.paint(tile, zoom, size)
-            val slice = if (depth == 0) {
-                full
-            } else {
-                val span = 1 shl depth
-                Bitmap.createBitmap(
-                    full,
-                    (x % span) * TILE_SIZE,
-                    (y % span) * TILE_SIZE,
-                    TILE_SIZE,
-                    TILE_SIZE,
-                ).also { full.recycle() }
-            }
+            val span = 1 shl depth
+            val window = ShortbreadPainter.Window(span, x % span, y % span)
+            val bitmap = painter.paint(tile, zoom, window)
             ByteArrayOutputStream(PNG_GUESS).use { out ->
-                slice.compress(Bitmap.CompressFormat.PNG, 100, out)
-                slice.recycle()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                bitmap.recycle()
                 out.toByteArray()
             }
         }.getOrNull() ?: return null
@@ -107,17 +102,48 @@ class PmtilesRasterArchive private constructor(
     override fun toString(): String = "PmtilesRasterArchive"
 
     companion object {
-        private const val TILE_SIZE = 256
+
+        /** امتداد الأرشيف؛ الحكم النهائيّ لتوقيع الملفّ لا له */
+        const val EXTENSION = "pmtiles"
 
         /**
-         * درجتان فوق مدى الأرشيف.
+         * فحصٌ رخيص: `PMTiles` نصًّا ثمّ رقم النسخة بايتًا.
          *
-         * وليست ثلاثًا: كلُّ درجةٍ تضاعف ضلع الصورة المرسومة، فالثالثة تعني ‎2048×2048‎
-         * — ستّة عشر ميغابايتًا حيّةً لبلاطةٍ واحدة، وذلك ثمنٌ لا يُدفع على هاتف.
+         * الامتداد وحده يكذب — من يعيد تسمية ملفٍّ يُدخله مجلّد الخرائط — والفحص
+         * الكامل يفتح الملفّ ويقرأ دليله. فهذا للمُنزِّل حيث يكفي أن نعرف أنّ ما
+         * وصل ليس صفحة خطأٍ من الخادم، وذاك للفتح حيث يجب أن يُقرأ فعلًا.
          */
-        private const val OVERZOOM_LEVELS = 2
+        fun looksLikePmtiles(file: File): Boolean = runCatching {
+            if (!file.isFile || file.length() < MAGIC.size + 1) return false
+            file.inputStream().use { input ->
+                val head = ByteArray(MAGIC.size + 1)
+                var filled = 0
+                while (filled < head.size) {
+                    val read = input.read(head, filled, head.size - filled)
+                    if (read <= 0) return false
+                    filled += read
+                }
+                for (i in MAGIC.indices) if (head[i] != MAGIC[i]) return false
+                head[MAGIC.size].toInt() == SPEC_VERSION
+            }
+        }.getOrDefault(false)
 
-        private const val MAX_RENDER_SIZE = 1024
+        private val MAGIC = "PMTiles".toByteArray(Charsets.US_ASCII)
+        private const val SPEC_VERSION = 3
+
+        /**
+         * أربع درجاتٍ فوق مدى الأرشيف: ‎z14‎ في الملفّ تصير ‎z18‎ على الشاشة.
+         *
+         * وكانت درجتين حين كانت البلاطة تُرسم كاملةً بضلعٍ مضاعَفٍ ثمّ تُقصّ — وذاك
+         * يضاعف الذاكرة أربعًا مع كلّ درجة. أمّا وقد صارت النافذة تدخل في حساب الرسم
+         * (انظر [ShortbreadPainter.Window]) فالصورة ‎256‎ بكسلًا مهما عمُق التقريب،
+         * والثمن الباقي زمنُ رسمِ هندسةٍ يقع أكثرُها خارج النافذة — وSkia يُسقطه سريعًا.
+         *
+         * وأربعٌ لا خمس: عند ‎1/1024‎ من مساحة البلاطة يصير الشارع الواحد شريطًا عريضًا
+         * بلا معنًى، وليس في البيانات ما يُظهره — المربّع المتجهيّ نفسه مبسَّطٌ لمقاسه.
+         */
+        private const val OVERZOOM_LEVELS = 4
+
         private const val CACHE_BYTES = 12 * 1024 * 1024
         private const val PNG_GUESS = 24 * 1024
 

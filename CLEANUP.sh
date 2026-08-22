@@ -48,7 +48,8 @@ done
 SRC="app/src/main/java"
 [[ -d "$SRC" ]] || { echo "شغّله من جذر المشروع (لم أجد $SRC)" >&2; exit 1; }
 
-# منذ 0.10.0 صار للمشروع نكهتان (`lite` و`full`)، ولكلٍّ منهما شجرةُ مصدرٍ خاصّة.
+# شجرةُ مصدرٍ واحدة. وقد كانت نكهتان (`lite` و`full`) أيّام المحرّك المتجهيّ،
+# والحلقةُ أدناه تبقى: تكلفتها صفرٌ حين لا نكهةَ، وتعمل إن عادت.
 # والفحوص كلُّها كانت تمسح `main` وحدها — فنصٌّ مستعمَلٌ بلا مقابلٍ في شيفرة نكهةٍ
 # كان يمرّ من الفاحص ويكسر البناء. **والفاحص الذي لا يرى ليس فاحصًا.**
 SRC_ROOTS=("$SRC")
@@ -85,7 +86,6 @@ core/location/SpeedSample.kt
 core/map/MapApps.kt
 core/map/MapDownloader.kt
 core/map/OfflineMaps.kt
-core/map/VectorMaps.kt
 core/map/PmtilesRasterArchive.kt
 core/map/pmtiles/PmtilesReader.kt
 core/map/mvt/MvtTile.kt
@@ -108,7 +108,6 @@ ui/SpeedoViewModel.kt
 ui/components/GaugeStyles.kt
 ui/components/GpsStatusBar.kt
 ui/components/RouteMap.kt
-ui/components/VectorRouteMap.kt
 ui/components/RouteSketch.kt
 ui/components/SpeedGauge.kt
 ui/components/StatTile.kt
@@ -236,7 +235,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     ok "لا سرّ متتبَّعًا"
   fi
   # لا تقل «متجاهَل» عن ملفٍّ أثبتنا للتوّ أنّه متتبَّع
-  for f in keystore.properties keystore-full.properties *.jks; do
+  for f in keystore.properties *.jks; do
     [[ -e "$f" ]] || continue
     git ls-files --error-unmatch "$f" >/dev/null 2>&1 && continue
     printf '%s\n' "      ${C_DIM}موجودٌ محلّيًّا ومتجاهَل — احتفظ بنسخةٍ خارج الجهاز: $f${C_RESET}"
@@ -266,7 +265,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties keystore-full.properties local.properties dist .gradle .kotlin __pycache__ .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist docs .gradle .kotlin __pycache__ .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac

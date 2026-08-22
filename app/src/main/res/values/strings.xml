@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">عداد السرعة</string>
+    <string name="app_name">GT عداد السرعة</string>
 
     <!-- ملفات المركبات -->
     <string name="vehicle_car">سيارة</string>
@@ -409,10 +409,6 @@
     <string name="map_source_online_note">بلاطاتٌ حيّة من الشبكة</string>
     <string name="map_source_osmand_note">صورةٌ يرسمها OsmAnd من خرائطه، دون اتّصال</string>
     <string name="map_source_offline_note">أرشيف البلاطات الذي في مجلّد الخرائط</string>
-    <string name="map_source_vector">متجهيّة</string>
-    <string name="map_source_vector_note">أرشيف ‎.pmtiles‎ يُرسم على الجهاز — خريطة بلدٍ كاملة دون اتّصال</string>
-    <string name="map_source_na_vector">لا أرشيف ‎.pmtiles‎ صالحًا في مجلّد الخرائط</string>
-    <string name="map_vector_failed">تعذّر رسم الخريطة المتجهيّة: %1$s</string>
     <string name="map_source_na_online">لا اتّصال الآن</string>
     <string name="map_source_na_osmand">OsmAnd غير متاح</string>
     <string name="map_source_na_offline">لا أرشيف بلاطاتٍ يغطّي هذا المسار</string>

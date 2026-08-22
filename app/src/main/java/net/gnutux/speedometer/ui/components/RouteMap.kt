@@ -86,7 +86,6 @@ import net.gnutux.speedometer.core.map.MapBindForce
 import net.gnutux.speedometer.core.map.MapBinding
 import net.gnutux.speedometer.core.map.MapSource
 import net.gnutux.speedometer.core.map.OfflineMaps
-import net.gnutux.speedometer.core.map.VectorMaps
 import net.gnutux.speedometer.core.map.OsmAndBridge
 import net.gnutux.speedometer.core.map.OsmAndProjection
 import net.gnutux.speedometer.core.map.OsmAndShot
@@ -275,7 +274,6 @@ private class MapSourceOption(
 private fun mapSourceOptions(
     ready: MapReady?,
     osmAndReady: Boolean,
-    vectorReady: Boolean,
 ): List<MapSourceOption> {
     fun option(
         source: MapSourcePreference,
@@ -315,15 +313,6 @@ private fun mapSourceOptions(
             // التغطية لا مجرّد وجود الملفّ: أرشيف مدينةٍ أخرى يُرضي شرط «عندي خريطة»
             // ويُخرج فراغًا رماديًّا، وذلك أسوأ ما يمكن أن يُعرض على من اختار بنفسه.
             available = ready?.offlineCovers ?: true,
-        ),
-        option(
-            source = MapSourcePreference.VECTOR,
-            label = R.string.map_source_vector,
-            note = R.string.map_source_vector_note,
-            reason = R.string.map_source_na_vector,
-            // وجودُ أرشيفٍ صالحٍ شرطٌ للعرض: اختيارٌ بلا أرشيفٍ يُخرج شاشةً سوداء،
-            // وهو ما تمنعه القاعدة نفسها المبسوطة عند خيار «محلّيّة» فوقه.
-            available = vectorReady,
         ),
     )
 }
@@ -374,7 +363,6 @@ fun RouteMap(
      * المعروض وبقيّة الأطراف تسكن هنا، فاستبدالُ المركّب كان يُخفيها — فيجد المستعمل
      * خريطةً متجهيّةً بلا سبيلٍ إلى العودة منها إلى غيرها.
      */
-    vectorArchive: File? = null,
     showControls: Boolean = true,
     noticeVisible: Boolean = false,
     onDismissNotice: () -> Unit = {},
@@ -473,19 +461,11 @@ fun RouteMap(
         osmAndReady = osmAndReady,
         osmAndPending = osmAndStatus.state == OsmAndState.CHECKING,
     )
-    // يُسأل مرّةً عند تبدّل المكتبة لا في كلّ إعادة تركيب: `firstAvailable` تقرأ
-    // القرص وتفحص توقيع الملفّ، وذلك في كلّ إطارٍ كلفةٌ بلا مقابل
-    // شرطان: النكهة تحمل محرّكًا، ويوجد أرشيفٌ صالح. وفي الخفيفة الأوّل كاذبٌ ثابتًا
-    // فيُحذف الخيار من القائمة أصلًا — لا خيارٌ معطَّلٌ يسأل المستعمل عن سببه
-    val vectorReady = remember(context) {
-        VectorMapsAvailable && VectorMaps.firstAvailable(context) != null
-    }
-    val sourceOptions = mapSourceOptions(current, osmAndReady, vectorReady)
+    val sourceOptions = mapSourceOptions(current, osmAndReady)
 
     // مقاس الصورة يُطلب بالبكسل، ولا يُعرف قبل أوّل تخطيط. نأخذه من التخطيط نفسه
     // بدل `BoxWithConstraints` كي لا تُقرأ خصائص مُستقبِلٍ ضمنيّ من لامدا متداخلة.
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
-    var vectorError by remember { mutableStateOf<String?>(null) }
     // عرضُ osmdroid يُنشأ داخل [RouteMapSurface]، وأزرارُ التكبير تعلوه في هذا
     // الصندوق. فيُرفع المرجع إلى هنا كما رُفع نظيره في الخريطة المتجهيّة.
     var tileMap by remember { mutableStateOf<MapView?>(null) }
@@ -521,10 +501,6 @@ fun RouteMap(
 
     val notice = when {
         !noticeVisible || !library.scanned -> MapNotice.NONE
-        // **من تُرسم خريطته لا يُقال له «لا خرائط على جهازك».** الفحص كلُّه أدناه
-        // يسأل عن الأرشيفات **النقطيّة** وحدها، فمن اختار المتجهيّة وعنده ‎.pmtiles‎
-        // صالحٌ يُرسم منه كان يُستقبَل بحوارٍ يدعوه إلى تنزيل خرائط — فوق خريطته.
-        vectorArchive != null -> MapNotice.NONE
         // قبل أن يُحسم المصدر لا نقول شيئًا: ملاحظةٌ تظهر ثمّ تختفي أسوأ من الصمت.
         current == null || current.binding.source == MapSource.OFFLINE -> MapNotice.NONE
         // ومن رُسمت خريطته من OsmAnd لا يُدعى إلى فتحها في OsmAnd.
@@ -546,33 +522,6 @@ fun RouteMap(
             .onSizeChanged { boxSize = it }
     ) {
         when {
-            // المتجهيّ أوّلًا: اختيارُه صريحٌ من المستعمل، فلا يزاحمه اشتقاقُ الوضع
-            vectorArchive != null -> {
-                VectorRouteMap(
-                    archive = vectorArchive,
-                    points = points,
-                    modifier = Modifier.matchParentSize(),
-                    onError = { vectorError = it },
-                    showControls = showControls,
-                )
-                MapSourceBadge(
-                    label = R.string.map_source_vector,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp),
-                )
-                // خبرُ الفشل لا يُبتلع: المحرّك يرسم سوادًا صامتًا، فيُقال ما جرى
-                vectorError?.let { reason ->
-                    Text(
-                        text = stringResource(R.string.map_vector_failed, reason),
-                        style = MaterialTheme.typography.bodySmall.copy(color = Danger),
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(8.dp),
-                    )
-                }
-            }
-
             mode == MapMode.TILES && current != null -> {
                 // `key` لا `remember` وحده: `AndroidView` يمسك عرضه مدى حياة عقدته، فتبديل
                 // المزوّد بعد رصدِ ملفٍّ جديد يحتاج عقدةً جديدة لا وسمًا جديدًا.

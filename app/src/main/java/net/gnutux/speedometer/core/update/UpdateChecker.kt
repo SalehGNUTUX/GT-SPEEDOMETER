@@ -296,40 +296,30 @@ class UpdateChecker private constructor(context: Context) {
         return assets
     }
 
-    /** انظر تحذير التوقيع في رأس الملفّ: `release` أوّلًا دائمًا، و`debug` عند العدم */
     /**
-     * اختيار الحزمة التي تخصّ **هذه النسخة** من بين حزم الإصدار.
+     * اختيار حزمة التثبيت من بين مرفقات الإصدار.
      *
-     * منذ ‎0.10.0‎ يحمل الإصدار حزمتين: `lite` بلا محرّكٍ متجهيّ و`full` معه. وحزمة
-     * النكهة الأخرى ليست تحديثًا لهذه: أحسنُ ما يقع أن يرفضها المثبّت لاختلاف
-     * التوقيع، وأسوؤه أن يجد صاحبُ الخفيفة نفسه يحمّل ‎22‎ ميغابايت زائدة لم يطلبها،
-     * أو يفقد صاحبُ الكاملة محرّكه في «تحديث».
+     * `release` أوّلًا دائمًا و`debug` عند العدم — انظر تحذير التوقيع في رأس الملفّ.
      *
-     * فالمرشَّح يجب أن يحمل **اسم نكهتنا**، ومتى كان الإصدار بحزم نكهاتٍ ولم نجد
-     * نكهتنا فيه فلا تحديث — ولا تُقترَح البديلة. و«لا شيء» أصدق من حزمةٍ خاطئة.
-     *
-     * والإصدارات القديمة (ما قبل ‎0.10.0‎) حزمةٌ واحدة بلا اسم نكهة، فتُقبل كما كانت:
-     * من ثبّت واحدةً منها يُحدَّث إلى ما يليها بلا انقطاع.
+     * ## وحزمُ النكهات تُتخطّى
+     * حمل الفرع `vector-maps` حزمتين — `lite` بلا محرّكٍ متجهيّ و`full` معه — ثمّ
+     * أُزيلت النكهتان مع MapLibre (انظر `docs/تجربة-الخرائط-المتجهية.md`) ولم يُنشر
+     * منهما إصدارٌ قطّ. فلو ظهر مرفقٌ باسم نكهةٍ في إصدارٍ ما فليس تحديثًا لهذه الحزمة:
+     * توقيعُ `full` مفتاحٌ آخر يرفضه المثبّت، و`lite` تكرارٌ لما نحن عليه باسمٍ مربك.
+     * فتُصفّى، ولا يُقترَح شيءٌ إن لم يبقَ غيرها. و«لا شيء» أصدق من حزمةٍ خاطئة.
      */
     private fun pickAsset(assets: List<Asset>): Asset? {
-        val packages = assets.filter { it.name.endsWith(APK_SUFFIX, ignoreCase = true) }
-        if (packages.isEmpty()) return null
-
-        val flavored = packages.filter { it.name.containsFlavorMark() }
-        val pool = if (flavored.isEmpty()) {
-            packages   // إصدارٌ قديمٌ بحزمةٍ واحدة
-        } else {
-            val mine = flavored.filter { it.name.contains(BuildConfig.FLAVOR, ignoreCase = true) }
-            if (mine.isEmpty()) return null   // نكهتنا ليست في هذا الإصدار
-            mine
-        }
+        val pool = assets
+            .filter { it.name.endsWith(APK_SUFFIX, ignoreCase = true) }
+            .filterNot { it.name.containsFlavorMark() }
+        if (pool.isEmpty()) return null
 
         return pool.firstOrNull { it.name.contains(RELEASE_MARK, ignoreCase = true) }
             ?: pool.firstOrNull { it.name.contains(DEBUG_MARK, ignoreCase = true) }
             ?: pool.firstOrNull()
     }
 
-    /** هل في الاسم علامةُ نكهة؟ — به يُفرَّق إصدارُ النكهتين عن إصدارٍ قديمٍ بحزمةٍ واحدة */
+    /** هل في الاسم علامةُ نكهةٍ من تلك التجربة؟ */
     private fun String.containsFlavorMark(): Boolean =
         FLAVOR_MARKS.any { contains(it, ignoreCase = true) }
 

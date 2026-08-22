@@ -346,27 +346,13 @@ def apk_url(version: str, kind: str) -> str:
     return f"{REPO}/releases/download/{tag}/GT-SPEEDOMETER-{version}-beta-{kind}.apk"
 
 
-#: أوّل إصدارٍ بنكهتين. ما قبله حزمةٌ واحدة، وما بعده «خفيفة» و«كاملة».
-FLAVOR_SINCE = (0, 10, 0)
-
-
-def _num(version: str) -> tuple[int, ...]:
-    return tuple(int(p) for p in version.split("."))
-
-
 def download_links(version: str) -> str:
     """
     روابط حزم إصدارٍ بعينه.
 
-    الجدول يعرض تاريخ المشروع كلَّه، وأسماء الحزم تبدّلت في ‎0.10.0‎ حين صارت نكهتان.
-    فالرابط يُبنى بحسب **رقم الإصدار** لا بحسب حال المشروع اليوم — وإلّا صارت روابط
-    الإصدارات القديمة كلُّها إلى ملفّاتٍ لا وجود لها.
+    حزمةٌ واحدة لكلّ إصدار. وقد جُرِّبت نكهتان («خفيفة» و«كاملة») في فرع
+    `vector-maps` ولم يُنشر منهما إصدارٌ قطّ، فلا رابطَ في هذا الجدول يشير إليهما.
     """
-    if _num(version) >= FLAVOR_SINCE:
-        return (
-            f'<a href="{apk_url(version, "lite-release")}">خفيفة</a>\n'
-            f'          <a href="{apk_url(version, "full-release")}">كاملة</a>'
-        )
     return (
         f'<a href="{apk_url(version, "release")}">release</a>\n'
         f'          <a href="{apk_url(version, "debug")}">debug</a>'
