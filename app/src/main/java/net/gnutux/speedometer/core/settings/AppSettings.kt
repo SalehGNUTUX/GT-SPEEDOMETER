@@ -220,6 +220,16 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     // ===== الخريطة والسجلّ =====
 
+    /**
+     * أزرار التكبير والملاءمة فوق الخريطة.
+     *
+     * الإيماءة تكفي من يستطيعها، ولا يستطيعها من يمسك المقود بيدٍ وينظر بعجل. وهي
+     * مع ذلك تحجب ركنًا من الخريطة، فمن يفحص مسارًا على طاولةٍ قد يريد الركن. فخيارٌ
+     * لا حكم، وافتراضُه الظهور: الأداةُ التي لا تُرى لا يبحث عنها أحد.
+     */
+    val showMapControls: StateFlow<Boolean> = pref(KEY_MAP_CONTROLS, true)
+    fun setShowMapControls(enabled: Boolean) = put(KEY_MAP_CONTROLS, enabled)
+
     /** قلب ألوان بلاطات الخريطة؛ يليق بالسمة الداكنة ويُتعب العين في الفاتحة */
     val invertMapTiles: StateFlow<Boolean> = pref(KEY_INVERT_TILES, true)
     fun setInvertMapTiles(enabled: Boolean) = put(KEY_INVERT_TILES, enabled)
@@ -428,6 +438,7 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_SEGMENT = intPreferencesKey("video_segment_minutes")
         private val KEY_AUTO_TRIP = booleanPreferencesKey("auto_trip_with_recording")
         private val KEY_INVERT_TILES = booleanPreferencesKey("invert_map_tiles")
+        private val KEY_MAP_CONTROLS = booleanPreferencesKey("show_map_controls")
         private val KEY_PREFER_OFFLINE = booleanPreferencesKey("prefer_offline_maps")
         private val KEY_UNDO_SECONDS = intPreferencesKey("undo_seconds")
         private val KEY_SPEED_LIMIT = intPreferencesKey("speed_limit_kmh")

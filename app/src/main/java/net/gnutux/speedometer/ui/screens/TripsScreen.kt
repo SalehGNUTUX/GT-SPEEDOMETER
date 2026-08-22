@@ -284,6 +284,7 @@ private fun TripDetail(
 ) {
     val context = LocalContext.current
     val invertTiles by vm.settings.invertMapTiles.collectAsStateWithLifecycle()
+    val showMapControls by vm.settings.showMapControls.collectAsStateWithLifecycle()
     // القرار تفضيلٌ لا حالة خريطة، فيُقرأ هنا ويُمرَّر: `RouteMap` مُركّب عرضٍ لا يقرأ
     // مخزن التفضيلات بنفسه، تمامًا كما هو حال قلب الألوان.
     val preferOffline by vm.settings.preferOfflineMaps.collectAsStateWithLifecycle()
@@ -394,6 +395,7 @@ private fun TripDetail(
                 mapSource = mapSource,
                 onMapSourceChange = vm.settings::setMapSource,
                 vectorArchive = vectorArchive,
+                showControls = showMapControls,
                 // ملفّ الرحلة نفسه لا نسخةٌ مصغَّرة في المخبأ: OsmAnd يقرؤه مباشرةً
                 // حين يرسم الخريطة، فتُوفَّر كتابةُ ملفٍّ ثانٍ لكلّ رحلةٍ تُفتح.
                 gpxFile = trip.file,

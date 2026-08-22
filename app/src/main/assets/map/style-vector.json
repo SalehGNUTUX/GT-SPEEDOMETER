@@ -6,6 +6,8 @@
     "protomaps": {
       "type": "vector",
       "url": "__PMTILES_URL__",
+      "minzoom": "__MINZOOM__",
+      "maxzoom": "__MAXZOOM__",
       "attribution": "© OpenStreetMap · Protomaps"
     }
   },

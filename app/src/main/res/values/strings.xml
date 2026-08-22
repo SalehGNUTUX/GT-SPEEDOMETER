@@ -136,6 +136,8 @@
     <string name="segment_minutes">%1$s دقائق</string>
     <string name="settings_auto_trip">بدء رحلة مع التسجيل</string>
     <string name="settings_auto_trip_note">فيدخل كلّ فيديو سجلَّ الرحلات ومعه مساره</string>
+    <string name="settings_map_controls">أدوات التكبير على الخريطة</string>
+    <string name="settings_map_controls_note">أزرارُ تقريبٍ وإبعادٍ وملاءمةٍ فوق الخريطة، وقياسُ درجة التكبير. الإيماءة بإصبعين تعمل في الحالين، لكنّها لا تُتاح لمن يمسك المقود بيد.</string>
     <string name="settings_invert_tiles">قلب ألوان الخريطة</string>
     <string name="settings_invert_tiles_note">يليق بالسمة الداكنة ويُتعب العين في الفاتحة</string>
     <string name="settings_undo">مهلة التراجع عن الحذف</string>

@@ -185,7 +185,16 @@ class OfflineMaps private constructor(context: Context) {
             // آخر» وهي تعمل هنا. والتوقيع يُفحص كما يُفحص رأس النقطيّ: الامتداد وعدٌ
             // لا برهان.
             if (file.extension.equals(VectorMaps.EXTENSION, ignoreCase = true)) {
-                if (VectorMaps.looksValid(file)) pmtiles += file else rawData += file
+                // **ويُفتح فعلًا لا يُصدَّق امتدادُه.** صار المحرّك النقطيّ يرسم منه
+                // بنفسه (انظر [PmtilesRasterArchive])، فمن فُتح دخل الأرشيفات
+                // العاملة، ومن لم يُفتح فبياناتٌ لا خريطة.
+                val opened = PmtilesRasterArchive.open(file, density)
+                if (opened != null) {
+                    runCatching { opened.close() }
+                    pmtiles += file
+                } else {
+                    rawData += file
+                }
                 continue
             }
             // أرشيفُ سكليت متجهيُّ البلاطات (MVT) — كـ`shortbread` من Geofabrik: رأسه
@@ -221,7 +230,9 @@ class OfflineMaps private constructor(context: Context) {
         return OfflineMapLibrary(
             folderPath = primary.absolutePath,
             altFolderPath = brandFolders.firstOrNull()?.absolutePath.orEmpty(),
-            files = rasters.sortedBy { it.name },
+            // ‎.pmtiles‎ من الأرشيفات العاملة الآن: يُجسّ بها ويُبنى منها المزوّد.
+            // وتبقى مفصولةً في [pmtilesFiles] كي تُعرَّف بصيغتها في قائمة المجلّد.
+            files = (rasters + pmtiles).sortedBy { it.name },
             vectorFiles = vectors.sortedBy { it.name },
             pmtilesFiles = pmtiles.sortedBy { it.name },
             rawDataFiles = rawData.sortedBy { it.name },
@@ -293,9 +304,14 @@ class OfflineMaps private constructor(context: Context) {
      * osmdroid نفسه (`tiles(key, provider, tile)`) لا مخطّط OsmAnd
      * (`tiles(x, y, z, s, image)`). فنقرّر بالمخطّط الحقيقيّ داخل الملفّ لا بالامتداد.
      */
+    /** كثافة الشاشة: بها تُقاس عروض الطرق ومقاسات الأسماء في الراسم */
+    private val density: Float get() = app.resources.displayMetrics.density
+
     private fun openArchive(file: File, allowZip: Boolean): IArchiveFile? {
         val ext = file.extension.lowercase()
         if (ext == ZIP_EXT && !allowZip) return null
+        // المتجهيّ يُرسم نقطيًّا عندنا، فيدخل من المدخل نفسه ولا يحتاج مسارًا ثانيًا
+        if (ext == VectorMaps.EXTENSION) return PmtilesRasterArchive.open(file, density)
         if (ext in SQLITE_EXT) return openSqliteArchive(file)
         if (ext !in registeredExtensions()) return null
         return runCatching { ArchiveFileFactory.getArchiveFile(file) }.getOrNull()
@@ -370,7 +386,12 @@ class OfflineMaps private constructor(context: Context) {
             )
         }
 
-        MapBinding(MapSource.OFFLINE, offlineProvider(archives, tileSource), archiveCovers = true)
+        MapBinding(
+            MapSource.OFFLINE,
+            offlineProvider(archives, tileSource),
+            archiveCovers = true,
+            maxZoom = deepestZoom(archives, tileSource, positions),
+        )
     }
 
     /**
@@ -418,13 +439,50 @@ class OfflineMaps private constructor(context: Context) {
     }
 
     /**
+     * أعلى تكبيرٍ يملك الأرشيف بلاطةً به فوق هذا المسار، أو `null` إن لم نجد شيئًا.
+     *
+     * **بلا هذا الحدّ تُطمس الخريطة.** الملاءمة تذهب إلى ما يسع المسار — ورحلةٌ في
+     * حيٍّ واحدٍ تعني ‎z16‎ أو ‎z17‎ — والأرشيف يقف عند ‎z14‎، فيُمطَّط ما دونه أربعة
+     * أضعافٍ فيخرج مربّعاتٍ رماديّةً لا خريطة. وقد رآها المستعمل كذلك.
+     *
+     * ويُسأل الأرشيف نفسه لا بياناتُه: `metadata` في mbtiles قد تكذب أو تغيب، وصيغُ
+     * الأرشيفات الأخرى لا `metadata` فيها أصلًا. فتُطلب بلاطةُ منتصف المسار من الأعلى
+     * نزولًا، وأوّلُ ما يُجاب هو الحقّ — عشرون طلبًا على ملفٍّ مفتوحٍ لا يُحسّ.
+     */
+    private fun deepestZoom(
+        archives: List<IArchiveFile>,
+        probe: ITileSource,
+        positions: List<Pair<Double, Double>>,
+    ): Int? {
+        val (latitude, longitude) = positions[positions.size / 2]
+        for (zoom in MAX_PROBE_ZOOM downTo 0) {
+            val index = MapTileIndex.getTileIndex(zoom, tileX(longitude, zoom), tileY(latitude, zoom))
+            val found = archives.any { archive ->
+                runCatching { archive.getInputStream(probe, index) }.getOrNull()
+                    ?.use { true } ?: false
+            }
+            if (found) return zoom
+        }
+        return null
+    }
+
+    /**
      * سلسلة المزوّد المحلّيّ.
      *
      * نبنيها بأيدينا بدل [org.osmdroid.tileprovider.modules.OfflineTileProvider] الجاهز:
      * الجاهز أرشيفٌ محض، وما نحتاجه ثلاث حلقات — الأرشيف أوّلًا، ثمّ ذاكرة البلاطات
-     * المحفوظة من جلساتٍ سابقة، ثمّ التكبير التقريبيّ من مستوًى أدنى. الحلقتان
-     * الأخيرتان لا تمسّان الشبكة، وهما ما يمنع الفراغ الرماديّ حين يملك الأرشيف
-     * المدينة بمستوًى واحدٍ لا بكلّ المستويات.
+     * ثمّ التكبير التقريبيّ من مستوًى أدنى — وهو ما يمنع الفراغ الرماديّ حين يملك
+     * الأرشيف المدينة بمستوًى واحدٍ لا بكلّ المستويات.
+     *
+     * ## ومخبأ osmdroid المشترك **ليس منها**
+     * كان ثالثَ الحلقات بحجّة سدّ الفراغ، وكان يكذب: بلاطات الإنترنت تُحفظ فيه عند
+     * كلّ عرضٍ متّصل، فمن عاد بعدها إلى «محلّيّة» رأى بلاطات الشبكة بأسمائها ورموزها
+     * تحت شارةٍ تقول «محلّيّة». فيظنّ أرشيفه يغطّي ما لا يغطّي، ولا يكتشف الحقيقة إلّا
+     * حيث لا إنترنت — أي حيث لا رجعة.
+     *
+     * وهو فوق ذلك يُخفي العطب عنّا نحن: أرشيفٌ لا يُقرأ أصلًا يبدو عاملًا ما دام
+     * المخبأ ممتلئًا. **من اختار «محلّيّة» يريد أن يرى أرشيفه**، بفراغه إن كان فيه
+     * فراغ. والمخبأ يبقى حيث موضعه: في مزوّد الإنترنت.
      */
     private fun offlineProvider(
         archives: List<IArchiveFile>,
@@ -432,15 +490,13 @@ class OfflineMaps private constructor(context: Context) {
     ): MapTileProviderBase {
         val receiver = SimpleRegisterReceiver(app)
         val archiveProvider = MapTileFileArchiveProvider(receiver, tileSource, archives.toTypedArray())
-        val cacheProvider = MapTileSqlCacheProvider(receiver, tileSource)
         val approximater = MapTileApproximater().apply {
             addProvider(archiveProvider)
-            addProvider(cacheProvider)
         }
         return MapTileProviderArray(
             tileSource,
             receiver,
-            arrayOf(archiveProvider, cacheProvider, approximater),
+            arrayOf(archiveProvider, approximater),
         )
     }
 
@@ -590,6 +646,9 @@ class OfflineMaps private constructor(context: Context) {
 
         /** سلّم الجسّ نازل: أعلى مستوًى يُصيب يكفي، وما دونه يكفي بالتقريب */
         private val PROBE_ZOOMS = listOf(16, 14, 12, 10, 8, 6, 4)
+
+        /** ‎20‎ أبعدُ ما تبلغه أرشيفات OSM عمليًّا؛ وما فوقه لا يُطلب فلا يُنتظر */
+        private const val MAX_PROBE_ZOOM = 20
 
         /** ما تعرفه osmdroid بامتداده؛ يُسأل عنها لحظتها ولا تُكتب عندنا */
         private fun registeredExtensions(): Set<String> =
@@ -992,6 +1051,8 @@ class MapBinding internal constructor(
     val provider: MapTileProviderBase,
     /** `true` يغطّي، `false` لا يغطّي أو لا أرشيف، و`null` لم نجسّ فلا علم لنا */
     val archiveCovers: Boolean? = null,
+    /** أعلى تكبيرٍ في الأرشيف فوق هذا المسار؛ `null` حين لا أرشيف ولا حدّ */
+    val maxZoom: Int? = null,
 )
 
 /**
@@ -1049,7 +1110,8 @@ data class OfflineMapLibrary(
      * أوّلًا، ثمّ ما وُجد ولا يُرسم — ولو تُرك للواجهة لاختلف بين شاشةٍ وأخرى.
      */
     val entries: List<MapFileEntry>
-        get() = files.map { MapFileEntry(it, MapFileKind.ARCHIVE) } +
+        get() = files.filterNot { it in pmtilesFiles }
+            .map { MapFileEntry(it, MapFileKind.ARCHIVE) } +
             // أرشيفات ‎.pmtiles‎ كانت تُصنَّف ولا تُعرض: يجدها المحرّك المتجهيّ ويرسم
             // منها، ثمّ يقول قسمُ «ما في مجلّد الخرائط» «لا ملفّات بعد». فلا يستطيع
             // صاحبها حذفَها ولا مشاركتَها، وهي أكبر ما في المجلّد حجمًا.
@@ -1079,7 +1141,7 @@ enum class MapFileKind {
     /** خريطة OsmAnd متجهيّة `.obf`: تُفتح في OsmAnd ولا يرسمها osmdroid */
     VECTOR,
 
-    /** أرشيف ‎.pmtiles‎ متجهيّ: ترسمه النكهة الكاملة، ولا يرسمه المحرّك النقطيّ */
+    /** أرشيف ‎.pmtiles‎ متجهيّ: يُفكّ ويُرسم على الجهاز — خريطة بلدٍ في ملفّ */
     PMTILES,
 
     /** بيانات OSM خام (‎shp‎ · ‎gpkg‎ · ‎pbf‎): ليست خريطةً أصلًا */

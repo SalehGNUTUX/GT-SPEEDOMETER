@@ -86,6 +86,10 @@ core/map/MapApps.kt
 core/map/MapDownloader.kt
 core/map/OfflineMaps.kt
 core/map/VectorMaps.kt
+core/map/PmtilesRasterArchive.kt
+core/map/pmtiles/PmtilesReader.kt
+core/map/mvt/MvtTile.kt
+core/map/render/ShortbreadPainter.kt
 core/map/OsmAndBridge.kt
 core/media/MediaRepository.kt
 core/profile/VehicleProfile.kt

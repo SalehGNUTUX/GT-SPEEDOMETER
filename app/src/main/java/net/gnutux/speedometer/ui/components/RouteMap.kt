@@ -105,6 +105,7 @@ import net.gnutux.speedometer.ui.theme.TextSecondary
 import net.gnutux.speedometer.ui.theme.Warn
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
@@ -374,6 +375,7 @@ fun RouteMap(
      * خريطةً متجهيّةً بلا سبيلٍ إلى العودة منها إلى غيرها.
      */
     vectorArchive: File? = null,
+    showControls: Boolean = true,
     noticeVisible: Boolean = false,
     onDismissNotice: () -> Unit = {},
     onOpenOsmAnd: () -> Unit = {},
@@ -484,6 +486,9 @@ fun RouteMap(
     // بدل `BoxWithConstraints` كي لا تُقرأ خصائص مُستقبِلٍ ضمنيّ من لامدا متداخلة.
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var vectorError by remember { mutableStateOf<String?>(null) }
+    // عرضُ osmdroid يُنشأ داخل [RouteMapSurface]، وأزرارُ التكبير تعلوه في هذا
+    // الصندوق. فيُرفع المرجع إلى هنا كما رُفع نظيره في الخريطة المتجهيّة.
+    var tileMap by remember { mutableStateOf<MapView?>(null) }
     val screenDensity = LocalDensity.current.density
     val trackColor = RouteBlue.toArgb()
 
@@ -516,6 +521,10 @@ fun RouteMap(
 
     val notice = when {
         !noticeVisible || !library.scanned -> MapNotice.NONE
+        // **من تُرسم خريطته لا يُقال له «لا خرائط على جهازك».** الفحص كلُّه أدناه
+        // يسأل عن الأرشيفات **النقطيّة** وحدها، فمن اختار المتجهيّة وعنده ‎.pmtiles‎
+        // صالحٌ يُرسم منه كان يُستقبَل بحوارٍ يدعوه إلى تنزيل خرائط — فوق خريطته.
+        vectorArchive != null -> MapNotice.NONE
         // قبل أن يُحسم المصدر لا نقول شيئًا: ملاحظةٌ تظهر ثمّ تختفي أسوأ من الصمت.
         current == null || current.binding.source == MapSource.OFFLINE -> MapNotice.NONE
         // ومن رُسمت خريطته من OsmAnd لا يُدعى إلى فتحها في OsmAnd.
@@ -544,6 +553,7 @@ fun RouteMap(
                     points = points,
                     modifier = Modifier.matchParentSize(),
                     onError = { vectorError = it },
+                    showControls = showControls,
                 )
                 MapSourceBadge(
                     label = R.string.map_source_vector,
@@ -570,6 +580,7 @@ fun RouteMap(
                     RouteMapSurface(
                         ready = current,
                         invertTiles = invertTiles,
+                        onMapReady = { tileMap = it },
                         modifier = Modifier.matchParentSize(),
                     )
                 }
@@ -579,6 +590,34 @@ fun RouteMap(
                         .align(Alignment.TopStart)
                         .padding(8.dp),
                 )
+                if (showControls) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp),
+                    ) {
+                        MapControlButton(
+                            icon = Icons.Filled.Add,
+                            label = R.string.map_zoom_in,
+                            onClick = { tileMap?.controller?.zoomIn() },
+                        )
+                        MapControlButton(
+                            icon = Icons.Filled.Remove,
+                            label = R.string.map_zoom_out,
+                            onClick = { tileMap?.controller?.zoomOut() },
+                        )
+                        MapControlButton(
+                            icon = Icons.Filled.FitScreen,
+                            label = R.string.map_reset_zoom,
+                            onClick = {
+                                val view = tileMap ?: return@MapControlButton
+                                current.box?.let { box ->
+                                    runCatching { view.zoomToBoundingBox(box, true) }
+                                }
+                            },
+                        )
+                    }
+                }
             }
 
             mode == MapMode.OSMAND -> {
@@ -588,6 +627,7 @@ fun RouteMap(
                         shot = shot,
                         points = points,
                         frame = boxSize,
+                        showControls = showControls,
                         modifier = Modifier.matchParentSize(),
                     )
                 } else {
@@ -675,6 +715,7 @@ private fun OsmAndCanvas(
     shot: OsmAndShot,
     points: List<TrackPoint>,
     frame: IntSize,
+    showControls: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -789,7 +830,7 @@ private fun OsmAndCanvas(
         }
 
         // الأزرار لازمةٌ ولو كانت الإيماءة تكفي: من يقود بيدٍ واحدة لا يقرص بإصبعين.
-        if (maxScale > 1f) {
+        if (showControls && maxScale > 1f) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -947,7 +988,7 @@ private const val MIN_SEGMENT_PX = 1.5f
  * تحتها، وهذا موضعٌ يُضغط أثناء القيادة.
  */
 @Composable
-private fun MapControlButton(
+internal fun MapControlButton(
     icon: ImageVector,
     @StringRes label: Int,
     onClick: () -> Unit,
@@ -1201,6 +1242,7 @@ private fun OfflineMapNote(
 private fun RouteMapSurface(
     ready: MapReady,
     invertTiles: Boolean,
+    onMapReady: (MapView) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -1236,14 +1278,28 @@ private fun RouteMapSurface(
         ready.consumed = true
         MapView(context, ready.binding.provider).apply {
             setMultiTouchControls(true)
+            // **أزرار osmdroid المدمجة تُطفأ.** هي مستطيلاتٌ رماديّةٌ من طرازٍ قديم
+            // تظهر وتخبو من نفسها، ولا تشبه شيئًا في هذه الشاشة، ولا زرَّ ملاءمةٍ
+            // فيها. وأزرارُنا تعلوها بالمقاس نفسه في المحرّكات الثلاثة، وتخضع
+            // لمفتاح «أدوات التكبير» — وتلك لا تخضع له فتبقى بعد إخفائه.
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             // القطع صريح في الوضع المحلّيّ: المزوّد بلا وحدة تنزيل أصلًا، وهذه
             // طبقة أمانٍ ثانية تمنع أيّ وحدةٍ شبكيّة تُضاف لاحقًا من الانفلات.
             setUseDataConnection(ready.binding.source == MapSource.ONLINE)
+            // سقفُ التكبير سقفُ الأرشيف: بلا هذا تذهب الملاءمة إلى ما يسع المسار،
+            // ويُمطّط ما دونه أضعافًا فتخرج مربّعاتٌ رماديّة لا خريطة.
+            ready.binding.maxZoom?.let { setMaxZoomLevel(it.toDouble()) }
         }
     }
 
     // `onDetach` يوقف خيوط جلب البلاطات ويحرّر ذاكرتها والأرشيفات المفتوحة. يُستدعى
     // من `onDispose` ومن `onRelease` معًا، وقد يجتمعان، فالراية تمنع تحريرًا مزدوجًا.
+    // مرّةً لكلّ عرضٍ لا في كلّ تأليف: الأزرار تحتاج المرجع، ولا تحتاج تكراره.
+    DisposableEffect(map) {
+        onMapReady(map)
+        onDispose { }
+    }
+
     val detached = remember(map) { AtomicBoolean(false) }
     val detachOnce = remember(map) {
         {

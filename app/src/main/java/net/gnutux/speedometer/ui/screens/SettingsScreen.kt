@@ -143,6 +143,7 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val segment by s.videoSegmentMinutes.collectAsStateWithLifecycle()
     val autoTrip by s.autoTripWithRecording.collectAsStateWithLifecycle()
     val invertTiles by s.invertMapTiles.collectAsStateWithLifecycle()
+    val showMapControls by s.showMapControls.collectAsStateWithLifecycle()
     val preferOffline by s.preferOfflineMaps.collectAsStateWithLifecycle()
     val undoSeconds by s.undoSeconds.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
@@ -637,6 +638,12 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                             note = stringResource(R.string.settings_invert_tiles_note),
                             checked = invertTiles,
                             onChange = s::setInvertMapTiles,
+                        )
+                        SwitchRow(
+                            title = stringResource(R.string.settings_map_controls),
+                            note = stringResource(R.string.settings_map_controls_note),
+                            checked = showMapControls,
+                            onChange = s::setShowMapControls,
                         )
                     }
                 }

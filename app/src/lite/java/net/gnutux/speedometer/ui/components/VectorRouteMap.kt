@@ -23,6 +23,7 @@ fun VectorRouteMap(
     points: List<TrackPoint>,
     modifier: Modifier = Modifier,
     onError: (String) -> Unit = {},
+    showControls: Boolean = true,
 ) {
     // لا شيء عمدًا
 }

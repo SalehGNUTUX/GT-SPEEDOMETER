@@ -85,9 +85,35 @@ object VectorMaps {
      * فيه المعلَم ثمّ يُسلَّم نصًّا. وبديلُه كتابةُ نسخةٍ إلى المخبأ عند كلّ فتح — ملفٌّ
      * زائدٌ بلا فائدة.
      */
-    fun styleJson(context: Context, archive: File): String =
-        context.assets.open(styleAssetFor(archive)).bufferedReader().use { it.readText() }
+    fun styleJson(context: Context, archive: File): String {
+        val (minZoom, maxZoom) = zoomRangeOf(archive)
+        return context.assets.open(styleAssetFor(archive)).bufferedReader().use { it.readText() }
             .replace(URL_PLACEHOLDER, sourceUrl(archive))
+            .replace(MINZOOM_PLACEHOLDER, minZoom.toString())
+            .replace(MAXZOOM_PLACEHOLDER, maxZoom.toString())
+    }
+
+    /**
+     * مدى التكبير من الترويسة، بايتان صريحان: ‎100‎ أدناه و‎101‎ أقصاه.
+     *
+     * ويُكتب في النمط صراحةً ولا يُترك للمحرّك أن يستنتجه. فالأرشيف لا يحمل
+     * `minzoom` ولا `maxzoom` في بياناته (قُرئت فوجدت ثلاثةَ مفاتيح لا رابع:
+     * ‎name‎ و‎description‎ و‎vector_layers‎)، والذي فيها من مدىً إنّما هو **لكلّ
+     * طبقةٍ** على حدةٍ وهو كاذب — تعلن `streets` من ‎z14‎ وفي بلاطة ‎z7‎ طرقٌ سيّارة.
+     * فلو اشتقّ المحرّك مدى المصدر من تلك الأرقام لَما طلب بلاطةً دون ‎z14‎ أصلًا،
+     * ولَخرجت الخريطة سوداءَ إلّا عند أقصى تقريب — وهو الوصف الحرفيّ لما رآه المستعمل.
+     *
+     * والتثبيت هنا لا يكلّف شيئًا إن كان الاستنتاج سليمًا، ويرفع الشبهة إن لم يكن.
+     */
+    fun zoomRangeOf(archive: File): Pair<Int, Int> = runCatching {
+        RandomAccessFile(archive, "r").use { file ->
+            val header = ByteArray(HEADER_BYTES)
+            file.readFully(header)
+            val min = header[MIN_ZOOM_AT].toInt() and 0xFF
+            val max = header[MAX_ZOOM_AT].toInt() and 0xFF
+            if (max in min..MAX_SANE_ZOOM) min to max else DEFAULT_ZOOM_RANGE
+        }
+    }.getOrDefault(DEFAULT_ZOOM_RANGE)
 
     /**
      * أيّ نمطٍ يوافق هذا الأرشيف؟
@@ -166,12 +192,22 @@ object VectorMaps {
     private const val SHORTBREAD_STYLE = "map/style-shortbread.json"
     private const val PROTOMAPS_STYLE = "map/style-vector.json"
     private const val URL_PLACEHOLDER = "__PMTILES_URL__"
+    private const val MINZOOM_PLACEHOLDER = "\"__MINZOOM__\""
+    private const val MAXZOOM_PLACEHOLDER = "\"__MAXZOOM__\""
+
+    /** ‎0→14‎ هو ما توزّعه BBBike، فيكون الملاذ حين تتعذّر قراءة الترويسة */
+    private val DEFAULT_ZOOM_RANGE = 0 to 14
+
+    /** ‎22‎ أقصى ما تعرفه صيغة الويب؛ ما فوقه بايتٌ مشوَّه لا مدًى */
+    private const val MAX_SANE_ZOOM = 22
 
     private const val HEADER_BYTES = 127
     private const val METADATA_OFFSET_AT = 24
     private const val METADATA_LENGTH_AT = 32
     private const val INTERNAL_COMPRESSION_AT = 97
     private const val COMPRESSION_GZIP = 2
+    private const val MIN_ZOOM_AT = 100
+    private const val MAX_ZOOM_AT = 101
 
     /** حارسٌ على قراءةٍ من ملفٍّ قد يكون مشوّهًا: بياناتُ أرشيفِ بلدٍ لا تبلغ هذا */
     private const val MAX_METADATA_BYTES = 8 * 1024 * 1024

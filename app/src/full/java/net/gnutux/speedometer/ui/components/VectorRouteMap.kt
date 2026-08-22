@@ -1,18 +1,33 @@
 package net.gnutux.speedometer.ui.components
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import java.util.Locale
+import net.gnutux.speedometer.R
+import net.gnutux.speedometer.ui.theme.TextSecondary
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.LineLayer
@@ -56,6 +71,7 @@ fun VectorRouteMap(
     points: List<TrackPoint>,
     modifier: Modifier = Modifier,
     onError: (String) -> Unit = {},
+    showControls: Boolean = true,
 ) {
     val context = LocalContext.current
 
@@ -64,6 +80,8 @@ fun VectorRouteMap(
 
     val mapView = remember { MapView(context) }
     var styledFor by remember { mutableStateOf<String?>(null) }
+    var held by remember { mutableStateOf<MapLibreMap?>(null) }
+    var probe by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(mapView) {
         // الفشل يُبلَّغ لا يُبتلع: المحرّك يرسم سوادًا ولا يقول شيئًا. والمستمع على
@@ -81,31 +99,106 @@ fun VectorRouteMap(
         }
     }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { mapView },
-        update = { view ->
-            view.getMapAsync { map ->
-                val key = archive.absolutePath
-                if (styledFor != key) {
-                    styledFor = key
-                    map.setStyle(
-                        Style.Builder().fromJson(VectorMaps.styleJson(context, archive))
-                    ) { style ->
-                        drawRoute(style, points)
-                        frameRoute(map, points)
-                    }
-                } else {
-                    // النمط قائم: تُستبدل بيانات المسار وحدها
-                    map.style?.let { style ->
-                        drawRoute(style, points)
-                        frameRoute(map, points)
+    Box(modifier) {
+        AndroidView(
+            modifier = Modifier.matchParentSize(),
+            factory = { mapView },
+            update = { view ->
+                view.getMapAsync { map ->
+                    held = map
+                    val key = archive.absolutePath
+                    if (styledFor != key) {
+                        styledFor = key
+                        map.setStyle(
+                            Style.Builder().fromJson(VectorMaps.styleJson(context, archive))
+                        ) { style ->
+                            drawRoute(style, points)
+                            frameRoute(map, points)
+                            map.addOnCameraIdleListener { probe = probeOf(map) }
+                        }
+                    } else {
+                        // النمط قائم: تُستبدل بيانات المسار وحدها
+                        map.style?.let { style ->
+                            drawRoute(style, points)
+                            frameRoute(map, points)
+                        }
                     }
                 }
+            },
+        )
+
+        if (showControls) {
+            // الأزرار لازمةٌ ولو كانت الإيماءة تكفي: من يقود بيدٍ واحدة لا يقرص
+            // بإصبعين، وهي عين ما في خريطة OsmAnd — فلا يتعلّم المستعمل خريطتين.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+            ) {
+                MapControlButton(
+                    icon = Icons.Filled.Add,
+                    label = R.string.map_zoom_in,
+                    onClick = { held?.animateCamera(CameraUpdateFactory.zoomBy(1.0)) },
+                )
+                MapControlButton(
+                    icon = Icons.Filled.Remove,
+                    label = R.string.map_zoom_out,
+                    onClick = { held?.animateCamera(CameraUpdateFactory.zoomBy(-1.0)) },
+                )
+                MapControlButton(
+                    icon = Icons.Filled.FitScreen,
+                    label = R.string.map_reset_zoom,
+                    onClick = { held?.let { frameRoute(it, points) } },
+                )
             }
-        },
+
+            // **قياسٌ لا زينة.** الخريطة تُرسم عند التقريب الشديد وتسوَدّ عند الواسع،
+            // ولا نعرف أعند حدٍّ بعينه تقف البلاطات أم تصل ولا تُرسم. فهذا السطر
+            // يقول درجة التكبير وعدد المعالم التي بلغت المحرّك فعلًا من المصدر:
+            // صفرٌ عند ‎z13‎ وألوفٌ عند ‎z15‎ يعني أنّ البلاطة لم تصل، وعددٌ كبيرٌ
+            // مع سوادٍ يعني أنّها وصلت والنمط لا يرسمها. وهما علّتان لا علّة.
+            probe?.let { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * درجةُ التكبير وعددُ المعالم الواصلة من المصدر، سطرًا واحدًا.
+ *
+ * `querySourceFeatures` تسأل **ما وصل إلى المحرّك** لا ما في الملفّ، وذلك بالضبط ما
+ * نحتاج معرفته. وتُسأل عند سكون الكاميرا لا في كلّ إطار: هي مسحٌ على البلاطات
+ * المحمَّلة، وتكرارها ستّين مرّةً في الثانية يقتل الرسم الذي نقيسه.
+ */
+private fun probeOf(map: MapLibreMap): String {
+    val zoom = map.cameraPosition.zoom
+    val style = map.style ?: return "z%.1f · —".format(Locale.US, zoom)
+    val source = style.getSourceAs<org.maplibre.android.style.sources.VectorSource>(STYLE_SOURCE_ID)
+    val counts = PROBED_LAYERS.associateWith { layer ->
+        runCatching { source?.querySourceFeatures(arrayOf(layer), null)?.size ?: 0 }.getOrDefault(0)
+    }
+    val total = counts.values.sum()
+    return "z%.1f · معالم %d (طرق %d · أرض %d)".format(
+        Locale.US,
+        zoom,
+        total,
+        counts["streets"] ?: 0,
+        counts["land"] ?: 0,
     )
 }
+
+/** الطبقتان اللتان تُظهران السوادَ من عدمه: الطرق والغطاء الأرضيّ */
+private val PROBED_LAYERS = listOf("streets", "land")
+
+/** معرّف المصدر في كلا النمطين؛ لو تبدّل هناك سكت القياس هنا */
+private const val STYLE_SOURCE_ID = "src"
 
 /** يضع المسار في مصدره، ويُنشئ الطبقة أوّل مرّة فقط */
 private fun drawRoute(style: Style, points: List<TrackPoint>) {
@@ -133,7 +226,7 @@ private fun drawRoute(style: Style, points: List<TrackPoint>) {
 }
 
 /** الإطار على المسار كلِّه: من يفتح رحلةً يريد أن يراها كاملةً لا أن يبحث عنها */
-private fun frameRoute(map: org.maplibre.android.maps.MapLibreMap, points: List<TrackPoint>) {
+private fun frameRoute(map: MapLibreMap, points: List<TrackPoint>) {
     if (points.size < 2) return
     val bounds = LatLngBounds.Builder()
         .includes(points.map { LatLng(it.latitude, it.longitude) })
