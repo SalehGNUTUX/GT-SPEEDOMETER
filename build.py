@@ -598,8 +598,11 @@ def build(items: list[tuple[str, str]]) -> str:
         <span class="pill">صالح لـ F-Droid</span>
       </div>
       <div class="cta">
-        <a class="btn" href="{REPO}/releases/latest">نزّل أحدث نسخة</a>
-        <a class="btn alt" href="{REPO}">المستودع على GitHub</a>
+        <a class="btn" href="{apk_url(newest, 'release')}" download>
+          نزّل الحزمة مباشرةً · v{esc(newest)}
+        </a>
+        <a class="btn alt" href="{REPO}/releases">كلّ الإصدارات</a>
+        <a class="btn alt" href="{REPO}">المستودع</a>
       </div>
       <p class="beta">كلّ الإصدارات تجريبيّة (beta) حتّى إشعارٍ آخر.</p>
     </div>
@@ -635,6 +638,12 @@ def build(items: list[tuple[str, str]]) -> str:
       تُثبَّت عادةً، و<code>debug</code> للتشخيص. ومع كلّ حزمةٍ ملفّ
       <code>.sha256</code> للتحقّق من سلامتها.
     </p>
+    <div class="cta">
+      <a class="btn" href="{apk_url(newest, 'release')}" download>
+        نزّل آخر إصدار · v{esc(newest)}
+      </a>
+      <a class="btn alt" href="{apk_url(newest, 'release')}.sha256" download>بصمة الحزمة</a>
+    </div>
     <div class="tablewrap">
       <table>
         <thead>

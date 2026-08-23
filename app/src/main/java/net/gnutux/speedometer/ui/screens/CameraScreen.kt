@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.PixelCopy
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -65,6 +66,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -194,6 +196,26 @@ private val COMPACT_WIDTH = 430.dp
  * لأنّه أثلاثٌ متساوية يقع زرّ التسجيل في وسطها بالبناء — وإقحام رابعٍ يزيح الوسط.
  */
 private val SIDE_GAP = 10.dp
+
+/**
+ * زمن انتقال التخطيط بين الرأسيّ والأفقيّ.
+ *
+ * الإدارة لا تُعيد إنشاء النشاط (`configChanges` يشمل الاتّجاه)، فلولا هذا لقفزت
+ * الطبقةُ إلى موضعها الجديد في إطارٍ واحد — والقفزة تُقرأ خللًا لا تبدّلَ وضع.
+ * و‎220‎ ملّي ثانية: أطولُ من أن تُرى قفزةً، وأقصرُ من أن تُنتظر.
+ */
+private const val ORIENTATION_MS = 220
+
+/** مكوث الخبر العابر: لمحةٌ تكفي لاسم ملفٍّ أو سببِ فشل */
+private const val TOAST_MS = 3500L
+
+/**
+ * مكوث خبر المساحة: خمس ثوانٍ.
+ *
+ * فيه أمران لا أمرٌ واحد — أنّ أقدم تسجيلٍ حُذف، وأنّ التصوير صار مقاطع — وكلاهما
+ * يمسّ ملفّات المصوِّر. وثلاثٌ ونصفٌ تكفي لِلمحِ اسمٍ لا لقراءة جملتين.
+ */
+private const val SPACE_MESSAGE_MS = 5000L
 
 /** عرض سطر «لا مصباح»: جملةٌ قصيرة على سطرين، ولا تتمدّد فتحجب المشهد */
 private val SIDE_NOTE_WIDTH = 150.dp
@@ -396,6 +418,10 @@ fun CameraScreen(
         onDispose { vm.camera.detach() }
     }
 
+    // مدّة مكوث الرسالة: أكثر الأخبار لمحةٌ، وخبرُ المساحة يُقرأ. تُضبط عند بناء
+    // الرسالة وتعود إلى الافتراضيّ بعد انقضائها، فلا تورَّث رسالةٌ مكوثَ أختها.
+    var dwellMs by remember { mutableLongStateOf(TOAST_MS) }
+
     // رسالة صريحة عن مصير التسجيل. الصمت هنا هو ما جعل المستخدم يظنّ أن
     // شيئًا لم يُحفظ بينما كان الملف يُكتب في مجلد لا يراه. ولأنّ ثلاثًا من الحالات
     // تُنتج ملفًّا على القرص، تُحدَّث مكتبة الوسائط فيها جميعًا لا عند النجاح وحده.
@@ -419,6 +445,24 @@ fun CameraScreen(
             is CameraSession.Message.Failed ->
                 toast = context.getString(R.string.recording_failed, context.getString(m.reason))
 
+            // ضاق القرص: خبرٌ من شقّين — حُذف الأقدم، وصار التصوير مقاطع. ويمكث
+            // أطول من سائره لأنّ فيه ما يُقرأ لا ما يُلمح
+            is CameraSession.Message.SpaceLow -> {
+                toast = context.getString(
+                    R.string.rec_space_low,
+                    Fmt.count(m.deleted),
+                    Fmt.count(m.segmentMinutes),
+                )
+                dwellMs = SPACE_MESSAGE_MS
+                vm.refreshMedia()
+            }
+
+            is CameraSession.Message.SpaceFreed -> {
+                toast = context.getString(R.string.rec_space_freed, Fmt.count(m.deleted))
+                dwellMs = SPACE_MESSAGE_MS
+                vm.refreshMedia()
+            }
+
             CameraSession.Message.BurnUnsupported ->
                 toast = context.getString(R.string.burn_unsupported)
 
@@ -430,8 +474,9 @@ fun CameraScreen(
 
             null -> return@LaunchedEffect
         }
-        delay(3500)
+        delay(dwellMs)
         toast = null
+        dwellMs = TOAST_MS
         // الاستهلاك بعد الانتظار لا قبله: هو يُصفّر `cameraMessage` وهو مفتاح هذا
         // الأثر، فاستهلاكُه في البداية كان يُلغي الأثر عند `delay` فتبقى الشارة
         // معلّقة على الشاشة إلى الأبد. ووصولُ رسالةٍ جديدة أثناء الانتظار يُعيد
@@ -483,6 +528,28 @@ fun CameraScreen(
         val shortSide = if (maxHeight == Dp.Infinity) maxWidth else minOf(maxWidth, maxHeight)
         val dim = remember(shortSide, density) { HudDim(shortSide, density) }
         val compact = maxWidth < COMPACT_WIDTH
+
+        // **الاتّجاه يُقرأ من قيود هذا المركّب لا من إعدادات الجهاز.** الشاشة قد تكون
+        // نصفَ نافذةٍ منقسمة أو نافذةً مصغَّرة، وحينها اتّجاهُ الجهاز يكذب عمّا نرسم
+        // فيه. والقيود لا تكذب.
+        val landscape = maxWidth > maxHeight
+
+        // **ممرّ الأزرار.** في الرأسيّ تعلو الطبقةُ صفَّ الأزرار (فرقٌ متعمَّد عن
+        // الملفّ: الأزرار لا تُحرق). وفي الأفقيّ لا ارتفاع يُنفَق على صفّ، فتنتقل
+        // الأزرار إلى عمودٍ على الحافّة وتنزاح الطبقةُ عنه أفقيًّا — القاعدة نفسها
+        // على المحور الآخر. وبلا هذا الممرّ كانت الأزرار تجلس فوق لوح الإحصاءات
+        // وفوق القرص، وهو ما رآه المستعمل: عناصرُ متداخلةٌ غير متّسقة.
+        val controlLane = TOUCH_MIN + SIDE_GAP * 2
+        val laneStart by animateDpAsState(
+            targetValue = if (landscape) controlLane else 0.dp,
+            animationSpec = tween(ORIENTATION_MS),
+            label = "laneStart",
+        )
+        val laneEnd by animateDpAsState(
+            targetValue = if (landscape) controlLane else 0.dp,
+            animationSpec = tween(ORIENTATION_MS),
+            label = "laneEnd",
+        )
         // يُقرأ هنا لا في عمق الشجرة: `maxWidth` خاصّيّةُ مُستقبِلٍ ضمنيّ
         // (`BoxWithConstraintsScope`)، وقراءتها داخل لامدا متداخلة تتطلّب بقاء ذلك
         // المُستقبِل مرئيًّا. المتغيّر المحلّيّ يُلتقط بالإغلاق فلا يتعلّق بشيء.
@@ -531,9 +598,17 @@ fun CameraScreen(
         if (!hideControls) {
             Column(
                 modifier = Modifier
-                    // مطلقٌ لا منطقيّ، كعقد هذه الشاشة كلّه
-                    .align(AbsoluteAlignment.CenterRight)
-                    .padding(end = dim.margin),
+                    // مطلقٌ لا منطقيّ، كعقد هذه الشاشة كلّه.
+                    // ويتبدّل الجانب بالاتّجاه: في الأفقيّ تسكن أزرارُ الفعل حافّةَ
+                    // اليمين، فلو بقي هذا العمود هناك لتراكبا.
+                    .align(
+                        if (landscape) AbsoluteAlignment.CenterLeft
+                        else AbsoluteAlignment.CenterRight
+                    )
+                    .padding(
+                        start = if (landscape) SIDE_GAP else 0.dp,
+                        end = if (landscape) 0.dp else dim.margin,
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(SIDE_GAP),
             ) {
@@ -642,9 +717,13 @@ fun CameraScreen(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                // ممرّ الأزرار أوّلًا ثمّ هامش الطبقة: الترتيب مقصود، فالهامش يجب
+                // أن يُقاس من حافّة ما تبقّى للطبقة لا من حافّة الشاشة
+                .padding(start = laneStart, end = laneEnd)
                 .padding(horizontal = dim.margin)
                 // الطبقة هنا ترتفع فوق صفّ الأزرار، والمحروق يلتصق بهامش القاع.
-                // **فرقٌ متعمَّد**: الأزرار لا تُحرق.
+                // **فرقٌ متعمَّد**: الأزرار لا تُحرق. وفي الأفقيّ لا صفَّ أزرارٍ
+                // تحتها، فترتفع بمقدار الهامش وحده — أقربَ إلى الملفّ لا أبعد.
                 .padding(bottom = 14.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -671,8 +750,10 @@ fun CameraScreen(
                     // بعد الهامشين والقرص وأدنى فجوةٍ بين الكتلتين. من غيره كان
                     // اللوح ينمو حتّى يلامس القوس على الشاشات الضيّقة، بينما يقصّه
                     // الملفّ — فيختلف الاثنان حيث يجب أن يتّفقا
-                    maxWidth = (availableWidth - dim.margin * 2 - dim.ringDiameter - dim.blockGap)
-                        .coerceAtLeast(0.dp),
+                    maxWidth = (
+                        availableWidth - laneStart - laneEnd -
+                            dim.margin * 2 - dim.ringDiameter - dim.blockGap
+                        ).coerceAtLeast(0.dp),
                     distance = Fmt.distance(trip.distanceKm),
                     maxSpeed = Fmt.speed(trip.maxSpeedKmh),
                     avgSpeed = Fmt.avg(trip.avgSpeedKmh),
@@ -680,63 +761,54 @@ fun CameraScreen(
                 )
             }
 
-            // ارتفاع الصفّ محجوزٌ دائمًا وإن غابت الأزرار: إخفاؤها قبل اللقطة كان
-            // ينكمش بالعمود فيقفز الشريط السفليّ إلى أسفل، فتخرج الصورة بتخطيطٍ
-            // غير الذي رآه المصوِّر — وغير الذي يُحرق في الفيديو.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(ACTION_ROW_HEIGHT)
-            ) {
-                // الأزرار وحدها تختفي، لا الطبقة: اللقطة يجب أن تحمل العدّاد
-                // والإحصاءات — وهي وعد «صورةٍ محروقة» — وليس مشهدًا عاريًا
-                // تلاشٍ بالشفافيّة لا إظهارٌ متحرّك: لتلك تحميلاتٌ زائدة على
-                // `ColumnScope` و`RowScope` والعامّ، واختيارُ المصرّف بينها داخل
-                // `Box` متداخلٍ في `Column` هشّ. الشفافيّة أثرٌ واحد بلا نطاق.
-                val controlsAlpha by animateFloatAsState(
-                    targetValue = if (hideControls) 0f else 1f,
-                    animationSpec = tween(durationMillis = 160),
-                    label = "controlsAlpha",
-                )
-                if (controlsAlpha > 0.01f) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer { alpha = controlsAlpha },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        // أثلاثٌ متساوية: زرّ التسجيل في منتصف الشاشة بالبناء لا
-                        // بفراغاتٍ محسوبة يدويًّا كما كان
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            ShutterButton(onClick = { captureTick++ })
-                        }
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            // البدء والإنهاء وحدهما يمرّان بالتأكيد: الأوّل يفتح ملفًّا
-                            // ورحلةً بلا قصد، والثاني يُنهي تصويرًا لا يُستعاد. أمّا
-                            // الإيقاف المؤقّت والاستئناف واللقطة فتُصحَّح كلّها بلمسةٍ
-                            // ثانية، وتأكيدٌ عليها ضريبةٌ على الفعل الصحيح.
-                            RecordButton(
-                                isRecording = isRecording,
-                                onClick = {
-                                    if (confirmRecording) {
-                                        confirmRecord = true
-                                    } else {
-                                        vm.toggleRecording()
-                                    }
-                                },
-                            )
-                        }
-                        // الخانة الثالثة كانت فراغًا محجوزًا لتوسيط زرّ التسجيل؛
-                        // صارت تحمل زرّ الإيقاف المؤقّت حين يكون له معنى وحده،
-                        // فلا يتزحزح زرّ التسجيل عن منتصف الشاشة بظهوره أو غيابه
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            if (isRecording) {
-                                PauseButton(paused = isPaused, onClick = vm::toggleVideoPause)
-                            }
-                        }
-                    }
+            // في الرأسيّ وحده: صفُّ أزرارٍ تحت الطبقة، بارتفاعٍ محجوزٍ دائمًا وإن
+            // غابت الأزرار. إخفاؤها قبل اللقطة كان ينكمش بالعمود فيقفز الشريط
+            // السفليّ إلى أسفل، فتخرج الصورة بتخطيطٍ غير الذي رآه المصوِّر — وغير
+            // الذي يُحرق في الفيديو. وفي الأفقيّ لا صفّ: الأزرار عمودٌ على الحافّة.
+            if (!landscape) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(ACTION_ROW_HEIGHT)
+                ) {
+                    ActionCluster(
+                        landscape = false,
+                        hidden = hideControls,
+                        isRecording = isRecording,
+                        isPaused = isPaused,
+                        onShutter = { captureTick++ },
+                        onRecord = {
+                            if (confirmRecording) confirmRecord = true else vm.toggleRecording()
+                        },
+                        onPause = vm::toggleVideoPause,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
+        }
+
+        // ===== عمود الأفعال في الوضع الأفقيّ =====
+        //
+        // على حافّة اليمين وموسَّطًا رأسيًّا، والطبقةُ تنزاح عنه بـ[laneEnd]. وهو
+        // نظير صفّ الرأسيّ لا شيءٌ آخر: الأزرار نفسها بالترتيب نفسه، وإنّما على
+        // المحور الذي فيه متّسع.
+        if (landscape) {
+            ActionCluster(
+                landscape = true,
+                hidden = hideControls,
+                isRecording = isRecording,
+                isPaused = isPaused,
+                onShutter = { captureTick++ },
+                onRecord = {
+                    if (confirmRecording) confirmRecord = true else vm.toggleRecording()
+                },
+                onPause = vm::toggleVideoPause,
+                modifier = Modifier
+                    .align(AbsoluteAlignment.CenterRight)
+                    .navigationBarsPadding()
+                    .padding(end = SIDE_GAP)
+                    .width(TOUCH_MIN + SIDE_GAP * 2),
+            )
         }
 
         // ===== لوحة وضع التصوير =====
@@ -782,6 +854,72 @@ fun CameraScreen(
             },
             onDismiss = { confirmRecord = false },
         )
+    }
+}
+
+/**
+ * أزرار الفعل الثلاثة — لقطةٌ وتسجيلٌ وإيقافٌ مؤقّت — صفًّا أو عمودًا.
+ *
+ * ## مركّبٌ واحد لا نسختان
+ * الوضعان يختلفان في المحور وحده، فلو كُتب لكلٍّ نسختُه لتباعدتا عند أوّل تعديل:
+ * زرٌّ يُضاف هنا ولا يُضاف هناك، وتأكيدٌ يُشترط في وضعٍ دون آخر. والمحور معاملٌ لا
+ * شيفرةٌ مكرّرة.
+ *
+ * ## أثلاثٌ متساوية في الحالين
+ * زرّ التسجيل في المنتصف **بالبناء** لا بفراغاتٍ محسوبة يدويًّا، والخانة الثالثة
+ * محجوزةٌ وإن خلت — فلا يتزحزح زرّ التسجيل عن مركزه بظهور زرّ الإيقاف أو غيابه.
+ *
+ * ## والإخفاء بالشفافيّة لا بالحذف
+ * الأزرار وحدها تختفي قبل اللقطة، لا الطبقة: اللقطة يجب أن تحمل العدّاد
+ * والإحصاءات — وهي وعد «صورةٍ محروقة» — لا مشهدًا عاريًا. والشفافيّة أثرٌ واحد بلا
+ * نطاق، بخلاف `AnimatedVisibility` التي لها تحميلاتٌ على `ColumnScope` و`RowScope`
+ * والعامّ، واختيارُ المصرّف بينها داخل صندوقٍ متداخلٍ هشّ.
+ */
+@Composable
+private fun ActionCluster(
+    landscape: Boolean,
+    hidden: Boolean,
+    isRecording: Boolean,
+    isPaused: Boolean,
+    onShutter: () -> Unit,
+    onRecord: () -> Unit,
+    onPause: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val alpha by animateFloatAsState(
+        targetValue = if (hidden) 0f else 1f,
+        animationSpec = tween(durationMillis = 160),
+        label = "actionsAlpha",
+    )
+    if (alpha <= 0.01f) return
+
+    // الترتيب من أعلى إلى أسفل في الأفقيّ هو نفسه من اليسار إلى اليمين في الرأسيّ:
+    // لقطةٌ ثمّ تسجيلٌ ثمّ إيقاف. فمن اعتاد موضع إصبعه لا يعيد تعلّمه بعد الإدارة.
+    val slots: List<@Composable () -> Unit> = listOf(
+        { ShutterButton(onClick = onShutter) },
+        { RecordButton(isRecording = isRecording, onClick = onRecord) },
+        { if (isRecording) PauseButton(paused = isPaused, onClick = onPause) },
+    )
+
+    val layer = modifier.graphicsLayer { this.alpha = alpha }
+    if (landscape) {
+        Column(
+            modifier = layer,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            for (slot in slots) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { slot() }
+            }
+        }
+    } else {
+        Row(
+            modifier = layer,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (slot in slots) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { slot() }
+            }
+        }
     }
 }
 

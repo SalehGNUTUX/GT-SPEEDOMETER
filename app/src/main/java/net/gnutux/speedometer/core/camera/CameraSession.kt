@@ -43,7 +43,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import net.gnutux.speedometer.R
+import android.os.SystemClock
 import net.gnutux.speedometer.core.media.MediaRepository
+import net.gnutux.speedometer.core.media.StorageWarden
 import net.gnutux.speedometer.core.DeviceTier
 import net.gnutux.speedometer.core.settings.AppSettings
 import net.gnutux.speedometer.core.settings.CameraLens
@@ -282,6 +284,19 @@ class CameraSession(
          * «تعذّر تبديل الكاميرا» أو «لا مصباح في هذه الكاميرا»: لا تسجيلَ ضاع.
          */
         data class Notice(@StringRes val text: Int) : Message
+
+        /**
+         * ضاق القرص في تصويرٍ **متّصل**، فحُذف الأقدم وانتقل التصوير إلى مقاطع.
+         *
+         * خبرٌ لا خطأ، ويجب أن يُقال: المصوِّر سيجد ملفّاته مقسَّمةً وهو لم يطلب ذلك،
+         * وسيجد أقدمها ناقصًا. والسكوت عن هذين يجعل الأداة تبدو وكأنّها تُتلف ما
+         * تحفظه. ويُعرض أطول من سائر الأخبار ([SPACE_MESSAGE_MS]) لأنّ فيه أمرين
+         * لا أمرًا واحدًا.
+         */
+        data class SpaceLow(val deleted: Int, val segmentMinutes: Int) : Message
+
+        /** ضاق القرص في تصويرٍ مقسَّم، فحُذف الأقدم ومضى التصوير كما هو */
+        data class SpaceFreed(val deleted: Int) : Message
 
         /** الجهاز لا يدعم حرق الطبقة، وقد رُبطت الكاميرا نظيفة */
         data object BurnUnsupported : Message
@@ -1184,6 +1199,29 @@ class CameraSession(
     /** ترتيب المقطع داخل الجلسة، يبدأ من 1 ويظهر في اسم الملفّ */
     private var segmentIndex = 0
 
+    /** حارس المساحة: يحذف الأقدم ليُفسح للأحدث */
+    private val warden = StorageWarden(context, media)
+
+    /**
+     * أسماء ملفّات هذه الجلسة — لا يمسّها الحارس.
+     *
+     * الملفّ الجاري تصويره موجودٌ في المكتبة منذ لحظة البدء، فلولا هذا لَجاز أن
+     * يُحذف من تحت المسجّل حين يكون أقدمَ ما في المجلّد.
+     */
+    private val sessionFiles = mutableSetOf<String>()
+
+    /**
+     * طُلب لفُّ المقطع لأنّ المساحة ضاقت في تصويرٍ متّصل.
+     *
+     * التصوير المتّصل لا يلُفّ من نفسه، فلا فرصة للحارس أن يحذف بين ملفّين. فحين
+     * يضيق القرص نُغلق الملفّ الجاري ونفتح آخرَ بسقف ثلاث دقائق — والراية هي التي
+     * تُخبر [onFinalize] أنّ هذا الإغلاق **لفّةٌ لا نهاية**، وإلّا لأنهى الجلسة.
+     */
+    private var lowSpaceRoll = false
+
+    /** آخر لحظةٍ سُئل فيها القرص؛ السؤال في كلّ إطارٍ نداءُ نظامٍ بلا داعٍ */
+    private var lastSpaceCheckNanos = 0L
+
     /** @param onStarted تُنادى لحظة بدء الترميز فعلًا، لتثبيت مرساة المزامنة */
     fun startRecording(onStarted: () -> Unit) {
         // بلا هذا الحارس كان الضغط على «تسجيل» بعد فشل الربط يُثبّت دورة الحياة
@@ -1208,6 +1246,8 @@ class CameraSession(
             null
         }
         segmentIndex = 0
+        sessionFiles.clear()
+        lowSpaceRoll = false
         sessionActive = true
         _isPaused.value = false
         _sessionFirstFile.value = null
@@ -1315,6 +1355,10 @@ class CameraSession(
         val limit = segmentLimitMs
         segmentIndex++
         val requested = nextFileName(segmented = limit != null)
+        // ما بين ملفّين هو الموضع الطبيعيّ للحذف: لا مسجّلَ يكتب الآن، فحذفُ الأقدم
+        // لا يزاحم كتابةً جارية. والملفّ التالي يُحجَز اسمُه قبل الحذف كي لا يُحذف.
+        sessionFiles += requested
+        freeSpaceIfNeeded()
 
         var pending = media.prepareRecording(capture.output, requested, limit)
         // الصوت يحتاج رضا المستخدم في الإعدادات **و** إذن النظام؛ أحدهما لا يكفي
@@ -1334,6 +1378,11 @@ class CameraSession(
 
                     is VideoRecordEvent.Finalize -> onFinalize(event, capture, requested, onStarted)
 
+                    // CameraX يبعث `Status` دوريًّا ما دام يكتب، وهو نبضنا الوحيد
+                    // داخل مقطعٍ طويل. ولا مؤقّت عندنا: مؤقّتٌ يعمل والتصوير متوقّف
+                    // عبثٌ، ومؤقّتٌ يُوقف مع الجلسة شفرةٌ تُنسى فتتسرّب.
+                    is VideoRecordEvent.Status -> onStatus(capture)
+
                     else -> Unit
                 }
             }
@@ -1342,6 +1391,55 @@ class CameraSession(
         finalizePending = recording != null
         return started.isSuccess
     }
+
+    /**
+     * نبضُ المساحة أثناء مقطعٍ جارٍ.
+     *
+     * ## لماذا داخل المقطع لا بين المقاطع وحدها
+     * لأنّ التصوير المتّصل لا يلُفّ أبدًا. من اختاره يُصوّر ملفًّا واحدًا حتّى يوقفه،
+     * فلو اكتفينا بالحذف بين الملفّات لَما وقع الحذف قطُّ — ولوقف التصوير عند امتلاء
+     * القرص، وهو ما لا يريده من ترك الكاميرا تعمل.
+     *
+     * ## وما يقع حين يضيق القرص
+     * - **في التصوير المقسَّم:** يُحذف الأقدم ويستمرّ الملفّ الجاري. لا لفَّ ولا خبر
+     *   يقطع على المصوِّر شيئًا: القسمة قائمةٌ أصلًا فالحذف يتمّ بين ملفّين تاليَين.
+     * - **في التصوير المتّصل:** يُحذف الأقدم **ويُنتقل إلى مقاطع ثلاث دقائق**، لأنّ
+     *   ملفًّا واحدًا لا نهاية له يعني أنّ الحذف لن يجد بين يديه إلّا ملفّاتٍ قديمة
+     *   حتّى تنفد، ثمّ يقف كلُّ شيء. والقسمة تجعل الأقدمَ المحذوفَ من هذه الرحلة
+     *   نفسها إن لزم — وهو أعدل من أن يقف التصوير.
+     *
+     * والسؤال مرّةً كلَّ [SPACE_CHECK_MS]: `usableSpace` نداءُ نظامٍ على القرص،
+     * و`Status` يصل مرّاتٍ في الثانية.
+     */
+    private fun onStatus(capture: VideoCapture<Recorder>) {
+        if (!sessionActive || lowSpaceRoll) return
+        val now = SystemClock.elapsedRealtimeNanos()
+        if (now - lastSpaceCheckNanos < SPACE_CHECK_NANOS) return
+        lastSpaceCheckNanos = now
+        if (warden.hasRoom()) return
+
+        val freed = freeSpaceIfNeeded()
+
+        // المقسَّم يكفيه الحذف: الملفّ الجاري سينتهي بحدّه، والذي بعده يجد متّسعًا
+        if (segmentLimitMs != null) {
+            if (freed != null) _message.value = Message.SpaceFreed(freed.count)
+            return
+        }
+
+        // المتّصل: يُقسَّم من الآن. والسقف يُكتب قبل الإيقاف كي يقرأه المقطع التالي
+        segmentLimitMs = StorageWarden.EMERGENCY_SEGMENT_MINUTES * MILLIS_PER_MINUTE
+        lowSpaceRoll = true
+        _message.value = Message.SpaceLow(
+            deleted = freed?.count ?: 0,
+            segmentMinutes = StorageWarden.EMERGENCY_SEGMENT_MINUTES,
+        )
+        // الإغلاق يستدعي `Finalize`، و[lowSpaceRoll] تُخبره أنّها لفّةٌ لا نهاية
+        runCatching { recording?.stop() }
+    }
+
+    /** يحذف الأقدم إن ضاق القرص، ويحمي ملفّات هذه الجلسة من الحذف */
+    private fun freeSpaceIfNeeded(): StorageWarden.Freed? =
+        runCatching { warden.makeRoom(protect = sessionFiles) }.getOrNull()
 
     /**
      * ترجمة رمز الإنهاء إلى مصير مفهوم، ولفُّ المقطع عند الحاجة.
@@ -1366,8 +1464,17 @@ class CameraSession(
         val rebindRequested = rebindPending
         rebindPending = false
 
-        val rolling = sessionActive &&
-            (rebindRequested || event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED)
+        // اللفّ الاضطراريّ للمساحة يُعدّ لفًّا كبلوغ حدّ المدّة: الملفّ أُغلق سليمًا
+        // ويجب أن يُفتح ما بعده. والراية تُستهلك هنا مهما كان المصير، وإلّا بقيت
+        // تلُفّ المقطع التالي بلا سبب — وهي علّةُ `rebindPending` نفسها.
+        val lowSpaceRequested = lowSpaceRoll
+        lowSpaceRoll = false
+
+        val rolling = sessionActive && (
+            rebindRequested ||
+                lowSpaceRequested ||
+                event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED
+            )
         if (rolling) {
             // الربط الجديد **بين** المقطعين: بعد إغلاق الملفّ سليمًا وقبل فتح التالي.
             // فشلُه يعني أنّ آخر ارتدادٍ أيضًا سقط ولا كاميرا البتّة، فلا معنى لمقطعٍ
@@ -1475,6 +1582,15 @@ class CameraSession(
     private companion object {
         const val STAMP_PATTERN = "yyyyMMdd-HHmmss"
         const val MILLIS_PER_MINUTE = 60_000L
+
+        /**
+         * كم مرّةً يُسأل القرصُ أثناء التصوير: مرّةً كلَّ عشرين ثانية.
+         *
+         * `usableSpace` نداءُ نظامٍ على وحدة التخزين، و`Status` يصل مرّاتٍ في
+         * الثانية. وعشرون ثانيةً عند ‎90‎ ميغابايت في الدقيقة تعني نحو ثلاثين
+         * ميغابايتًا بين سؤالٍ وسؤال — لا شيء أمام حدّ الستّمئة.
+         */
+        private const val SPACE_CHECK_NANOS = 20_000_000_000L
 
         /**
          * زيادة الإضاءة ليلًا بوحدة EV، لا بفهرسٍ ثابت (الخطوة تختلف بين الأجهزة).

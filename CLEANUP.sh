@@ -92,6 +92,7 @@ core/map/mvt/MvtTile.kt
 core/map/render/ShortbreadPainter.kt
 core/map/OsmAndBridge.kt
 core/media/MediaRepository.kt
+core/media/StorageWarden.kt
 core/profile/VehicleProfile.kt
 core/settings/AppSettings.kt
 core/settings/ThemeMode.kt

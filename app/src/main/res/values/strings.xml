@@ -152,6 +152,8 @@
     <string name="recording_truncated">انقطع مصدر الصورة — حُفظ ما سُجّل: %1$s</string>
     <string name="recording_segment">حُفظ المقطع: %1$s</string>
     <string name="rec_err_unknown">عطبٌ غير معروف</string>
+    <string name="rec_space_low">امتلأ التخزين: حُذف %1$s من أقدم التسجيلات، وصار التصوير مقاطعَ من %2$s دقائق ليبقى مستمرًّا.</string>
+    <string name="rec_space_freed">امتلأ التخزين: حُذف %1$s من أقدم التسجيلات ليتّسع للتصوير الجاري.</string>
     <string name="rec_err_storage">لا مساحة كافية في الجهاز</string>
     <string name="rec_err_invalid">خيارات إخراجٍ غير صالحة</string>
     <string name="rec_err_encoding">تعذّر ترميز الفيديو</string>

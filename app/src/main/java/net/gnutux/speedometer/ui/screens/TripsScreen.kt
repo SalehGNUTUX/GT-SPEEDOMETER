@@ -1,5 +1,6 @@
 package net.gnutux.speedometer.ui.screens
 
+import android.content.ComponentName
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -52,6 +53,7 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import net.gnutux.speedometer.R
 import net.gnutux.speedometer.core.DeviceTier
+import net.gnutux.speedometer.core.map.MapApps
 import net.gnutux.speedometer.core.map.OfflineMaps
 import net.gnutux.speedometer.core.trip.TripTrack
 import net.gnutux.speedometer.ui.Fmt
@@ -303,6 +305,11 @@ private fun TripDetail(
     // تطبيق الخرائط المفضَّل؛ فراغٌ يعني «اسألني في كلّ مرّة» وهو الافتراض.
     val mapApp by vm.settings.mapAppPackage.collectAsStateWithLifecycle()
 
+    // من يفتح مسارًا فعلًا على هذا الجهاز — لا من يُعلن أنّه يفتح كلّ شيء.
+    val mapAppsSource = remember(context) { MapApps.of(context) }
+    val mapAppLibrary by mapAppsSource.library.collectAsStateWithLifecycle()
+    val trackApps = mapAppLibrary.apps.filter { it.canOpenTrack }
+
     // فعلٌ واحد لموضعَي نداء: زرّ «فتح في OsmAnd»، وملاحظةُ الخريطة حين لا يملك
     // الراكب إلّا خرائط `.obf` المتجهيّة — فتلك OsmAnd وحدها ترسمها.
     val openInOsmAnd = {
@@ -312,18 +319,48 @@ private fun TripDetail(
             setDataAndType(uri, GPX_MIME)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        // التوجيه إلى الحزمة المختارة أوّلًا، والارتداد إلى منتقي النظام إن فشل.
-        // والفشل واقعٌ لا نظريّ: التفضيل يبقى في القرص بعد أن يُزال التطبيق من
-        // الجهاز، أو بعد أن يُسقط مرشِّح GPX في تحديثٍ له. والإعدادات لا تعرض
-        // للاختيار إلّا من يفتح مسارًا، فلا يبقى للارتداد إلّا هذا الباب.
-        val direct = mapApp.isNotEmpty() && runCatching {
-            context.startActivity(Intent(view).setPackage(mapApp))
+
+        // ترتيب المرشَّحين: تفضيلُ المستعمل، ثمّ OsmAnd نفسه، ثمّ تطبيقُ مساراتٍ
+        // وحيدٌ إن لم يكن غيره.
+        //
+        // **ولماذا OsmAnd صراحةً:** الزرّ يقول «فتح في OsmAnd»، فمنتقٍ يعرض بدائل
+        // إخلافٌ لِما كُتب عليه. وكان يُعرض لأنّ التفضيل فارغٌ افتراضًا.
+        val candidates = trackApps.map { it.packageName }
+        val target = sequenceOf(
+            mapApp.takeIf { it.isNotEmpty() },
+            candidates.firstOrNull { it in OSMAND_PACKAGES },
+            candidates.singleOrNull(),
+        ).filterNotNull().firstOrNull()
+
+        // الفشل واقعٌ لا نظريّ: التفضيل يبقى في القرص بعد أن يُزال التطبيق من
+        // الجهاز، أو بعد أن يُسقط مرشِّح GPX في تحديثٍ له.
+        val direct = target != null && runCatching {
+            context.startActivity(Intent(view).setPackage(target))
         }.isSuccess
+
         if (!direct) {
             runCatching {
-                context.startActivity(
-                    Intent.createChooser(view, context.getString(R.string.trip_open_osmand))
-                )
+                val chooser = Intent.createChooser(view, context.getString(R.string.trip_open_osmand))
+                // **المنتقي يُقصر على تطبيقات المسارات.** كان يعرض محرّر مستنداتٍ
+                // ومساعدًا محادثًا وما شابههما: تطبيقاتٌ تُعلن «كلّ الأنواع» فتلتقط
+                // GPX ولا ترسم منه شيئًا. و`MapApps` تفصل من أعلن نوعًا محدَّدًا عمّن
+                // أعلن نجمة، فنستثني ما عداهم — ولا نستثني أحدًا إن لم نعرف أحدًا،
+                // فقائمةٌ فارغة أسوأ من قائمةٍ فيها زائد.
+                val allowed = candidates.toSet()
+                if (allowed.isNotEmpty()) {
+                    val excluded = context.packageManager
+                        .queryIntentActivities(view, 0)
+                        .mapNotNull { it.activityInfo }
+                        .filterNot { it.packageName in allowed }
+                        .map { ComponentName(it.packageName, it.name) }
+                    if (excluded.isNotEmpty()) {
+                        chooser.putExtra(
+                            Intent.EXTRA_EXCLUDE_COMPONENTS,
+                            excluded.toTypedArray(),
+                        )
+                    }
+                }
+                context.startActivity(chooser)
             }
         }
         Unit
@@ -500,3 +537,11 @@ private const val GPX_MIME = "application/gpx+xml"
 /** زمن مدنيّ للعرض فقط؛ القياس كلّه على elapsedRealtimeNanos داخل المحرّك. */
 private fun formatDate(ms: Long): String =
     SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(ms))
+
+/**
+ * حزم OsmAnd المعروفة: الرسميّة والمفتوحة ونسخة المطوّر.
+ *
+ * تُطابق [net.gnutux.speedometer.core.map.MapApps] في جوهرها، وتُكتب هنا لأنّ
+ * المقصود مختلف: هناك «من يرسم لنا عبر الجسر»، وهنا «من يعنيه الزرّ باسمه».
+ */
+private val OSMAND_PACKAGES = setOf("net.osmand.plus", "net.osmand", "net.osmand.dev")
