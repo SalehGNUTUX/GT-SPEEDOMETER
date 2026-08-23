@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 import sys
+import urllib.request
 from pathlib import Path
 
 # ===========================================================================
@@ -42,6 +44,8 @@ from pathlib import Path
 # ===========================================================================
 
 REPO = "https://github.com/SalehGNUTUX/GT-SPEEDOMETER"
+#: صاحبٌ ومستودع، لسؤال واجهة GitHub عن مرفقات كلّ إصدار
+REPO_SLUG = "SalehGNUTUX/GT-SPEEDOMETER"
 GNUTUX = "https://salehgnutux.github.io/gnutux/"
 BLOG = "https://gnutuxblog.wordpress.com/"
 DEVELOPER = "https://github.com/SalehGNUTUX"
@@ -346,16 +350,50 @@ def apk_url(version: str, kind: str) -> str:
     return f"{REPO}/releases/download/{tag}/GT-SPEEDOMETER-{version}-beta-{kind}.apk"
 
 
+#: أسماء مرفقات كلّ إصدار كما هي على GitHub، تُقرأ مرّةً وتُخبَّأ.
+_ASSETS: dict[str, set[str]] = {}
+
+
+def release_assets(version: str) -> set[str] | None:
+    """
+    ما في إصدارٍ بعينه من حزم، أو ``None`` إن تعذّر السؤال.
+
+    **ولماذا نسأل أصلًا:** كان الجدول يَعِد بحزمة ``debug`` لكلّ إصدار، ومنذ ‎0.9.5‎
+    لا يُنشر إلّا ``release`` — فأربعة روابطَ على الصفحة تؤدّي إلى ‎404‎. ورابطٌ
+    مكسور على صفحةٍ عامّة يقول للزائر إنّ المشروع مهمَل، وهو نقيض ما نبنيه.
+
+    والسؤال بلا استيثاق: حدُّه ستّون طلبًا في الساعة، والصفحة خمسة عشر إصدارًا.
+    وعند التعذّر — بلا شبكة، أو بلوغ الحدّ — يردّ ``None`` فيُبنى الرابط كما كان.
+    """
+    if version in _ASSETS:
+        return _ASSETS[version]
+    url = f"https://api.github.com/repos/{REPO_SLUG}/releases/tags/v{version}-beta"
+    try:
+        with urllib.request.urlopen(url, timeout=6) as response:
+            data = json.load(response)
+        names = {a["name"] for a in data.get("assets", [])}
+    except Exception:
+        return None
+    _ASSETS[version] = names
+    return names
+
+
 def download_links(version: str) -> str:
     """
-    روابط حزم إصدارٍ بعينه.
+    روابط حزم إصدارٍ بعينه — ما وُجد منها فعلًا.
 
     حزمةٌ واحدة لكلّ إصدار. وقد جُرِّبت نكهتان («خفيفة» و«كاملة») في فرع
     `vector-maps` ولم يُنشر منهما إصدارٌ قطّ، فلا رابطَ في هذا الجدول يشير إليهما.
     """
-    return (
-        f'<a href="{apk_url(version, "release")}">release</a>\n'
-        f'          <a href="{apk_url(version, "debug")}">debug</a>'
+    kinds = ("release", "debug")
+    present = release_assets(version)
+    if present is not None:
+        kinds = tuple(
+            k for k in kinds
+            if f"GT-SPEEDOMETER-{version}-beta-{k}.apk" in present
+        ) or ("release",)
+    return "\n          ".join(
+        f'<a href="{apk_url(version, k)}">{k}</a>' for k in kinds
     )
 
 
