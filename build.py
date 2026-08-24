@@ -36,6 +36,7 @@ import io
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -372,7 +373,18 @@ def release_assets(version: str) -> set[str] | None:
         with urllib.request.urlopen(url, timeout=6) as response:
             data = json.load(response)
         names = {a["name"] for a in data.get("assets", [])}
+    except urllib.error.HTTPError as failure:
+        # **إصدارٌ لا وجود له بعدُ ليس جهلًا بل علم.** الصفحة تُولَّد أثناء
+        # `release.sh` — أي **قبل** أن يُنشأ الإصدار على GitHub — فأحدثُ نسخةٍ
+        # تُسأل عنها فيُقال ‎404‎ دائمًا. وحينها يُبنى الرابط على العُرف الجاري:
+        # حزمةُ `release` وحدها منذ ‎0.9.5‎. وارتدادُه إلى الرابطين كان يُعيد
+        # الرابط المكسور الذي أصلحناه من بابٍ آخر.
+        if failure.code == 404:
+            names: set[str] = set()
+        else:
+            return None
     except Exception:
+        # الشبكة سقطت أو بلغنا الحدّ: لا علم لنا، فيُبنى الرابط كما كان
         return None
     _ASSETS[version] = names
     return names
