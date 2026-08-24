@@ -128,14 +128,15 @@ class UpdateChecker private constructor(context: Context) {
      * تُنشر إلّا [UpdateState.Available] وحدها، وبشرط أن تكون الحالة خاملة — فلا
      * تدهس تنزيلًا جاريًا ولا حزمةً جاهزة.
      */
-    fun maybeCheckDaily(settings: AppSettings) {
+    fun maybeCheckDue(settings: AppSettings) {
         if (!settings.updateNotify.value) return
         // زمنٌ مدنيّ لا قياس: المطلوب «هل مضى يوم بتقويم المستعمل»، وهو سؤالٌ لا
         // يجيب عنه `elapsedRealtimeNanos` لأنّه يصفر مع كلّ إقلاعٍ للجهاز.
         val last = settings.updateLastCheck.value
         val now = System.currentTimeMillis()
         // ساعةٌ رُدّت إلى الوراء تجعل الفارق سالبًا، وحينها يُفحص لا يُنتظر يومٌ لن يجيء
-        if (last > 0L && now >= last && now - last < DAY_MILLIS) return
+        val every = settings.updateIntervalHours.value.coerceAtLeast(1) * HOUR_MILLIS
+        if (last > 0L && now >= last && now - last < every) return
         if (!busy.compareAndSet(false, true)) return
         scope.launch {
             try {
@@ -658,7 +659,7 @@ class UpdateChecker private constructor(context: Context) {
         private const val NOTIF_ID = 1002
 
         /** الفاصل بين فحصين صامتين */
-        private const val DAY_MILLIS = 24L * 60L * 60L * 1000L
+        private const val HOUR_MILLIS = 60L * 60L * 1000L
 
         /** عشر ثوانٍ للاتّصال وللقراءة: من ينتظر أكثر ظنّ التطبيق معلّقًا */
         private const val TIMEOUT_MS = 10_000

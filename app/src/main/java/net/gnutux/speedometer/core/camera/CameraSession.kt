@@ -3,6 +3,7 @@ package net.gnutux.speedometer.core.camera
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.hardware.display.DisplayManager
 import android.view.WindowManager
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -118,6 +119,9 @@ class CameraSession(
     private var preview: Preview? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
+
+    /** مستمع تبدّل العرض؛ حيٌّ ما دامت شاشة الكاميرا معروضة */
+    private var displayListener: DisplayManager.DisplayListener? = null
 
     /** هل يعمل التخفيف الآن؟ يُسأل عند بناء المسجّل لا في كلّ إطار */
     private fun liteActive(): Boolean =
@@ -479,6 +483,44 @@ class CameraSession(
      * ولا يُستدعى أثناء تسجيلٍ جارٍ: تبديل الاتّجاه في منتصف مقطعٍ يُخرج ملفًّا نصفُه
      * بميلٍ ونصفُه بآخر. من بدأ التسجيل طولًا يُكمله طولًا، والاتّجاه الجديد لمقطعٍ جديد.
      */
+    /**
+     * مراقبة اتّجاه العرض ما دامت الشاشة معروضة.
+     *
+     * ## لماذا لا يكفي إبلاغُ الاتّجاه عند الربط
+     * `targetRotation` يُقرأ **مرّةً عند بناء حالة الاستعمال**، والنشاط يعلن
+     * `configChanges` للاتّجاه فيعالجه بنفسه بلا إعادة إنشاءٍ ولا إعادة ربط. فمن
+     * أدار هاتفه والكاميرا مفتوحة انقلبت الواجهة وبقيت الصورة على ميلها الأوّل —
+     * ولا سبيل إلى تصحيحها إلّا بالخروج من التبويب والعودة إليه.
+     *
+     * ## و`DisplayListener` لا `OrientationEventListener`
+     * الثاني يبعث درجةً درجة من مقياس التسارع — عشرات الأحداث في الثانية، ويعمل
+     * والهاتف على الطاولة. والأوّل يبعث حين **يتبدّل العرض فعلًا**، وهو الحدث الذي
+     * يعنينا بعينه. ويلتقط معه دورة ‎180‎ درجة التي لا تُغيّر «طوليّ/أفقيّ» ولا
+     * تُنبّه عليها قيودُ التخطيط.
+     */
+    private fun watchRotation() {
+        if (displayListener != null) return
+        val manager = runCatching {
+            context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        }.getOrNull() ?: return
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+            override fun onDisplayRemoved(displayId: Int) = Unit
+            override fun onDisplayChanged(displayId: Int) = applyRotation()
+        }
+        runCatching { manager.registerDisplayListener(listener, null) }
+            .onSuccess { displayListener = listener }
+    }
+
+    private fun unwatchRotation() {
+        val listener = displayListener ?: return
+        displayListener = null
+        runCatching {
+            (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+                .unregisterDisplayListener(listener)
+        }
+    }
+
     private fun applyRotation() {
         if (_sessionHolding.value) return
         val rotation = runCatching {
@@ -577,6 +619,7 @@ class CameraSession(
         attached = true
         wantedPreview = WeakReference(previewView)
         observeHost(owner)
+        watchRotation()
         val generation = ++bindGeneration
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
@@ -1151,6 +1194,7 @@ class CameraSession(
      */
     fun detach() {
         attached = false
+        unwatchRotation()
         // وميض الشاشة شيءٌ يخصّ شاشةً تُعرض؛ ولا شاشة الآن. وهو أحد مسارات الخروج
         // التي يجب أن يُعاد فيها السطوع، فلا يُترك على ‎1f‎ في تبويبٍ آخر
         _screenFlashOn.value = false

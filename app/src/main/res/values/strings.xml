@@ -193,6 +193,17 @@
     <string name="map_no_offline_body">نزّل خريطة منطقتك من تطبيقٍ يعتمد OpenStreetMap مثل OsmAnd، أو ضع أرشيف بلاطاتٍ في مجلّد الخرائط، ليعمل المسار دون اتّصال.</string>
     <string name="map_no_offline_action">أين أضع الخرائط؟</string>
     <string name="map_obf_found">وُجدت خرائط متجهيّة (%1$s) لا يرسمها المحرّك النقطيّ.\n\nملفّات ‎.obf‎ تُفتح في OsmAnd. وملفّات ‎.mbtiles‎ المتجهيّة (‎shortbread‎ من Geofabrik مثلًا) تُحوَّل إلى ‎.pmtiles‎ بأمرٍ واحد — ‎pmtiles convert اسم_الملفّ.mbtiles الناتج.pmtiles‎ — فتقرؤها النكهة الكاملة.</string>
+    <string name="update_banner_available">تحديثٌ متاح: %1$s</string>
+    <string name="update_banner_later">لاحقًا</string>
+    <string name="update_banner_get">نزّل</string>
+    <string name="update_banner_downloading">يُنزَّل التحديث…</string>
+    <string name="update_banner_ready">الحزمة جاهزة للتثبيت</string>
+    <string name="update_banner_install">ثبّت</string>
+    <string name="settings_update_every">مدّة الفحص التلقائيّ</string>
+    <string name="settings_update_every_note">كم يمضي بين فحصٍ وفحصٍ لمصدر التحديثات. ويُطفئه مفتاح «أعلِمني بالتحديثات» أعلاه مهما كانت هذه.</string>
+    <string name="settings_update_every_hours">كلّ %1$s ساعة</string>
+    <string name="settings_update_every_days">كلّ %1$s أيّام</string>
+    <string name="settings_update_every_week">كلّ أسبوع</string>
     <string name="settings_about_developer">المطوّر</string>
     <string name="settings_about_repo">المستودع</string>
     <string name="settings_about_repo_url">https://github.com/SalehGNUTUX/GT-SPEEDOMETER</string>

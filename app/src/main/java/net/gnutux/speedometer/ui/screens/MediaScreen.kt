@@ -40,6 +40,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -95,6 +98,7 @@ import net.gnutux.speedometer.ui.theme.TextSecondary
 fun MediaScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val items by vm.mediaItems.collectAsStateWithLifecycle()
+    val scanned by vm.mediaScanned.collectAsStateWithLifecycle()
     // يبقى التبويب المختار عبر تدوير الشاشة: العودة إلى «الصور» بعد كلّ دورة إزعاج
     var tabIndex by rememberSaveable { mutableIntStateOf(TAB_PHOTOS) }
 
@@ -155,6 +159,41 @@ fun MediaScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                 selectedTabIndex = tabIndex,
                 containerColor = Surface,
                 contentColor = Accent,
+                // **المؤشّر يُوضع بإحداثيٍّ مطلقٍ نحسبه بأنفسنا.**
+                //
+                // مؤشّر Material 3 الافتراضيّ يضع نفسه بإزاحةٍ مأخوذةٍ من ترتيب
+                // التبويبات (`TabPosition.left` تراكمُ عروضِ ما قبله في **ترتيب
+                // الفهرسة**)، ثمّ يضعها وضعًا لا يقلبه اتّجاه التخطيط. فيصحّ في
+                // اللاتينيّة ويشرد في العربيّة: اخترتَ «التسجيلات» فمضى الشريط
+                // يسارًا بمقدار تبويبٍ كامل بدل أن يستقرّ تحته.
+                //
+                // فنقلب الإحداثيّ بأنفسنا عند RTL، ونضع بـ`place` لا
+                // `placeRelative`: الأولى مطلقة فلا يُقلب حسابُنا مرّةً ثانية.
+                indicator = {
+                    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+                    val height = TAB_INDICATOR_HEIGHT
+                    Box(
+                        Modifier
+                            .tabIndicatorLayout { measurable, constraints, positions ->
+                                val at = positions.getOrNull(tabIndex)
+                                    ?: return@tabIndicatorLayout layout(0, 0) {}
+                                val width = at.width.roundToPx()
+                                val placeable = measurable.measure(
+                                    Constraints.fixed(width, height.roundToPx())
+                                )
+                                layout(constraints.maxWidth, constraints.maxHeight) {
+                                    val fromStart = at.left.roundToPx()
+                                    val x = if (rtl) {
+                                        constraints.maxWidth - fromStart - width
+                                    } else {
+                                        fromStart
+                                    }
+                                    placeable.place(x, constraints.maxHeight - placeable.height)
+                                }
+                            }
+                            .background(Accent)
+                    )
+                },
             ) {
                 Tab(
                     selected = tabIndex == TAB_PHOTOS,
@@ -187,7 +226,11 @@ fun MediaScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                 EnterSelectionBar(onSelect = { selecting = true })
             }
 
-            if (shown.isEmpty()) {
+            if (shown.isEmpty() && !scanned) {
+                // صمتٌ حتّى يصل جواب مكتبة النظام: «لا لقطات بعد» في أثناء الاستعلام
+                // خبرٌ كاذبٌ لمن عنده مئة لقطة. (انظر نظيرَها في شاشة الرحلات.)
+                Box(Modifier.weight(1f))
+            } else if (shown.isEmpty()) {
                 MediaEmpty(
                     title = if (tabIndex == TAB_VIDEOS) {
                         stringResource(R.string.media_empty_videos)
@@ -578,3 +621,6 @@ private fun MediaCell(
         }
     }
 }
+
+/** سُمك مؤشّر التبويب؛ سُمك Material 3 نفسه كي لا يختلف عن سائر التطبيقات */
+private val TAB_INDICATOR_HEIGHT = 3.dp

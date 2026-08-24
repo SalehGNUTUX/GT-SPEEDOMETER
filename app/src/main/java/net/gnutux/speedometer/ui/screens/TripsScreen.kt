@@ -77,6 +77,7 @@ private val UndoBarReserve = 84.dp
 fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val trips by vm.trips.collectAsStateWithLifecycle()
+    val tripsScanned by vm.tripsScanned.collectAsStateWithLifecycle()
     val pendingDelete by vm.pendingTripDelete.collectAsStateWithLifecycle()
     val undoSeconds by vm.settings.undoSeconds.collectAsStateWithLifecycle()
     var selected by remember { mutableStateOf<TripTrack?>(null) }
@@ -121,6 +122,11 @@ fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                 onDeleted = leave,
                 modifier = content,
             )
+        } else if (!tripsScanned) {
+            // **صمتٌ حتّى يصل الجواب.** القراءة تمسّ القرص وتحلّل عشرات الملفّات،
+            // وعرضُ «لا رحلات محفوظة» في أثنائها يقول لصاحب عشرين رحلةً إنّها ضاعت
+            // — ثمّ تعود فجأة. والفراغ ثانيةً أهون من خبرٍ كاذب.
+            Box(content)
         } else if (trips.isEmpty()) {
             Column(
                 modifier = content.padding(32.dp),

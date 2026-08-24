@@ -125,6 +125,22 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     val trips = _trips.asStateFlow()
 
     /**
+     * هل قُرئ القرص مرّةً؟ — تفصل «لم نسأل بعد» عن «سألنا فلم نجد».
+     *
+     * بلا هذا تبدأ القائمة فارغةً فتقول الشاشة «لا رحلات محفوظة بعد» بينما القراءة
+     * جارية، ثمّ تُملأ فجأةً. فيرى صاحبُ عشرين رحلةً أنّها ضاعت كلُّها ثمّ عادت.
+     * وهي عبارةٌ عن حالتين مختلفتين لا واحدة، والفرق بينهما يجب أن يصل إليه.
+     *
+     * وهو الاصطلاح نفسه في [net.gnutux.speedometer.core.map.OfflineMapLibrary.scanned].
+     */
+    private val _tripsScanned = MutableStateFlow(false)
+    val tripsScanned = _tripsScanned.asStateFlow()
+
+    /** ونظيرتُها للوسائط: الاستعلام عن مكتبة النظام أبطأ من قراءة مجلّدنا */
+    private val _mediaScanned = MutableStateFlow(false)
+    val mediaScanned = _mediaScanned.asStateFlow()
+
+    /**
      * الرحلة المنتظرة للحذف. تختفي من [trips] فورًا ولا يُمسّ ملفّها حتّى تنقضي
      * المهلة — فالحذف الفوريّ مع «تراجع» كاذب أسوأ من غياب التراجع أصلًا.
      */
@@ -180,6 +196,7 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
             // القائمة وشريط التراجع ما يزال يعدّ — تُستثنى صراحةً
             val pending = _pendingTripDelete.value?.file
             _trips.value = if (pending == null) all else all.filterNot { it.file == pending }
+            _tripsScanned.value = true
         }
     }
 
@@ -305,6 +322,7 @@ class SpeedoViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshMedia() {
         viewModelScope.launch {
             _mediaItems.value = withContext(Dispatchers.IO) { engine.media.list() }
+            _mediaScanned.value = true
         }
     }
 

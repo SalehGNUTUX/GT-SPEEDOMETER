@@ -21,7 +21,29 @@ import kotlin.math.max
  * [SystemClock.elapsedRealtimeNanos] مباشرةً، وهو المحور الوحيد المسموح (القاعدة 1)
  * وهو الصواب هنا بعينه: لا يقفز بتغيير المستعمل للساعة، ويواصل العدّ والجهاز نائم.
  */
-class TripRecorder(private var profile: VehicleProfile = VehicleProfile.DEFAULT) {
+class TripRecorder(
+    private var profile: VehicleProfile = VehicleProfile.DEFAULT,
+    /**
+     * محور الزمن، حقنًا لا نداءً مباشرًا.
+     *
+     * **ولماذا حقنًا:** `SystemClock.elapsedRealtimeNanos` عصا أندرويد، ترمي على
+     * آلة جافا فلا يُختبر شيءٌ يمسّها. وهذا الصنف **محرّك القياس نفسه** — المسافة
+     * والمدّة وزمن الحركة وأقصى سرعة — فبقاؤه بلا اختبارٍ يعني أنّ أعمق ما في
+     * التطبيق مبنيٌّ على الثقة وحدها. والقيمة الافتراضيّة هي عين ما كان، فلا يتبدّل
+     * حرفٌ في الإنتاج.
+     *
+     * ويبقى المحور واحدًا كما تشترط القاعدة الأولى: من يمرّر غيره في اختبارٍ يمرّر
+     * عدّادًا صناعيًّا على المحور نفسه، لا ساعةَ حائط.
+     */
+    private val nowNanos: () -> Long = SystemClock::elapsedRealtimeNanos,
+    /**
+     * المسافة بين نقطتين بالأمتار.
+     *
+     * `Location.distanceBetween` تحسبها على مجسَّم WGS84، وهي أدقّ من صيغة الجيب
+     * الكرويّة بنحو نصف بالمئة — فلا تُستبدل في الإنتاج. وتُحقن في الاختبار وحده.
+     */
+    private val metersBetween: (SpeedSample, SpeedSample) -> Double = ::wgs84Meters,
+) {
 
     private val _state = MutableStateFlow(TripState())
     val state = _state.asStateFlow()
@@ -64,13 +86,13 @@ class TripRecorder(private var profile: VehicleProfile = VehicleProfile.DEFAULT)
      */
     fun elapsedNowMs(): Long {
         val startedAt = segmentStartNanos ?: return accruedMs
-        return accruedMs + (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000
+        return accruedMs + (nowNanos() - startedAt) / 1_000_000
     }
 
     /** يطوي القطعة الجارية في المجموع. آمنٌ عند التكرار: البداية تُمحى فلا تُحسب مرّتين */
     private fun sealSegment() {
         val startedAt = segmentStartNanos ?: return
-        accruedMs += (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000
+        accruedMs += (nowNanos() - startedAt) / 1_000_000
         segmentStartNanos = null
     }
 
@@ -83,7 +105,7 @@ class TripRecorder(private var profile: VehicleProfile = VehicleProfile.DEFAULT)
         trackStartUtcMillis = 0L
         accruedMs = 0L
         // الساعة تدقّ من لحظة اللمس لا من أوّل قمرٍ يُرى: التثبيت قد يتأخّر دقيقة
-        segmentStartNanos = SystemClock.elapsedRealtimeNanos()
+        segmentStartNanos = nowNanos()
         _state.value = TripState(status = TripStatus.RUNNING)
     }
 
@@ -96,7 +118,7 @@ class TripRecorder(private var profile: VehicleProfile = VehicleProfile.DEFAULT)
 
     fun resume() {
         if (_state.value.status != TripStatus.PAUSED) return
-        segmentStartNanos = SystemClock.elapsedRealtimeNanos()
+        segmentStartNanos = nowNanos()
         _state.value = _state.value.copy(status = TripStatus.RUNNING)
     }
 
@@ -169,7 +191,7 @@ class TripRecorder(private var profile: VehicleProfile = VehicleProfile.DEFAULT)
                 val isMoving = smoothedMps >= profile.stopThresholdMps
                 if (isMoving) {
                     moving += (dtSec * 1000).toLong()
-                    val step = distanceBetween(prev, sample)
+                    val step = metersBetween(prev, sample)
                     // سقف معقول: قفزة تحديد الموقع قد تعطي مئات الأمتار في ثانية
                     val plausible = max(smoothedMps, previousSpeedMps) * dtSec * 1.5 + 5.0
                     if (step <= plausible) distance += step
@@ -193,9 +215,11 @@ class TripRecorder(private var profile: VehicleProfile = VehicleProfile.DEFAULT)
         )
     }
 
-    private fun distanceBetween(a: SpeedSample, b: SpeedSample): Double {
-        val out = FloatArray(1)
-        Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, out)
-        return out[0].toDouble()
-    }
+}
+
+/** حسابُ أندرويد نفسه على مجسَّم WGS84؛ هو الافتراضيّ في الإنتاج */
+private fun wgs84Meters(a: SpeedSample, b: SpeedSample): Double {
+    val out = FloatArray(1)
+    Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, out)
+    return out[0].toDouble()
 }

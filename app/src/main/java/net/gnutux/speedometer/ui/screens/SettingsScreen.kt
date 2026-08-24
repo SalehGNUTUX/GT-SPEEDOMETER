@@ -291,9 +291,10 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val updateState by updates.state.collectAsStateWithLifecycle()
     val installBlocked by updates.installBlocked.collectAsStateWithLifecycle()
     val updateNotify by s.updateNotify.collectAsStateWithLifecycle()
+    val updateEvery by s.updateIntervalHours.collectAsStateWithLifecycle()
     val updateBeta by s.updateBeta.collectAsStateWithLifecycle()
     val updateLastCheck by s.updateLastCheck.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { updates.maybeCheckDaily(s) }
+    LaunchedEffect(Unit) { updates.maybeCheckDue(s) }
     // رايةُ النظام ثابتةٌ لعمر الجهاز، فتُقرأ مرّةً لا مع كلّ إعادة تركيب
     val lowRam = remember(context) { DeviceTier.isLowRamDevice(context) }
 
@@ -1091,6 +1092,23 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
                             checked = updateNotify,
                             onChange = s::setUpdateNotify,
                         )
+                        // المدّة تُعرض ما دام الفحص مشتغلًا: خيارٌ يضبط شيئًا مطفأً
+                        // يُقرأ عطبًا لا خيارًا
+                        if (updateNotify) {
+                            RowLabel(
+                                title = stringResource(R.string.settings_update_every),
+                                note = stringResource(R.string.settings_update_every_note),
+                            )
+                            ChoiceRow(
+                                options = AppSettings.UPDATE_EVERY_CHOICES.map { everyLabel(it) },
+                                selectedIndex = AppSettings.UPDATE_EVERY_CHOICES
+                                    .indexOf(updateEvery)
+                                    .coerceAtLeast(0),
+                                onSelect = {
+                                    s.setUpdateIntervalHours(AppSettings.UPDATE_EVERY_CHOICES[it])
+                                },
+                            )
+                        }
                         // الجواب القديم يُمحى مع تبدّل المرشِّح: «أنت على أحدث إصدار»
                         // محسوبةً بمفتاحٍ مطفأ تكذب بمجرّد أن يُشعَل
                         SwitchRow(
@@ -2713,3 +2731,11 @@ private const val EXTERNAL_DOCS_AUTHORITY = "com.android.externalstorage.documen
  * التعليق ويُكسر البناء — وهو ما وقع فعلًا هنا.)
  */
 private val MAP_PICK_MIME_TYPES = arrayOf("*/*")
+
+/** «كلّ ٦ ساعة» · «كلّ ٣ أيّام» · «كلّ أسبوع» — تُقرأ بلا حسابٍ ذهنيّ */
+@Composable
+private fun everyLabel(hours: Int): String = when {
+    hours % 168 == 0 && hours == 168 -> stringResource(R.string.settings_update_every_week)
+    hours % 24 == 0 -> stringResource(R.string.settings_update_every_days, Fmt.count(hours / 24))
+    else -> stringResource(R.string.settings_update_every_hours, Fmt.count(hours))
+}

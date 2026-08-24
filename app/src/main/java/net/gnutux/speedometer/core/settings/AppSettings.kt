@@ -305,6 +305,27 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     /** آخر لحظة فحصٍ ناجحة (ساعة الحائط — هذا زمنٌ مدنيّ يُعرض، لا زمن قياس) */
     val updateLastCheck: StateFlow<Long> = pref(KEY_UPD_LAST, 0L)
+
+    /**
+     * كم ساعةً بين فحصٍ وفحص.
+     *
+     * كان يومًا ثابتًا في الشيفرة. ومن يتابع التطوير عن قرب يريد فحصًا كلَّ ستّ
+     * ساعات، ومن يقود ولا يعنيه ذلك يريد مرّةً في الأسبوع — والقيمةُ الواحدة تُرضي
+     * أحدهما وتُزعج الآخر. و[updateNotify] تبقى المفتاح العامّ: إطفاؤها يُسكت
+     * الفحص كلَّه مهما كانت هذه.
+     */
+    val updateIntervalHours: StateFlow<Int> = pref(KEY_UPD_EVERY, UPDATE_EVERY_DEFAULT)
+    fun setUpdateIntervalHours(hours: Int) = put(KEY_UPD_EVERY, hours)
+
+    /**
+     * آخر إصدارٍ أجّله المستعمل من الشريط.
+     *
+     * بلا هذا يعود الشريط مع كلّ فتحةٍ للتطبيق فيصير إلحاحًا لا خبرًا. و«لاحقًا»
+     * تعني «لا تُرِني هذا الإصدار بعينه»، لا «اسكت إلى الأبد»: إصدارٌ أحدث منه
+     * يُعرض من جديد.
+     */
+    val updateSnoozed: StateFlow<String> = pref(KEY_UPD_SNOOZE, "")
+    fun setUpdateSnoozed(version: String) = put(KEY_UPD_SNOOZE, version)
     fun setUpdateLastCheck(millis: Long) = put(KEY_UPD_LAST, millis)
 
     /** آخر إصدارٍ أُشعِر به، فلا يُكرَّر الإشعار نفسه كلّ يوم */
@@ -385,6 +406,10 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
 
     companion object {
         const val SEGMENT_CONTINUOUS = 0
+
+        /** مدد الفحص المتاحة بالساعات، ويومٌ هو الافتراضيّ */
+        val UPDATE_EVERY_CHOICES = listOf(6, 12, 24, 72, 168)
+        const val UPDATE_EVERY_DEFAULT = 24
         const val DEFAULT_DAY_START = 6
         const val DEFAULT_NIGHT_START = 19
         const val DEFAULT_UNDO_SECONDS = 10
@@ -459,6 +484,8 @@ class AppSettings(context: Context, private val scope: CoroutineScope) {
         private val KEY_UPD_NOTIFY = booleanPreferencesKey("update_notify")
         private val KEY_UPD_BETA = booleanPreferencesKey("update_beta")
         private val KEY_UPD_LAST = longPreferencesKey("update_last_check")
+        private val KEY_UPD_EVERY = intPreferencesKey("update_every_hours")
+        private val KEY_UPD_SNOOZE = stringPreferencesKey("update_snoozed")
         private val KEY_UPD_TAG = stringPreferencesKey("update_notified_tag")
         private val KEY_ALERT_TONE = stringPreferencesKey("alert_tone")
         private val KEY_ALERT_VOLUME = intPreferencesKey("alert_volume")
