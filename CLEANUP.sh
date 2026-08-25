@@ -109,6 +109,7 @@ ui/SpeedoViewModel.kt
 ui/components/GaugeStyles.kt
 ui/components/GpsStatusBar.kt
 ui/components/RouteMap.kt
+ui/components/BbbikeHint.kt
 ui/components/RouteSketch.kt
 ui/components/SpeedGauge.kt
 ui/components/StatTile.kt

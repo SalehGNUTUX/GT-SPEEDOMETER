@@ -80,6 +80,7 @@ import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
 import net.gnutux.speedometer.ui.theme.TextPrimary
 import net.gnutux.speedometer.ui.theme.TextSecondary
+import androidx.compose.material3.CircularProgressIndicator
 
 /**
  * قسم اللقطات والتسجيلات: لمسة تفتح، ولمسة مطوّلة تدخل وضع التحديد المتعدّد.
@@ -227,9 +228,23 @@ fun MediaScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
             }
 
             if (shown.isEmpty() && !scanned) {
-                // صمتٌ حتّى يصل جواب مكتبة النظام: «لا لقطات بعد» في أثناء الاستعلام
-                // خبرٌ كاذبٌ لمن عنده مئة لقطة. (انظر نظيرَها في شاشة الرحلات.)
-                Box(Modifier.weight(1f))
+                // يُقال ما يجري: «لا لقطات بعد» في أثناء الاستعلام خبرٌ كاذبٌ لمن
+                // عنده مئة لقطة، وصفحةٌ بيضاء تُقرأ عطبًا. (نظيرُها في شاشة الرحلات.)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator(color = Accent, strokeWidth = 3.dp)
+                    Text(
+                        text = stringResource(R.string.media_scanning),
+                        style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+                }
             } else if (shown.isEmpty()) {
                 MediaEmpty(
                     title = if (tabIndex == TAB_VIDEOS) {

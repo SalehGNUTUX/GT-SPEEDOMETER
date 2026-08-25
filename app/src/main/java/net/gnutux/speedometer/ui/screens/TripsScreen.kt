@@ -64,6 +64,7 @@ import net.gnutux.speedometer.ui.theme.Accent
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.SurfaceHigh
 import net.gnutux.speedometer.ui.theme.TextSecondary
+import androidx.compose.material3.CircularProgressIndicator
 
 // أرشيف الرحلات: قائمة مسطّحة ثمّ تفصيل برحلة واحدة. لا تنقّل Navigation
 // لأنّ الشاشة كلّها تبويب واحد داخل AppRoot؛ الحالة المختارة تكفي، وزرّ
@@ -123,10 +124,24 @@ fun TripsScreen(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
                 modifier = content,
             )
         } else if (!tripsScanned) {
-            // **صمتٌ حتّى يصل الجواب.** القراءة تمسّ القرص وتحلّل عشرات الملفّات،
-            // وعرضُ «لا رحلات محفوظة» في أثنائها يقول لصاحب عشرين رحلةً إنّها ضاعت
-            // — ثمّ تعود فجأة. والفراغ ثانيةً أهون من خبرٍ كاذب.
-            Box(content)
+            // **حالةُ قراءةٍ ظاهرة، لا خبرٌ كاذب ولا فراغٌ صامت.**
+            //
+            // كان يُعرض «لا رحلات محفوظة» والقراءة جارية، فيرى صاحبُ عشرين رحلةً
+            // أنّها ضاعت ثمّ تعود فجأة. فأُسكتت الشاشة — وكان ذلك أسوأ: صفحةٌ بيضاء
+            // لا شيء فيها تُقرأ عطبًا لا انتظارًا. والصواب أن يُقال ما يجري.
+            Column(
+                modifier = content.padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(color = Accent, strokeWidth = 3.dp)
+                Text(
+                    text = stringResource(R.string.trips_scanning),
+                    style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+            }
         } else if (trips.isEmpty()) {
             Column(
                 modifier = content.padding(32.dp),

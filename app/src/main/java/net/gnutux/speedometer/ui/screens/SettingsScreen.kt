@@ -101,6 +101,7 @@ import net.gnutux.speedometer.core.update.UpdateChecker
 import net.gnutux.speedometer.core.update.UpdateState
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
+import net.gnutux.speedometer.ui.components.BbbikeHint
 import net.gnutux.speedometer.ui.components.GaugePalette
 import net.gnutux.speedometer.ui.components.aspect
 import net.gnutux.speedometer.ui.components.drawGaugeFace
@@ -2418,6 +2419,11 @@ private fun MapDownloadRows(
         text = stringResource(R.string.mapdl_where_bbbike_note),
         style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
     )
+
+    // صورةٌ توضيحيّة تسبق الشرح إلى العين: الجدول في BBBike عشرة صفوفٍ بأسماءٍ
+    // متشابهة، ومن يقرأ «الذي في اسمه pmtiles» قد لا يميّزه من «MB vector tiles».
+    // وهنا يُرى الصفُّ المقصود مؤطَّرًا وسهمٌ إليه، فيُعرف قبل أن يُقرأ.
+    BbbikeHint()
 
     LinkRow(
         title = stringResource(R.string.mapdl_where_label),

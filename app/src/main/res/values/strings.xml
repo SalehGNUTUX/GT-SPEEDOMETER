@@ -22,6 +22,8 @@
     <string name="burn_unsupported">الجهاز لا يدعم حرق الطبقة — سُجّل الفيديو نظيفًا</string>
 
     <!-- الرحلات -->
+    <string name="trips_scanning">يُقرأ سجلّ الرحلات…</string>
+    <string name="media_scanning">تُقرأ مكتبة الوسائط…</string>
     <string name="trips_empty">لا رحلات محفوظة بعد</string>
     <string name="trips_hint">أنهِ رحلةً بزر «إنهاء» لتُحفظ هنا مع مسارها على الخريطة</string>
     <string name="trip_points">%1$d نقطة</string>
@@ -367,6 +369,7 @@
     <string name="mapdl_where_bbbike_label">BBBike — خريطة جاهزة لكلّ بلد ومدينة</string>
     <string name="mapdl_where_bbbike_note">افتح قارّتك ثمّ بلدك، وانزل إلى الجدول. نزّل الملفّ الذي في اسمه «pmtiles» — مثل ‎morocco.osm.pmtiles-shortbread.zip‎ — وألصق رابطه هنا أو اجلبه بزرّ «من التخزين». يُستخرج وحده ويعمل دون إنترنت.\n\nولا تُنزّل غيره من ذلك الجدول: ‎mbtiles‎ متجهيّةٌ لا يقرؤها المحرّك، و‎garmin‎ لأجهزة ملاحةٍ أخرى، و‎pbf‎ و‎shp‎ و‎geopackage‎ بياناتٌ خام.</string>
     <string name="mapdl_where_url">https://wiki.openstreetmap.org/wiki/MBTiles</string>
+    <string name="mapdl_hint_tap">انقر للتكبير — هذا هو الصفّ الذي تنزّله</string>
     <string name="mapdl_where_label">ويكي OpenStreetMap — شرح الصيغ</string>
     <string name="mapdl_where_note">للفهم لا للتنزيل: خادم بلاطات OpenStreetMap يمنع الجلب بالجملة صراحةً، فلا تُجلب منه خريطةُ دولة. وهذه الصفحة تشرح الصيغ وأدوات توليدها.</string>
 
