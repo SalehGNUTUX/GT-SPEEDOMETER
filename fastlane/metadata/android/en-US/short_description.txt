@@ -1,0 +1,1 @@
+GPS speedometer over a live camera, with recording. Offline. Arabic interface.

@@ -48,12 +48,14 @@ done
 SRC="app/src/main/java"
 [[ -d "$SRC" ]] || { echo "شغّله من جذر المشروع (لم أجد $SRC)" >&2; exit 1; }
 
-# شجرةُ مصدرٍ واحدة. وقد كانت نكهتان (`lite` و`full`) أيّام المحرّك المتجهيّ،
-# والحلقةُ أدناه تبقى: تكلفتها صفرٌ حين لا نكهةَ، وتعمل إن عادت.
+# ثلاثُ أشجار: `main` المشتركة، و`libre` (جيت‌هاب وF-Droid: فيها المحدِّث الذاتيّ)،
+# و`play` (غوغل بلاي: بلا محدِّث). والحلقةُ تقبل غيابَ أيٍّ منها فتعمل في مستودعٍ
+# بلا نكهات.
+#
 # والفحوص كلُّها كانت تمسح `main` وحدها — فنصٌّ مستعمَلٌ بلا مقابلٍ في شيفرة نكهةٍ
 # كان يمرّ من الفاحص ويكسر البناء. **والفاحص الذي لا يرى ليس فاحصًا.**
 SRC_ROOTS=("$SRC")
-for extra in app/src/full/java app/src/lite/java; do
+for extra in app/src/libre/java app/src/play/java; do
   [[ -d "$extra" ]] && SRC_ROOTS+=("$extra")
 done
 
@@ -69,7 +71,11 @@ PROBLEMS=0
 DELETABLE=()
 
 # ---------------------------------------------------------------------------
-#  بيان الإصدار 0.9.4-beta: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#  بيان الإصدار: ملفّات Kotlin المعتمَدة، بمسارٍ نسبيّ إلى حزمة التطبيق
+#
+#  والمسارُ النسبيّ لا الكامل، فالنكهتان تعرّفان `ui/update/UpdateSurface.kt`
+#  كلتاهما — اسمٌ واحدٌ وجسدان — فيُوحَّد الاسمان قبل المقارنة ويُذكر مرّةً.
+#  و`core/update/UpdateChecker.kt` في `libre` وحدها ولا نظيرَ له في `play`.
 # ---------------------------------------------------------------------------
 MANIFEST="MainActivity.kt
 SpeedoApp.kt
@@ -101,6 +107,7 @@ core/trip/GpxWriter.kt
 core/trip/TripRecorder.kt
 core/trip/TripState.kt
 core/update/UpdateChecker.kt
+ui/update/UpdateSurface.kt
 service/SpeedIcon.kt
 service/SpeedTileService.kt
 service/TripService.kt
@@ -200,12 +207,18 @@ fi
 # 3. موارد نصّية مفقودة
 # ===========================================================================
 head2 "موارد النصوص"
+# نصوصُ `main` ونصوصُ كلّ نكهة معًا: شيفرةُ `libre` تستعمل نصوصَ `libre/res`، ولو
+# قُرئ `main` وحده لَبدا ثلاثون نصًّا «مفقودًا» وهي في مكانها.
 STRINGS="app/src/main/res/values/strings.xml"
+STRING_FILES=("$STRINGS")
+for extra in app/src/libre/res/values/strings.xml app/src/play/res/values/strings.xml; do
+  [[ -f "$extra" ]] && STRING_FILES+=("$extra")
+done
 if [[ -f "$STRINGS" ]]; then
-  grep -oE '<string name="[^"]+"' "$STRINGS" | sed 's/.*name="//; s/"//' | sort -u > /tmp/.gt_str
+  grep -hoE '<string name="[^"]+"' "${STRING_FILES[@]}" | sed 's/.*name="//; s/"//' | sort -u > /tmp/.gt_str
   grep -rhoE 'R\.string\.[A-Za-z0-9_]+' "${SRC_ROOTS[@]}" | sed 's/R\.string\.//' | sort -u > /tmp/.gt_used
   LOST="$(comm -13 /tmp/.gt_str /tmp/.gt_used)"
-  DUPS="$(grep -oE '<string name="[^"]+"' "$STRINGS" | sort | uniq -d)"
+  DUPS="$(grep -hoE '<string name="[^"]+"' "${STRING_FILES[@]}" | sort | uniq -d)"
   if [[ -n "$LOST" ]]; then
     PROBLEMS=$((PROBLEMS + 1))
     bad "مستعمَلة في الشفرة وغير معرَّفة:"; printf '      R.string.%s\n' $LOST
@@ -228,7 +241,7 @@ fi
 # ===========================================================================
 head2 "أسرار التوقيع"
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  LEAKED="$(git ls-files | grep -E 'keystore\.properties$|\.jks$|\.keystore$|^local\.properties$' | grep -v 'debug\.keystore' || true)"
+  LEAKED="$(git ls-files | grep -E 'keystore[^/]*\.properties$|\.jks$|\.keystore$|^local\.properties$' | grep -v 'debug\.keystore' || true)"
   if [[ -n "$LEAKED" ]]; then
     PROBLEMS=$((PROBLEMS + 1))
     bad "متتبَّعة في git — أخرِجها فورًا بـ git rm --cached:"
@@ -237,7 +250,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     ok "لا سرّ متتبَّعًا"
   fi
   # لا تقل «متجاهَل» عن ملفٍّ أثبتنا للتوّ أنّه متتبَّع
-  for f in keystore.properties *.jks; do
+  for f in keystore.properties keystore-full.properties *.jks; do
     [[ -e "$f" ]] || continue
     git ls-files --error-unmatch "$f" >/dev/null 2>&1 && continue
     printf '%s\n' "      ${C_DIM}موجودٌ محلّيًّا ومتجاهَل — احتفظ بنسخةٍ خارج الجهاز: $f${C_RESET}"
@@ -267,7 +280,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties local.properties dist docs .gradle .kotlin __pycache__ .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties keystore-full.properties local.properties dist docs .gradle .kotlin __pycache__ .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html PRIVACY.md TESTING.md fastlane "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac
@@ -293,7 +306,7 @@ if [[ -d "$RES" ]]; then
     n="$(basename "$f")"; n="${n%.*}"
     kind="$(basename "$(dirname "$f")")"; kind="${kind%%-*}"
     case "$n" in ic_launcher*) [[ "$kind" == mipmap ]] && continue ;; esac
-    if ! grep -rqF "$kind/$n" "$RES" "app/src/main/AndroidManifest.xml" 2>/dev/null \
+    if ! grep -rqF "$kind/$n" "$RES" app/src/*/AndroidManifest.xml 2>/dev/null \
        && ! grep -rqE "R\.$kind\.$n\b" "${SRC_ROOTS[@]}" 2>/dev/null; then
       DEAD+=("$f")
     fi

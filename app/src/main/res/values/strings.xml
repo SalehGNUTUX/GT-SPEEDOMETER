@@ -194,18 +194,7 @@
     <string name="map_no_offline_title">لا خرائط محلّيّة على الجهاز</string>
     <string name="map_no_offline_body">نزّل خريطة منطقتك من تطبيقٍ يعتمد OpenStreetMap مثل OsmAnd، أو ضع أرشيف بلاطاتٍ في مجلّد الخرائط، ليعمل المسار دون اتّصال.</string>
     <string name="map_no_offline_action">أين أضع الخرائط؟</string>
-    <string name="map_obf_found">وُجدت خرائط متجهيّة (%1$s) لا يرسمها المحرّك النقطيّ.\n\nملفّات ‎.obf‎ تُفتح في OsmAnd. وملفّات ‎.mbtiles‎ المتجهيّة (‎shortbread‎ من Geofabrik مثلًا) تُحوَّل إلى ‎.pmtiles‎ بأمرٍ واحد — ‎pmtiles convert اسم_الملفّ.mbtiles الناتج.pmtiles‎ — فتقرؤها النكهة الكاملة.</string>
-    <string name="update_banner_available">تحديثٌ متاح: %1$s</string>
-    <string name="update_banner_later">لاحقًا</string>
-    <string name="update_banner_get">نزّل</string>
-    <string name="update_banner_downloading">يُنزَّل التحديث…</string>
-    <string name="update_banner_ready">الحزمة جاهزة للتثبيت</string>
-    <string name="update_banner_install">ثبّت</string>
-    <string name="settings_update_every">مدّة الفحص التلقائيّ</string>
-    <string name="settings_update_every_note">كم يمضي بين فحصٍ وفحصٍ لمصدر التحديثات. ويُطفئه مفتاح «أعلِمني بالتحديثات» أعلاه مهما كانت هذه.</string>
-    <string name="settings_update_every_hours">كلّ %1$s ساعة</string>
-    <string name="settings_update_every_days">كلّ %1$s أيّام</string>
-    <string name="settings_update_every_week">كلّ أسبوع</string>
+    <string name="map_obf_found">وُجدت خرائط متجهيّة (%1$s) لا يرسمها المحرّك النقطيّ.\n\nملفّات ‎.obf‎ تُفتح في OsmAnd. وملفّات ‎.mbtiles‎ المتجهيّة (‎shortbread‎ من Geofabrik مثلًا) تُحوَّل إلى ‎.pmtiles‎ بأمرٍ واحد — ‎pmtiles convert اسم_الملفّ.mbtiles الناتج.pmtiles‎ — فيقرؤها التطبيق.</string>
     <string name="settings_about_developer">المطوّر</string>
     <string name="settings_about_repo">المستودع</string>
     <string name="settings_about_repo_url">https://github.com/SalehGNUTUX/GT-SPEEDOMETER</string>
@@ -393,30 +382,6 @@
     <string name="confirm_yes_start">ابدأ التسجيل</string>
     <string name="confirm_yes_stop">أنهِ التسجيل</string>
     <string name="confirm_no">تراجَع</string>
-
-    <!-- 0.9.3 — تحديثات التطبيق -->
-    <string name="settings_section_updates">تحديثات التطبيق</string>
-    <string name="update_check">ابحث عن تحديث</string>
-    <string name="update_checking">جارٍ البحث…</string>
-    <string name="update_current">أنت على أحدث إصدار (%1$s)</string>
-    <string name="update_available">يتوفّر الإصدار %1$s</string>
-    <string name="update_download">نزّل وثبّت</string>
-    <string name="update_downloading">تنزيل التحديث: %1$s</string>
-    <string name="update_install">تثبيت</string>
-    <string name="update_notes">ما الجديد</string>
-    <string name="update_auto">تنبيهني بالتحديثات</string>
-    <string name="update_auto_note">فحصٌ يوميّ عند فتح التطبيق، وإشعارٌ حين يصدر إصدارٌ أحدث</string>
-    <string name="update_beta">أشعِرني بالنسخ التجريبيّة</string>
-    <string name="update_beta_note">كلّ إصدارات التطبيق تجريبيّة اليوم؛ حين يصدر أوّل إصدارٍ مستقرّ يصير هذا المفتاح هو الفارق بينهما</string>
-    <string name="update_err_net">تعذّر الوصول إلى صفحة الإصدارات</string>
-    <string name="update_err_none">لا حزمةً في هذا الإصدار</string>
-    <string name="update_err_install">تعذّر بدء التثبيت. اسمح للتطبيق بتثبيت الحزم من إعدادات النظام.</string>
-    <string name="update_allow_install">السماح بالتثبيت</string>
-    <string name="update_notif_title">يتوفّر تحديث لـ GT-SPEEDOMETER</string>
-    <string name="update_notif_body">الإصدار %1$s جاهز للتنزيل</string>
-    <string name="update_channel">التحديثات</string>
-    <string name="update_never">لم يُفحص بعد</string>
-    <string name="update_last_check">آخر فحص: %1$s</string>
 
     <!-- ===== 0.9.4 — اختيار مصدر الخريطة صراحةً ===== -->
     <string name="map_source_menu">مصدر الخريطة</string>

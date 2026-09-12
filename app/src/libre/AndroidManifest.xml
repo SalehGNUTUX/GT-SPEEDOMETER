@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ما تزيده نكهة `libre` على البيان المشترك: إذنٌ واحد.
+
+    التطبيق في هذه النكهة يُوزَّع خارج المتاجر، فيجلب حزمته بنفسه ويسلّمها لمثبّت
+    النظام. والإعلان وحده لا يكفي: أندرويد ‎8‎ فما فوق يشترط أن يأذن المستعمل بيده
+    في «تثبيت تطبيقات غير معروفة»، وذلك ما يفحصه `core/update/UpdateChecker.kt`
+    قبل أن يبدأ التثبيت.
+
+    **وهو ممنوعٌ في نكهة `play`** لا لأنّ بلاي يقيّد الإذن وحده، بل لأنّ سياسته
+    تمنع أن يحدّث التطبيق نفسه بغير المتجر. فلا الإذنُ هنا ولا الشيفرةُ التي
+    تستعمله هناك: `app/src/play/java/.../ui/update/UpdateSurface.kt` فارغةٌ عمدًا.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+</manifest>

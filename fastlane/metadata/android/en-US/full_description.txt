@@ -1,0 +1,36 @@
+<b>The interface is in Arabic only.</b> This is stated first because it decides whether the app is useful to you: every screen, label and setting is Arabic. Numbers are always Western digits (0-9) with a decimal point.
+
+A GPS speedometer for Android whose distinguishing feature is <b>the gauge over a live camera, with recording</b>. It is built as a sports measuring instrument, and designed for a motorcycle first: touch targets large enough for a gloved hand, colours read at a glance, and honest numbers.
+
+<b>Measuring</b>
+• Speed straight from GPS, with the <b>achieved update rate and satellite count always on screen</b> — no accuracy is claimed that is not held.
+• Distance, duration, top and average speed; stops are not counted as moving time.
+• Six gauge faces, a large digital mode, and a floating window that stays above other apps.
+• Four vehicle profiles: car, motorcycle, bicycle, walking.
+• Speed limit alert of your choosing, by sound or vibration.
+• A Quick Settings tile showing current speed.
+
+<b>Camera</b>
+• Continuous recording or periodic segments, with the gauge over the image.
+• <b>Video is clean by default</b>; burning the gauge into the file is an option, not the only mode.
+• Two cameras at once on devices that allow it.
+• Storage management when the disk fills: only files this app created are deleted, oldest first. Your own files are never touched.
+
+<b>Trips and maps</b>
+• Every trip is saved as a standard GPX file, readable by any program that reads tracks.
+• Route maps from four sources: a local archive (.mbtiles, .sqlitedb, .gemf, vector .pmtiles), OsmAnd if installed, the internet, or the best available.
+• <b>A whole country offline</b>: a renderer written for this app reads vector tiles and draws them with no native library.
+
+<b>What it does not do</b>
+• It sends nothing: no analytics, no accounts, no ads, no tracking. All data stays on your device.
+• No Google Play Services, so it works fully on devices without them.
+• It is not a substitute for the vehicle's legal speedometer; GPS accuracy varies with place and sky.
+• Arabic interface only, and km/h only.
+
+<b>Permissions</b>
+• Location: to measure speed and distance. Background location is never requested.
+• Camera and microphone: for recording, at your request only.
+• Foreground service: so measuring or recording is not cut off when the screen is folded away.
+
+<b>Free and open source</b> under GPL-3.0. All of the code is readable:
+https://github.com/SalehGNUTUX/GT-SPEEDOMETER

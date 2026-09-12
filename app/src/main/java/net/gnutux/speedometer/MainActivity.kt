@@ -94,11 +94,7 @@ import net.gnutux.speedometer.ui.theme.GtSpeedometerTheme
 import net.gnutux.speedometer.ui.theme.Surface
 import net.gnutux.speedometer.ui.theme.TextSecondary
 import net.gnutux.speedometer.ui.theme.LocalGtColors
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.TextButton
-import net.gnutux.speedometer.core.update.UpdateChecker
-import net.gnutux.speedometer.core.update.UpdateState
+import net.gnutux.speedometer.ui.update.UpdateBanner
 
 // خمس صفحات منذ 0.3.0: أُدرجت «الرحلات» قبل «الوسائط» كي يبقى ترتيب التبويبات
 // موافقًا لمسار الاستعمال: تقيس، ثم تنهي الرحلة، ثم تراجع مسارها، ثم لقطاتها.
@@ -631,6 +627,10 @@ private fun AppRoot(
     //
     // ويُعلن قبل الإعدادات في ترتيب الصندوق فتغطّيه هي حين تُفتح: الشريط خبرٌ
     // عابر، والإعدادات شاشةٌ كاملة.
+    //
+    // **وهو من شجرة النكهة لا من هنا** (`ui/update/UpdateSurface.kt`): في `libre`
+    // يرسم حالاته الثلاث، وفي `play` لا يرسم شيئًا — فالمتجر يحدّث لا نحن. ولا
+    // شرطَ في هذا الموضع ولا رايةَ في `BuildConfig`: الاسمُ واحدٌ والجسدان اثنان.
     UpdateBanner(
         vm = vm,
         modifier = Modifier
@@ -664,99 +664,6 @@ private fun AppRoot(
             },
         )
     }
-}
-
-/**
- * شريطُ خبرِ التحديث فوق التبويبات.
- *
- * ## لماذا في الجذر لا في الإعدادات
- * الفحص كان يقع في `LaunchedEffect` داخل شاشة الإعدادات، فمن لا يفتحها لا يعلم
- * بتحديثٍ أبدًا — وهو حال أكثر المستعملين. فالفحص هنا عند الإقلاع، بمدّةٍ يضبطها
- * المستعمل، والجواب يظهر حيث هو لا حيث يجب أن يذهب.
- *
- * ## ثلاث حالاتٍ لا واحدة
- * «متوفّر» يعرض زرَّ تنزيل، و«يُنزَّل» يعرض التقدّم، و«جاهز» يعرض زرَّ تثبيت. ولو
- * جُمعت في زرٍّ واحد لَما عرف الضاغطُ عليه أينزّل أم يثبّت.
- *
- * ## و«لاحقًا» تخصّ إصدارًا بعينه
- * تُحفظ في التفضيلات باسم الإصدار لا رايةً عامّة، فلا يعود الشريط بهذا الإصدار
- * ويعود بما بعده. وبلا ذلك يصير الخبر إلحاحًا يُطفئه المستعمل من أصله.
- */
-@Composable
-private fun UpdateBanner(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val updates = remember(context) { UpdateChecker.of(context) }
-    val state by updates.state.collectAsStateWithLifecycle()
-    val notify by vm.settings.updateNotify.collectAsStateWithLifecycle()
-    val snoozed by vm.settings.updateSnoozed.collectAsStateWithLifecycle()
-
-    // الفحص عند الإقلاع، ويُعاد عند كلّ تبدّلٍ للمفتاح: من شغّله الآن يريد جوابًا
-    // الآن لا بعد المدّة القادمة
-    LaunchedEffect(notify) { if (notify) updates.maybeCheckDue(vm.settings) }
-
-    if (!notify) return
-    val current = state
-    val version = when (current) {
-        is UpdateState.Available -> current.version
-        else -> null
-    }
-    if (version != null && version == snoozed) return
-
-    val body: @Composable RowScope.() -> Unit = when (current) {
-        is UpdateState.Available -> {
-            {
-                Text(
-                    text = stringResource(R.string.update_banner_available, current.version),
-                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = { vm.settings.setUpdateSnoozed(current.version) }) {
-                    Text(stringResource(R.string.update_banner_later), color = TextSecondary)
-                }
-                Button(onClick = { updates.download(current) }) {
-                    Text(stringResource(R.string.update_banner_get))
-                }
-            }
-        }
-
-        is UpdateState.Downloading -> {
-            {
-                Text(
-                    text = stringResource(R.string.update_banner_downloading),
-                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                    modifier = Modifier.weight(1f),
-                )
-                current.fraction
-                    ?.let { CircularProgressIndicator(progress = { it }, color = Accent) }
-                    ?: CircularProgressIndicator(color = Accent)
-            }
-        }
-
-        is UpdateState.Ready -> {
-            {
-                Text(
-                    text = stringResource(R.string.update_banner_ready),
-                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                    modifier = Modifier.weight(1f),
-                )
-                Button(onClick = { updates.install(current.file) }) {
-                    Text(stringResource(R.string.update_banner_install))
-                }
-            }
-        }
-
-        else -> return
-    }
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(Surface, RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        content = body,
-    )
 }
 
 @Composable

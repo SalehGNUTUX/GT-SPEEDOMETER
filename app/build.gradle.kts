@@ -6,58 +6,138 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// مفاتيح التوقيع تبقى خارج المستودع. عند غيابها يُبنى بلا توقيع إصدار،
-// فلا يتعطّل البناء على جهاز آخر.
-val keystorePropsFile = rootProject.file("keystore.properties")
-val keystoreProps = Properties().apply {
-    if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
+/**
+ * مخازن التوقيع تبقى خارج المستودع. عند غيابها يُبنى بلا توقيع إصدار، فلا يتعطّل
+ * البناء على جهاز آخر — ولا يُبنى إصدارٌ للنشر على ذلك الجهاز أيضًا.
+ *
+ * ومخزنان لا واحد، لأنّ النكهتين تطبيقان في عينَي النظام (انظر `productFlavors`):
+ *
+ * - `keystore.properties` ← **مفتاح الإصدار الأصليّ** لنكهة `libre`. وهو المفتاح
+ *   الذي وُقّع به كلّ ما نُشر على جيت‌هاب منذ ‎0.1.0‎، وضياعُه يعني فقدان القدرة على
+ *   تحديث كلّ نسخةٍ منشورة إلى الأبد.
+ * - `keystore-full.properties` ← **مفتاح الرفع** لنكهة `play`. وهو مفتاحُ رفعٍ لا
+ *   مفتاحُ تطبيق: غوغل بلاي يُعيد توقيع الحزمة بمفتاحه هو (Play App Signing)،
+ *   وهذا لا يوقّع إلّا `.aab` الذاهبَ إليه. وضياعُه يُستدرك بطلب إبدالٍ من بلاي،
+ *   بخلاف الأوّل.
+ */
+private fun signingProps(name: String): Properties? {
+    val file = rootProject.file(name)
+    if (!file.exists()) return null
+    return Properties().apply { file.inputStream().use { load(it) } }
 }
+
+val libreProps = signingProps("keystore.properties")
+val playProps = signingProps("keystore-full.properties")
 
 android {
     namespace = "net.gnutux.speedometer"
-    compileSdk = 35
+
+    /**
+     * ‎36‎ لا ‎35‎ منذ ‎1.0.0‎: بلاي لا يقبل منذ ‎31‎ غشت ‎2026‎ رفعًا بأقلّ من
+     * `targetSdk 36`، و`targetSdk` لا يعلو على `compileSdk`. والنكهتان تُبنيان من
+     * الرقم نفسه: نكهةٌ خلف نكهةٍ في سلوك النظام عطبٌ لا يُرى إلّا في الميدان.
+     */
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "net.gnutux.speedometer"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 19
-        versionName = "0.13.0-beta"
+        targetSdk = 36
+        versionCode = 20
+        versionName = "1.0.0"
 
-    }
-
-    androidResources {
-        localeFilters += listOf("ar", "en")
     }
 
     /**
-     * مفتاحُ الإصدار الوحيد.
+     * العربيّة وحدها.
      *
-     * **وضياعه يعني فقدان القدرة على تحديث كلّ نسخةٍ منشورةٍ إلى الأبد.** انسخ
-     * `gt-speedometer-release.jks` وملفَّ خصائصه خارج جهاز التطوير.
+     * وكانت `listOf("ar", "en")` ولا `values-en/` في الشجرة: إعلانُ لغةٍ لا ترجمةَ
+     * لها يُظهر «الإنجليزيّة» خيارًا في إعدادات لغة التطبيق (أندرويد ‎13‎ فما فوق)
+     * ثمّ لا يتبدّل حرفٌ حين تُختار. والقاعدة الثامنة: لا يُعلَن ما لا يُملك.
      *
-     * وكان معه مفتاحٌ ثانٍ للنكهة «الكاملة» أيّام المحرّك المتجهيّ. أُزيلت النكهة
-     * (انظر `docs/تجربة-الخرائط-المتجهية.md`) والمفتاح لم يُصدَر به شيءٌ قطُّ إلى
-     * الناس، فلا مستعملَ يتيمَ خلفه.
+     * وموارد المكتبات الافتراضيّة (`values/` في Compose وMaterial) لا يمسّها هذا:
+     * المحذوف ترجماتُ اللغات الأخرى وحدها.
+     */
+    androidResources {
+        localeFilters += listOf("ar")
+    }
+
+    /**
+     * مفتاحان: واحدٌ لكلّ نكهة.
+     *
+     * **ويجب أن يسبق هذا القسمُ `productFlavors`** وإلّا ردّت `findByName` عدمًا
+     * بصمت فبُنيت حزمةُ إصدارٍ بلا توقيع.
+     *
+     * **ولا يحمل `buildTypes.release` توقيعًا**: توقيعُ سمة البناء يتقدّم على توقيع
+     * النكهة في AGP، فلو وُضع هناك وُقّعت النكهتان بمفتاحٍ واحد — وهو عين ما لا
+     * نريد.
      */
     signingConfigs {
-        if (keystorePropsFile.exists()) {
-            create("release") {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
+        libreProps?.let { p ->
+            create("libreRelease") {
+                storeFile = rootProject.file(p.getProperty("storeFile"))
+                storePassword = p.getProperty("storePassword")
+                keyAlias = p.getProperty("keyAlias")
+                keyPassword = p.getProperty("keyPassword")
             }
+        }
+        playProps?.let { p ->
+            create("playUpload") {
+                storeFile = rootProject.file(p.getProperty("storeFile"))
+                storePassword = p.getProperty("storePassword")
+                keyAlias = p.getProperty("keyAlias")
+                keyPassword = p.getProperty("keyPassword")
+            }
+        }
+    }
+
+    /**
+     * نكهتان: مصدرُ التوزيع، لا مستوى الميزات.
+     *
+     * **والميزات فيهما سواءٌ حرفًا بحرف**، وهذا شرطُ بقاء هذا الانقسام مقبولًا:
+     * جُرِّبت في ‎0.10.0‎ نكهتان تختلفان في المحرّك (`lite`/`full`) فأُزيلتا
+     * (`docs/تجربة-الخرائط-المتجهية.md`)، والقاعدةُ التاسعة في `CLAUDE.md` تمنع
+     * عودتَهما بلا سببٍ جديد. والسبب الجديد سياسةٌ لا هندسة:
+     *
+     * **تطبيقٌ على غوغل بلاي لا يجوز أن يحدّث نفسه بغير بلاي.** ومحدِّثُنا يجلب
+     * `.apk` ويسلّمه لمثبّت النظام بإذن `REQUEST_INSTALL_PACKAGES` — وهو جوهر ما
+     * تمنعه سياسة «إساءة استخدام الجهاز والشبكة». فلا حيلة إلّا شجرتا مصدر:
+     *
+     * | | `libre` | `play` |
+     * |---|---|---|
+     * | يُوزَّع من | جيت‌هاب · F-Droid | غوغل بلاي |
+     * | المعرّف | `net.gnutux.speedometer` | `net.gnutux.speedometer.play` |
+     * | المحدِّث الداخليّ | فيه | **ليس فيه مصدرًا ولا بيانًا ولا نصًّا** |
+     * | التوقيع | مفتاح الإصدار الأصليّ | مفتاح رفعٍ يُعيد بلاي توقيعه |
+     * | الصيغة | `.apk` | `.aab` |
+     *
+     * **ومعرّفان لا معرّفٌ واحد، وهذا قرارٌ لا رجعة فيه بعد أوّل رفع:** حزمةٌ واحدة
+     * بمفتاحين مختلفين لا تُحدَّث من المصدر الآخر بل يرفضها النظام، وتوحيدُ المفتاح
+     * يقتضي تسليم مفتاح الإصدار الأصليّ إلى بلاي بلا استرداد. فتطبيقان مستقلّان
+     * يُثبَّتان معًا، ولا يمسّ أحدهما مفتاح الآخر ولا مستعمليه.
+     */
+    flavorDimensions += "store"
+    productFlavors {
+        create("libre") {
+            dimension = "store"
+            signingConfig = signingConfigs.findByName("libreRelease")
+        }
+        create("play") {
+            dimension = "store"
+            // لاحقةٌ على المعرّف لا معرّفٌ مكتوب: سلطةُ `FileProvider` وحقلُ
+            // `${applicationId}.files` في البيان يتبعانه من تلقائهما
+            applicationIdSuffix = ".play"
+            signingConfig = signingConfigs.findByName("playUpload")
         }
     }
 
     buildTypes {
         release {
-            // يبقى التصغير معطّلًا في النسخ التجريبية: قواعد التقليم لم تُضبط بعد
-            // لـ CameraX و Compose، وعطبٌ يظهر في التجريبيّ وحده يصعب تتبّعه
+            // يبقى التصغير معطّلًا: قواعد التقليم لم تُضبط بعد لـ CameraX و Compose،
+            // وعطبٌ يظهر في المصغَّر وحده يصعب تتبّعه. والحزمة `.aab` تُقسَّم على
+            // الجهاز فتصل مصغَّرةً بغير R8.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release")
         }
     }
 

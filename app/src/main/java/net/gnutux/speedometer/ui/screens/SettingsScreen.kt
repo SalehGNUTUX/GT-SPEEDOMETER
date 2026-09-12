@@ -97,8 +97,6 @@ import net.gnutux.speedometer.core.settings.PipSize
 import net.gnutux.speedometer.core.settings.ScreenOrientation
 import net.gnutux.speedometer.core.settings.PipStyle
 import net.gnutux.speedometer.core.settings.ThemeMode
-import net.gnutux.speedometer.core.update.UpdateChecker
-import net.gnutux.speedometer.core.update.UpdateState
 import net.gnutux.speedometer.ui.Fmt
 import net.gnutux.speedometer.ui.SpeedoViewModel
 import net.gnutux.speedometer.ui.components.BbbikeHint
@@ -114,10 +112,10 @@ import net.gnutux.speedometer.ui.theme.TextPrimary
 import net.gnutux.speedometer.ui.theme.TextSecondary
 import net.gnutux.speedometer.ui.theme.TrackDim
 import net.gnutux.speedometer.ui.theme.Warn
+import net.gnutux.speedometer.ui.update.UPDATE_SECTION_IDS
+import net.gnutux.speedometer.ui.update.UpdateAutoCheck
+import net.gnutux.speedometer.ui.update.updateSection
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -285,17 +283,13 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     val liteMode by s.liteMode.collectAsStateWithLifecycle()
     val fastFix by s.fastFirstFix.collectAsStateWithLifecycle()
 
-    // التحديث: نسخةٌ واحدة بعمر العمليّة كالمُنزِّل، فطيُّ القسم لا يقطع تنزيلًا جاريًا.
-    // والفحص اليوميّ يبدأ من هنا لا من `MainActivity`: من يفتح الإعدادات جالسٌ ينظر،
-    // ومن يفتح التطبيق قد يكون خلف المقود.
-    val updates = remember(context) { UpdateChecker.of(context) }
-    val updateState by updates.state.collectAsStateWithLifecycle()
-    val installBlocked by updates.installBlocked.collectAsStateWithLifecycle()
-    val updateNotify by s.updateNotify.collectAsStateWithLifecycle()
-    val updateEvery by s.updateIntervalHours.collectAsStateWithLifecycle()
-    val updateBeta by s.updateBeta.collectAsStateWithLifecycle()
-    val updateLastCheck by s.updateLastCheck.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { updates.maybeCheckDue(s) }
+    // التحديث كلُّه في شجرة النكهة (`ui/update/UpdateSurface.kt`): حالتُه وبطاقاتُه
+    // وفحصُه الدوريّ. وفي نكهة `play` لا شيءَ من ذلك — فلا حالةَ تُجمع هنا ولا قسمَ
+    // يُصدَر أدناه، وشاشةُ الإعدادات لا تعلم بأيّهما تُبنى.
+    //
+    // ومن يفتح الإعدادات جالسٌ ينظر، ومن يفتح التطبيق قد يكون خلف المقود، فيُفحص
+    // من الموضعين كليهما.
+    UpdateAutoCheck(s)
     // رايةُ النظام ثابتةٌ لعمر الجهاز، فتُقرأ مرّةً لا مع كلّ إعادة تركيب
     val lowRam = remember(context) { DeviceTier.isLowRamDevice(context) }
 
@@ -1065,65 +1059,10 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
 
             // ===== تحديثات التطبيق =====
             //
-            // قبل «عن التطبيق» لا بعده: ذاك سطرُ نسخةٍ يُقرأ، وهذا فعلٌ يُعمل.
-            settingsSection(
-                id = SECTION_UPDATES,
-                openId = openSection,
-                title = R.string.settings_section_updates,
-                onToggle = toggleSection,
-            ) {
-                item(key = "updates-1") {
-                    SettingCard {
-                        UpdateRows(
-                            state = updateState,
-                            lastCheck = updateLastCheck,
-                            installBlocked = installBlocked,
-                            onCheck = { updates.check(s) },
-                            onDownload = updates::download,
-                            onInstall = updates::install,
-                            onAllowInstall = updates::openInstallSettings,
-                        )
-                    }
-                }
-                item(key = "updates-2") {
-                    SettingCard {
-                        SwitchRow(
-                            title = stringResource(R.string.update_auto),
-                            note = stringResource(R.string.update_auto_note),
-                            checked = updateNotify,
-                            onChange = s::setUpdateNotify,
-                        )
-                        // المدّة تُعرض ما دام الفحص مشتغلًا: خيارٌ يضبط شيئًا مطفأً
-                        // يُقرأ عطبًا لا خيارًا
-                        if (updateNotify) {
-                            RowLabel(
-                                title = stringResource(R.string.settings_update_every),
-                                note = stringResource(R.string.settings_update_every_note),
-                            )
-                            ChoiceRow(
-                                options = AppSettings.UPDATE_EVERY_CHOICES.map { everyLabel(it) },
-                                selectedIndex = AppSettings.UPDATE_EVERY_CHOICES
-                                    .indexOf(updateEvery)
-                                    .coerceAtLeast(0),
-                                onSelect = {
-                                    s.setUpdateIntervalHours(AppSettings.UPDATE_EVERY_CHOICES[it])
-                                },
-                            )
-                        }
-                        // الجواب القديم يُمحى مع تبدّل المرشِّح: «أنت على أحدث إصدار»
-                        // محسوبةً بمفتاحٍ مطفأ تكذب بمجرّد أن يُشعَل
-                        SwitchRow(
-                            title = stringResource(R.string.update_beta),
-                            note = stringResource(R.string.update_beta_note),
-                            checked = updateBeta,
-                            onChange = {
-                                s.setUpdateBeta(it)
-                                updates.clear()
-                            },
-                        )
-                    }
-                }
-            }
+            // قبل «عن التطبيق» لا بعده: ذاك سطرُ نسخةٍ يُقرأ، وهذا فعلٌ يُعمل. وفي
+            // نكهة `play` لا يُصدر شيئًا، فيتلاصق «الأجهزة الضعيفة» و«عن التطبيق»
+            // بلا فراغٍ يدلّ على قسمٍ محجوب.
+            updateSection(settings = s, openId = openSection, onToggle = toggleSection)
 
             // ===== عن التطبيق =====
             settingsSection(
@@ -1366,7 +1305,6 @@ private const val SECTION_MAPAPPS = "mapapps"
 private const val SECTION_CAMERA = "camera"
 private const val SECTION_DUAL = "dual"
 private const val SECTION_LOWEND = "lowend"
-private const val SECTION_UPDATES = "updates"
 private const val SECTION_ABOUT = "about"
 
 /**
@@ -1388,7 +1326,10 @@ private val SECTION_ORDER = listOf(
     SECTION_CAMERA,
     SECTION_DUAL,
     SECTION_LOWEND,
-    SECTION_UPDATES,
+) + UPDATE_SECTION_IDS + listOf(
+    // قسم التحديث من شجرة النكهة: في `libre` قسمٌ واحد، وفي `play` لا شيء. وترتيبُ
+    // هذه القائمة هو الذي يُمرَّر إليه القسمُ المفتوح، فعنصرٌ زائدٌ فيها يُزلق كلَّ
+    // ما بعده.
     SECTION_ABOUT,
 )
 
@@ -1452,7 +1393,7 @@ private const val LIMIT_OVERFLOW_GUARD = 9_999
  * و[id] نصٌّ ثابت لا فهرس، و`key` في كلّ عنصرٍ كي لا تنتقل حالة عنصرٍ إلى جاره حين
  * يُطوى قسمٌ ويُفتح آخر.
  */
-private fun LazyListScope.settingsSection(
+internal fun LazyListScope.settingsSection(
     id: String,
     openId: String,
     @StringRes title: Int,
@@ -1514,7 +1455,7 @@ private fun SectionHeader(title: String, expanded: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun SettingCard(content: @Composable () -> Unit) {
+internal fun SettingCard(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1526,7 +1467,7 @@ private fun SettingCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RowLabel(title: String, note: String? = null) {
+internal fun RowLabel(title: String, note: String? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             text = title,
@@ -1545,7 +1486,7 @@ private fun RowLabel(title: String, note: String? = null) {
 }
 
 @Composable
-private fun SwitchRow(title: String, note: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(title: String, note: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1581,7 +1522,7 @@ private fun SwitchRow(title: String, note: String, checked: Boolean, onChange: (
  * بنسخةٍ ثانية كانت تعني تخطيطين يتباعدان عند أوّل تعديل على أحدهما.
  */
 @Composable
-private fun ActionRow(
+internal fun ActionRow(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1652,7 +1593,7 @@ private fun LinkRow(title: String, url: String) {
  * ومرئيّة دفعةً واحدة، والقائمة المنسدلة تحتاج ضغطتين ولمسًا دقيقًا.
  */
 @Composable
-private fun ChoiceRow(options: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
+internal fun ChoiceRow(options: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2551,145 +2492,10 @@ private fun DownloadProgress(running: DownloadState.Running) {
 }
 
 /** رفيعٌ عمدًا: هو خبرٌ لا عنصر تحكّم، ولا يُلمس فلا يخضع لحدّ الـ56dp */
-private val PROGRESS_BAR_HEIGHT = 8.dp
+internal val PROGRESS_BAR_HEIGHT = 8.dp
 
-/**
- * أسطر قسم التحديث: النسخة، وآخر فحص، ثمّ فعلٌ واحد يناسب الحالة.
- *
- * فعلٌ واحدٌ ظاهرٌ في كلّ لحظة عمدًا — «ابحث» أو «نزّل» أو «ثبّت» — فمن ينظر إلى
- * البطاقة يعرف خطوته التالية بلا قراءة. وأثناء الفحص يزول الزرّ ويحلّ محلّه سطرُ
- * حاله، فلا يُضغط مرّتين.
- *
- * و[installBlocked] راية منفصلة عن [UpdateState]: منعُ النظام للتثبيت لا يُلغي
- * الحزمة المنزَّلة، فيبقى زرّ «ثبّت» قائمًا ويُضاف تحته طريقُ الإذن. ومن أذِن ثمّ عاد
- * يضغط الزرّ نفسه فيمضي، بلا تنزيلٍ ثانٍ.
- */
-@Composable
-private fun UpdateRows(
-    state: UpdateState,
-    lastCheck: Long,
-    installBlocked: Boolean,
-    onCheck: () -> Unit,
-    onDownload: (UpdateState.Available) -> Unit,
-    onInstall: (File) -> Unit,
-    onAllowInstall: () -> Unit,
-) {
-    RowLabel(
-        title = stringResource(R.string.settings_version),
-        note = BuildConfig.VERSION_NAME,
-    )
-    RowLabel(title = lastCheckLabel(lastCheck))
 
-    if (state is UpdateState.Checking) {
-        Text(
-            text = stringResource(R.string.update_checking),
-            style = MaterialTheme.typography.titleSmall.copy(color = TextSecondary),
-        )
-    } else {
-        ActionRow(label = stringResource(R.string.update_check), onClick = onCheck)
-    }
 
-    when (state) {
-        is UpdateState.UpToDate -> Text(
-            text = stringResource(R.string.update_current, state.current),
-            style = MaterialTheme.typography.bodySmall.copy(color = Accent),
-        )
-
-        is UpdateState.Available -> {
-            RowLabel(
-                title = stringResource(R.string.update_available, state.version),
-                // الحجم تحت العنوان: من على حزمة بيانات محدودة يقرّر قبل أن يبدأ
-                note = state.sizeBytes
-                    .takeIf { it > 0L }
-                    ?.let { MapDownloader.formatBytes(it) },
-            )
-            ActionRow(
-                label = stringResource(R.string.update_download),
-                onClick = { onDownload(state) },
-            )
-            // النصّ مقصوصٌ سلفًا في [UpdateChecker]؛ وسجلّ تغييرٍ فارغ لا يستحقّ عنوانًا
-            if (state.notes.isNotEmpty()) {
-                RowLabel(
-                    title = stringResource(R.string.update_notes),
-                    note = state.notes,
-                )
-            }
-        }
-
-        is UpdateState.Downloading -> UpdateProgress(state)
-
-        is UpdateState.Ready -> ActionRow(
-            label = stringResource(R.string.update_install),
-            onClick = { onInstall(state.file) },
-        )
-
-        is UpdateState.Failed -> Text(
-            text = stringResource(state.reason),
-            style = MaterialTheme.typography.bodySmall.copy(color = Danger),
-        )
-
-        else -> Unit
-    }
-
-    if (installBlocked) {
-        Text(
-            text = stringResource(R.string.update_err_install),
-            style = MaterialTheme.typography.bodySmall.copy(color = Danger),
-        )
-        ActionRow(
-            label = stringResource(R.string.update_allow_install),
-            onClick = onAllowInstall,
-        )
-    }
-}
-
-/** شريط تنزيل الحزمة؛ القيم بـ[MapDownloader.formatBytes] فلا يختلف رقمان في شاشةٍ واحدة */
-@Composable
-private fun UpdateProgress(state: UpdateState.Downloading) {
-    val fraction = state.fraction
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(PROGRESS_BAR_HEIGHT)
-            .clip(RoundedCornerShape(4.dp))
-            .background(SurfaceHigh),
-    ) {
-        if (fraction != null && fraction > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(fraction)
-                    .height(PROGRESS_BAR_HEIGHT)
-                    .background(Accent),
-            )
-        }
-    }
-    val total = state.total
-    val done = MapDownloader.formatBytes(state.bytes)
-    Text(
-        text = stringResource(
-            R.string.update_downloading,
-            if (total != null) "$done / ${MapDownloader.formatBytes(total)}" else done,
-        ),
-        style = MaterialTheme.typography.titleSmall.copy(
-            color = TextPrimary,
-            fontWeight = FontWeight.Bold,
-        ),
-    )
-}
-
-/** صفرٌ ليس تاريخًا بل غيابُ فحص، فله نصُّه لا «1970-01-01» */
-@Composable
-private fun lastCheckLabel(millis: Long): String =
-    if (millis <= 0L) {
-        stringResource(R.string.update_never)
-    } else {
-        stringResource(
-            R.string.update_last_check,
-            // التنسيق نفسه الذي تعرض به شاشة الرحلات تواريخها، وبـ[Locale.US] كسائر
-            // أرقام التطبيق (قاعدة 4)
-            SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.US).format(Date(millis)),
-        )
-    }
 
 /**
  * نيّةُ اختيار أرشيفٍ من التخزين: منتقي المستندات ومديرو الملفّات في مُختارٍ واحد.
@@ -2738,10 +2544,3 @@ private const val EXTERNAL_DOCS_AUTHORITY = "com.android.externalstorage.documen
  */
 private val MAP_PICK_MIME_TYPES = arrayOf("*/*")
 
-/** «كلّ ٦ ساعة» · «كلّ ٣ أيّام» · «كلّ أسبوع» — تُقرأ بلا حسابٍ ذهنيّ */
-@Composable
-private fun everyLabel(hours: Int): String = when {
-    hours % 168 == 0 && hours == 168 -> stringResource(R.string.settings_update_every_week)
-    hours % 24 == 0 -> stringResource(R.string.settings_update_every_days, Fmt.count(hours / 24))
-    else -> stringResource(R.string.settings_update_every_hours, Fmt.count(hours))
-}

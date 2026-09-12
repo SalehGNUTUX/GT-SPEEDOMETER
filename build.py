@@ -80,7 +80,9 @@ FALLBACK_RELEASES: list[tuple[str, str]] = [
     ("0.2.0", "السرعة في شريط الحالة · مربّع الإعدادات السريعة · قسم الوسائط"),
 ]
 
-_HEADING = re.compile(r"^##\s+v?(\d+\.\d+\.\d+)")
+#: «## v1.0.0» و«## v0.13.0-beta» سواءً — **واللاحقةُ تُلتقط ولا تُقصّ**:
+#: منها يُبنى اسمُ الوسم، وكان يُبنى بإضافة `-beta` دائمًا فانكسر أوّل مستقرّ.
+_HEADING = re.compile(r"^##\s+v?(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)")
 _SUBHEADING = re.compile(r"^###\s+(.+?)\s*$")
 #: بندٌ يبدأ بعنوانٍ عريض: «- **العنوان** بقيّة الكلام» أو «- **العنوان.** …»
 _BULLET_LEAD = re.compile(r"^-\s+\*\*(.+?)\*\*")
@@ -346,9 +348,48 @@ def esc(s: str) -> str:
     return s
 
 
-def apk_url(version: str, kind: str) -> str:
-    tag = f"v{version}-beta"
-    return f"{REPO}/releases/download/{tag}/GT-SPEEDOMETER-{version}-beta-{kind}.apk"
+def apk_url(version: str, label: str) -> str:
+    """رابطُ حزمةٍ بعينها. و[version] الاسمُ الكامل بلاحقته إن كانت."""
+    return f"{REPO}/releases/download/v{version}/GT-SPEEDOMETER-{version}-{label}.apk"
+
+
+def asset_labels(version: str) -> list[str]:
+    """
+    لافتاتُ حزم إصدارٍ كما هي على GitHub: ``release`` · ``libre-release`` …
+
+    تُقرأ من أسماء المرفقات لا تُفترض. وقد افتُرضت مرّتين فكذبت مرّتين: افتُرضت
+    ``debug`` لكلّ إصدارٍ فبقيت روابطُها بعد أن كُفَّ عن نشرها، ثمّ افتُرضت
+    ``release`` وحدها فجاءت النكهتان في ‎1.0.0‎ بأسماءٍ أخرى.
+
+    وعند تعذّر السؤال — بلا شبكةٍ، أو إصدارٌ لم يُنشأ بعدُ لأنّ الصفحة تُولَّد
+    **قبل** إنشائه — يُحزَر على العُرف الجاري: النكهة الحرّة وحدها هي التي تُرفع.
+    """
+    present = release_assets(version)
+    prefix, suffix = f"GT-SPEEDOMETER-{version}-", ".apk"
+    if present:
+        found = sorted(
+            name[len(prefix):-len(suffix)]
+            for name in present
+            if name.startswith(prefix) and name.endswith(suffix)
+        )
+        if found:
+            return found
+    return ["libre-release"] if version >= "1" else ["release"]
+
+
+def main_label(version: str) -> str:
+    """اللافتة التي يشير إليها زرُّ «نزّل مباشرةً»: حزمةُ الإصدار لا التنقيح."""
+    labels = asset_labels(version)
+    for label in labels:
+        if label.endswith("release"):
+            return label
+    return labels[0]
+
+
+#: «libre-release» ← «release» في العرض: ما على جيت‌هاب كلُّه من النكهة الحرّة،
+#: فذكرُها في كلّ خليّةٍ تكرارٌ لا يميّز شيئًا عن شيء
+def label_text(label: str) -> str:
+    return label[len("libre-"):] if label.startswith("libre-") else label
 
 
 #: أسماء مرفقات كلّ إصدار كما هي على GitHub، تُقرأ مرّةً وتُخبَّأ.
@@ -368,7 +409,7 @@ def release_assets(version: str) -> set[str] | None:
     """
     if version in _ASSETS:
         return _ASSETS[version]
-    url = f"https://api.github.com/repos/{REPO_SLUG}/releases/tags/v{version}-beta"
+    url = f"https://api.github.com/repos/{REPO_SLUG}/releases/tags/v{version}"
     try:
         with urllib.request.urlopen(url, timeout=6) as response:
             data = json.load(response)
@@ -394,18 +435,12 @@ def download_links(version: str) -> str:
     """
     روابط حزم إصدارٍ بعينه — ما وُجد منها فعلًا.
 
-    حزمةٌ واحدة لكلّ إصدار. وقد جُرِّبت نكهتان («خفيفة» و«كاملة») في فرع
-    `vector-maps` ولم يُنشر منهما إصدارٌ قطّ، فلا رابطَ في هذا الجدول يشير إليهما.
+    ورزمةُ ‎.aab‎ لا تظهر هنا ولا تُرفع أصلًا: لا تُثبَّت بضغطةٍ على هاتف، وهي
+    لبلاي وحده.
     """
-    kinds = ("release", "debug")
-    present = release_assets(version)
-    if present is not None:
-        kinds = tuple(
-            k for k in kinds
-            if f"GT-SPEEDOMETER-{version}-beta-{k}.apk" in present
-        ) or ("release",)
     return "\n          ".join(
-        f'<a href="{apk_url(version, k)}">{k}</a>' for k in kinds
+        f'<a href="{apk_url(version, label)}">{label_text(label)}</a>'
+        for label in asset_labels(version)
     )
 
 
@@ -420,7 +455,7 @@ def release_rows(items: list[tuple[str, str]]) -> str:
         <td class="note">{esc(note)}</td>
         <td class="dl">
           {download_links(version)}
-          <a href="{REPO}/releases/tag/v{version}-beta" class="ghost">التفاصيل</a>
+          <a href="{REPO}/releases/tag/v{version}" class="ghost">التفاصيل</a>
         </td>
       </tr>""")
     return "\n".join(out)
@@ -597,6 +632,14 @@ CSS = """
 def build(items: list[tuple[str, str]]) -> str:
     icon = icon_data_uri()
     newest = items[0][0]
+    # اللاحقة في الاسم هي الحكم: «1.0.0» مستقرٌّ و«1.1.0-beta» تجريبيّ. وكان السطر
+    # مكتوبًا «كلّ الإصدارات تجريبيّة حتّى إشعارٍ آخر» فبقي بعد أن جاء الإشعار.
+    stable = "-" not in newest
+    state_line = (
+        f"أحدثُ إصدارٍ <strong>مستقرّ</strong> — v{newest}. وما قبل ‎1.0.0‎ تجريبيّ."
+        if stable else
+        "أحدثُ إصدارٍ <strong>تجريبيّ</strong> (beta)."
+    )
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -648,13 +691,13 @@ def build(items: list[tuple[str, str]]) -> str:
         <span class="pill">صالح لـ F-Droid</span>
       </div>
       <div class="cta">
-        <a class="btn" href="{apk_url(newest, 'release')}" download>
+        <a class="btn" href="{apk_url(newest, main_label(newest))}" download>
           نزّل الحزمة مباشرةً · v{esc(newest)}
         </a>
         <a class="btn alt" href="{REPO}/releases">كلّ الإصدارات</a>
         <a class="btn alt" href="{REPO}">المستودع</a>
       </div>
-      <p class="beta">كلّ الإصدارات تجريبيّة (beta) حتّى إشعارٍ آخر.</p>
+      <p class="beta">{state_line}</p>
     </div>
   </div>
 </div>
@@ -684,15 +727,15 @@ def build(items: list[tuple[str, str]]) -> str:
   <div class="wrap">
     <h2 class="h2">التنزيل</h2>
     <p class="sub">
-      لكلّ إصدارٍ حزمتان: <code>release</code> موقّعةٌ بمفتاح المشروع وهي التي
-      تُثبَّت عادةً، و<code>debug</code> للتشخيص. ومع كلّ حزمةٍ ملفّ
-      <code>.sha256</code> للتحقّق من سلامتها.
+      حزمةٌ واحدة لكلّ إصدار: <code>release</code> موقّعةٌ بمفتاح المشروع، ومعها
+      ملفّ <code>.sha256</code> للتحقّق من سلامتها. وحزمةُ <code>debug</code> في
+      الإصدارات القديمة كانت للتشخيص ولم تعد تُنشر.
     </p>
     <div class="cta">
-      <a class="btn" href="{apk_url(newest, 'release')}" download>
+      <a class="btn" href="{apk_url(newest, main_label(newest))}" download>
         نزّل آخر إصدار · v{esc(newest)}
       </a>
-      <a class="btn alt" href="{apk_url(newest, 'release')}.sha256" download>بصمة الحزمة</a>
+      <a class="btn alt" href="{apk_url(newest, main_label(newest))}.sha256" download>بصمة الحزمة</a>
     </div>
     <div class="tablewrap">
       <table>
@@ -707,7 +750,8 @@ def build(items: list[tuple[str, str]]) -> str:
     <div class="caveat">
       <b>عند أوّل تثبيت:</b> فعّل «تثبيت من مصادر غير معروفة» لمدير الملفّات أو
       المتصفّح. وإن كنتَ مثبِّتًا حزمة <code>debug</code> سابقًا فأزِلها قبل تثبيت
-      <code>release</code> — توقيعهما مختلف فلا يجري التحديث فوقها.
+      <code>release</code> — توقيعهما مختلف فلا يجري التحديث فوقها. والتطبيق بعدها
+      يفحص التحديثات بنفسه ويجلبها من هذه الصفحة نفسها.
     </div>
   </div>
 </section>

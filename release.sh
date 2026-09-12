@@ -26,6 +26,11 @@
 #    --dry-run       تجربةٌ جافّة
 #    --help          هذه الرسالة
 #
+#  النكهتان (منذ 1.0.0):
+#    libre → `.apk` موقَّعة بمفتاح الإصدار، تُرفع إلى إصدار GitHub.
+#    play  → `.aab` موقَّعة بمفتاح الرفع، **تبقى في dist/ ولا تُرفع**؛ ترفعها بيدك
+#            إلى Play Console (انظر docs/الرفع-إلى-غوغل-بلاي.md).
+#
 #  الدفع دائمًا إلى الفرع الافتراضيّ مباشرةً (git push origin HEAD:main)، فلا يُفتح
 #  طلب مساهمة ولو كنتَ على فرعٍ آخر.
 #
@@ -52,7 +57,7 @@ step() { printf '\n%s\n' "${C_BOLD}▸ $*${C_RESET}"; }
 ARG_CODE=""; ARG_NAME=""; ARG_TYPE=""; ARG_VARIANT=""; ARG_BRANCH=""
 ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0; REPACKAGE=0; REPLACE=0; PUSH_ONLY=0
 REL_TYPE=""; VARIANT=""; TAG=""; TAG_MSG=""; DIST=""; PUB_BUILD=0
-TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0; ARTIFACTS=()
+TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0; ARTIFACTS=(); STORE_ARTIFACTS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -178,7 +183,6 @@ push_branch() {
 # تبديل، والفرع الذي فيه نكهتان لا يحتاج أن يُذكّرنا بأسمائهما. ولو كُتبت هنا
 # لانحرفت عن `build.gradle.kts` عند أوّل تعديلٍ على أحدهما.
 detect_flavors() {
-  # لا نكهاتٍ اليوم؛ تبقى الدالّة لأنّ كلفتها صفرٌ وتعمل إن عادت
   FLAVORS=()
   [[ -f "$GRADLE_FILE" ]] || return 0
   grep -q 'productFlavors' "$GRADLE_FILE" || return 0
@@ -188,8 +192,24 @@ detect_flavors() {
            grep -oE 'create\("[A-Za-z0-9]+"\)' | sed -E 's/create\("(.*)"\)/\1/')
 }
 
-# «lite» ← «Lite»: أسماء مهامّ Gradle تُبنى بأوّل حرفٍ كبير
+# «libre» ← «Libre»: أسماء مهامّ Gradle تُبنى بأوّل حرفٍ كبير
 cap() { printf '%s%s' "$(printf '%s' "${1:0:1}" | tr '[:lower:]' '[:upper:]')" "${1:1}"; }
+
+# ---------------------------------------------------------------------------
+#  نكهةُ المتجر: الاسمُ وحده مكتوبٌ هنا، وكلُّ ما بعده يتبعه
+# ---------------------------------------------------------------------------
+#
+# **وهي وحدها تُحزَم `.aab` ولا تُرفع إلى جيت‌هاب.** وذلك ثلاثةُ أحكامٍ في حكم:
+#
+# 1. غوغل بلاي لا يقبل `.apk` من تطبيقٍ جديد، بل `.aab` يُقسّمه هو على الأجهزة.
+# 2. و`.aab` لا يُثبَّت بضغطةٍ على هاتف، فرفعُه إلى صفحة الإصدارات يعرض على الناس
+#    ملفًّا لا ينفعهم — والقاعدة الثامنة: لا يُعرض ما لا يُستعمل.
+# 3. وهو موقَّعٌ بمفتاح الرفع لا بمفتاح الإصدار؛ من ثبّت حزمة جيت‌هاب لا يُحدِّثه
+#    شيءٌ من هذا الطريق أصلًا.
+#
+# فيبقى في `dist/` باسمه، ويُرفع بيدك إلى Play Console. والدرب موصوفٌ خطوةً خطوة
+# في `docs/الرفع-إلى-غوغل-بلاي.md`.
+STORE_FLAVOR="play"
 
 build_apks() {
   detect_flavors
@@ -199,7 +219,15 @@ build_apks() {
     if (( ${#FLAVORS[@]} == 0 )); then
       tasks+=(":app:assemble$(cap "$v")")
     else
-      for f in "${FLAVORS[@]}"; do tasks+=(":app:assemble$(cap "$f")$(cap "$v")"); done
+      for f in "${FLAVORS[@]}"; do
+        if [[ "$f" == "$STORE_FLAVOR" ]]; then
+          # ورزمةُ تنقيحٍ لا معنى لها: لا تُرفع إلى المتجر ولا تُثبَّت على جهاز
+          [[ "$v" == "release" ]] || continue
+          tasks+=(":app:bundle$(cap "$f")$(cap "$v")")
+        else
+          tasks+=(":app:assemble$(cap "$f")$(cap "$v")")
+        fi
+      done
     fi
   done
   say "./gradlew ${tasks[*]}"
@@ -220,39 +248,62 @@ collect_artifacts() {
     say "أُضيف dist/ إلى .gitignore"
   fi
   detect_flavors
-  ARTIFACTS=()
-  local v f src out dir label
+  ARTIFACTS=(); STORE_ARTIFACTS=()
+  local v f src out dir label ext store
   for v in debug release; do
     [[ "$VARIANT" == "$v" || "$VARIANT" == "both" ]] || continue
     # حلقةٌ واحدة للحالتين: بلا نكهاتٍ يدور مرّةً بلاحقةٍ فارغة، وبنكهتين مرّتين.
     # وبهذا يبقى اسم الحزمة على الفرع القديم كما كان بالحرف: `…-release.apk`
     for f in "${FLAVORS[@]-}" ; do
+      store=0; ext="apk"
       if [[ -z "$f" ]]; then
         dir="app/build/outputs/apk/${v}"; src="${dir}/app-${v}.apk"; label="$v"
+      elif [[ "$f" == "$STORE_FLAVOR" ]]; then
+        [[ "$v" == "release" ]] || continue
+        store=1; ext="aab"
+        dir="app/build/outputs/bundle/${f}$(cap "$v")"
+        src="${dir}/app-${f}-${v}.aab"; label="${f}-${v}"
       else
         dir="app/build/outputs/apk/${f}/${v}"; src="${dir}/app-${f}-${v}.apk"; label="${f}-${v}"
       fi
-      [[ -f "$src" ]] || src="${src%.apk}-unsigned.apk"
-      out="${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${label}.apk"
-      if (( DRY_RUN )); then ARTIFACTS+=("$out"); continue; fi
+      [[ -f "$src" ]] || src="${src%.${ext}}-unsigned.${ext}"
+      out="${DIST}/GT-SPEEDOMETER-${NEW_NAME}-${label}.${ext}"
+      if (( DRY_RUN )); then
+        if (( store )); then STORE_ARTIFACTS+=("$out"); else ARTIFACTS+=("$out"); fi
+        continue
+      fi
       [[ -f "$src" ]] || die "لم أجد حزمة ${label} في ${dir}/"
       cp "$src" "$out"
       ( cd "$DIST" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
-      ARTIFACTS+=("$out" "${out}.sha256")
+      # المرفوع إلى جيت‌هاب في سلّة، ورزمةُ المتجر في أخرى: تلك تُرفع بيدك
+      if (( store )); then
+        STORE_ARTIFACTS+=("$out" "${out}.sha256")
+      else
+        ARTIFACTS+=("$out" "${out}.sha256")
+      fi
       ok "$(basename "$out")  —  $(du -h "$out" | cut -f1)"
     done
   done
+  if (( ${#STORE_ARTIFACTS[@]} > 0 )); then
+    say "رزمةُ المتجر لا تُرفع مع الإصدار؛ ارفعها بيدك إلى Play Console:"
+    printf '     %s\n' "${STORE_ARTIFACTS[@]}"
+  fi
 }
 
 # يلتقط حزمًا بُنيت في تشغيلٍ سابق، فلا يُعاد بناء ما هو جاهز
 find_built_apks() {
-  ARTIFACTS=()
+  ARTIFACTS=(); STORE_ARTIFACTS=()
   local d="dist/${NEW_NAME}" f
   [[ -d "$d" ]] || return 1
   for f in "$d"/*.apk; do
     [[ -f "$f" ]] || continue
     ARTIFACTS+=("$f")
     [[ -f "${f}.sha256" ]] && ARTIFACTS+=("${f}.sha256")
+  done
+  # ورزمةُ المتجر تُجمع لتُذكر لا لتُرفع
+  for f in "$d"/*.aab; do
+    [[ -f "$f" ]] || continue
+    STORE_ARTIFACTS+=("$f")
   done
   (( ${#ARTIFACTS[@]} > 0 ))
 }
@@ -689,8 +740,16 @@ fi
 [[ "$VARIANT" =~ ^(debug|release|both)$ ]] || die "سمة البناء: debug أو release أو both."
 
 if [[ "$VARIANT" != "debug" && ! -f keystore.properties ]]; then
-  warn "لا ملفّ keystore.properties: حزمة release ستخرج **بلا توقيع** ولن تُثبَّت مباشرةً."
+  warn "لا ملفّ keystore.properties: حزمة libre ستخرج **بلا توقيع** ولن تُثبَّت مباشرةً."
   confirm "أأمضي؟" || die "أُلغي."
+fi
+
+# ورزمةُ المتجر بلا مفتاح رفعٍ يرفضها Play Console عند أوّل رفع
+if [[ "$VARIANT" != "debug" ]] && detect_flavors && printf '%s\n' "${FLAVORS[@]-}" | grep -qx "$STORE_FLAVOR"; then
+  if [[ ! -f keystore-full.properties ]]; then
+    warn "لا ملفّ keystore-full.properties: رزمة ${STORE_FLAVOR} ستخرج **بلا توقيع**، وبلاي لا يقبلها."
+    confirm "أأمضي؟" || die "أُلغي."
+  fi
 fi
 
 # ---------- سجلّ التغييرات ----------
@@ -702,6 +761,7 @@ cat <<EOF
   الإصدار      : من ${CUR_NAME} (${CUR_CODE}) إلى ${NEW_NAME} (${NEW_CODE})
   النوع        : $([[ "$REL_TYPE" == beta ]] && echo 'تجريبيّ — prerelease' || echo 'نهائيّ — latest')
   سمة البناء   : ${VARIANT}
+  النكهات      : $(detect_flavors; if (( ${#FLAVORS[@]} == 0 )); then printf 'لا نكهات'; else printf '%s ' "${FLAVORS[@]}"; printf '— %s تُحزَم .aab ولا تُرفع' "$STORE_FLAVOR"; fi)
   الوسم        : ${TAG}$( (( REPLACE )) && printf ' (استبدال)' )
   الفرع        : ${BRANCH} إلى origin/${TARGET_BRANCH} — دفعٌ مباشر
   الدفع        : $([[ $DO_PUSH == 1 ]] && echo 'نعم' || echo 'لا')
@@ -808,6 +868,11 @@ if (( DO_PUSH )); then
   step "الاختبار قبل النشر"
   printf '%s\n' "الحزمة في: ${C_BOLD}${DIST}/${C_RESET}"
   printf '%s\n' "ثبّتها واختبرها الآن. مثال: adb install -r ${ARTIFACTS[0]:-<apk>}"
+  if (( ${#STORE_ARTIFACTS[@]} > 0 )); then
+    # رزمةُ المتجر لا تُثبَّت لتُختبر؛ وتُختبر نكهتُها بحزمة تنقيحٍ منها:
+    #   ./gradlew :app:assemblePlayDebug
+    printf '%s\n' "ورزمةُ ${STORE_FLAVOR} لا تُثبَّت — اختبر نكهتها بـ:  ./gradlew :app:assemble$(cap "$STORE_FLAVOR")Debug"
+  fi
   if ! confirm "أاختبرتَ الحزمة على الجهاز وأقررتَها للنشر؟"; then
     warn "لم يُعتمد شيء ولم يُدفع. رقم الإصدار الجديد باقٍ في ${GRADLE_FILE}؛"
     warn "لإرجاعه:  git checkout -- ${GRADLE_FILE}"

@@ -23,8 +23,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 7. **مساحات اللمس ≥ 56 نقطة، وأزرار الفعل الرئيسة ≥ 72:** تُضغط بقفّاز الدراجة.
 8. **لا تدّعِ دقّةً لا نملكها.** المعدّل المتحقّق وعدد الأقمار يُعرضان دائمًا. وهذه
    القاعدة تمتدّ إلى **الموقع العامّ**: جدول التنزيل لا يعرض رابطًا لحزمةٍ غير موجودة.
-9. **حزمةٌ واحدة.** جُرِّبت نكهتان (`lite`/`full`) في ‎0.10.0‎ وأُزيلتا — لا تُعَد
-   إضافتُها بلا سببٍ جديد. انظر `docs/تجربة-الخرائط-المتجهية.md`.
+9. **نكهتان للتوزيع، وميزاتُهما واحدةٌ حرفًا بحرف.** `libre` (جيت‌هاب · F-Droid)
+   و`play` (المتجر). وجُرِّبت قبلهما نكهتان تختلفان في **المحرّك** (`lite`/`full`)
+   في ‎0.10.0‎ فأُزيلتا (`docs/تجربة-الخرائط-المتجهية.md`)، والقاعدة باقيةٌ على
+   حالها: **لا نكهةَ لفرقٍ في الميزات**. والفرق الوحيد المسموح فرقُ سياسةِ متجرٍ
+   لا يُحتال عليه — وهو اليوم واحد: **بلاي يمنع أن يحدّث التطبيق نفسه**، فنكهته
+   بلا `UpdateChecker` ولا `REQUEST_INSTALL_PACKAGES` ولا نصوصِهما.
+   انظر `docs/الرفع-إلى-غوغل-بلاي.md`.
 
 ## قواعد المستودع
 
@@ -35,43 +40,67 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## البناء والفحص
 
 ```bash
-./gradlew :app:assembleDebug          # الحكم النهائيّ على الترجمة
-./gradlew :app:testDebugUnitTest      # اختبارات الوحدة
+./gradlew :app:assembleLibreDebug     # الحكم النهائيّ على الترجمة
+./gradlew :app:assemblePlayDebug      # ونكهة المتجر معها: الحاجز اسمٌ بجسدين
+./gradlew :app:testLibreDebugUnitTest # اختبارات الوحدة (الشجرة مشتركة)
+./gradlew :app:bundlePlayRelease      # رزمة `.aab` لبلاي
 bash CLEANUP.sh                       # ثمانية فحوصٍ على الشجرة، في ثانية
 ```
+
+**وبناءُ نكهةٍ واحدةٍ لا يكفي حكمًا:** `ui/update/UpdateSurface.kt` أربعةُ أسماءٍ
+بجسدين، فمن عدّل أحدهما ولم يعدّل الآخر لا يكسر إلّا النكهة التي لم يبنِها.
 
 **اختبارٌ واحد بعينه:**
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests '*PmtilesIndexTest*'
+./gradlew :app:testLibreDebugUnitTest --tests '*PmtilesIndexTest*'
 ```
 
 **اختبار قراءة أرشيف PMTiles** يُتخطّى ما لم يوجد أرشيفٌ حقيقيّ (‎190‎ م.ب لا تُودَع
 في المستودع). لتشغيله فعلًا:
 
 ```bash
-GT_PMTILES=/مسار/morocco.pmtiles ./gradlew :app:testDebugUnitTest
+GT_PMTILES=/مسار/morocco.pmtiles ./gradlew :app:testLibreDebugUnitTest
 ```
 
-Gradle 8.11.1 · AGP 8.9.2 · Kotlin 2.1.0 · compileSdk 35 · minSdk 26 · osmdroid 6.1.20.
+Gradle 8.11.1 · AGP 8.9.2 · Kotlin 2.1.0 · compileSdk 36 · minSdk 26 · osmdroid 6.1.20.
+
+**و`targetSdk 36` شرطُ بلاي منذ ‎31‎ غشت ‎2026‎**، لا خيارٌ يُراجَع.
 
 ### حين تضيق ذاكرة جهاز البناء
 
-`lintVitalAnalyzeRelease` أثقلُ خطوةٍ في البناء، وتُقتل بلا رسالةٍ على جهازٍ بـ‎8‎ غ.ب
-مشغول. لحزم التجربة وحدها:
+`lintVitalAnalyze…Release` أثقلُ خطوةٍ في البناء، وتُقتل بلا رسالةٍ على جهازٍ بـ‎8‎
+غ.ب مشغول. لحزم التجربة وحدها:
 
 ```bash
-./gradlew :app:assembleRelease --no-daemon --no-parallel --max-workers=1 \
-  -x lintVitalAnalyzeRelease -x lintVitalReportRelease
+./gradlew :app:assembleLibreRelease --no-daemon --no-parallel --max-workers=1 \
+  -x lintVitalAnalyzeLibreRelease -x lintVitalReportLibreRelease
 ```
 
-ولا يُستثنى الفاحص في `release.sh`: الإصدار المنشور يمرّ به كاملًا.
+**والاسم بالنكهة لا بدونها.** `-x lintVitalReportRelease` كان صالحًا قبل النكهتين،
+وصار اليوم **ملتبسًا فيسقط البناء**: «Task is ambiguous … candidates are
+`lintVitalReportLibreRelease`, `lintVitalReportPlayRelease`». وللرزمة:
+
+```bash
+./gradlew :app:bundlePlayRelease --no-daemon --no-parallel --max-workers=1 \
+  -x lintVitalAnalyzePlayRelease -x lintVitalReportPlayRelease
+```
+
+ولا يُستثنى الفاحص في `release.sh`: الإصدار المنشور يمرّ به كاملًا. **فأخلِ الذاكرة
+قبل أن تبدأه** — أُغلِق المتصفّح وما يشبهه — وإلّا قُتلت الخطوة بلا رسالة وسقط
+الإصدار في منتصفه. (وقع في جلسة ‎1.0.0‎: قُتل البناء عند `lintVitalAnalyzeLibreRelease`
+والمتاح ‎0‎ غ.ب.)
+
+ونكهتان تعنيان خطوتَي فحصٍ لا واحدة، فالزمن يقارب الضِّعف.
 
 ### الإصدار
 
 `./release.sh` يفعل كلّ شيء: رفعُ الرقم في `build.gradle.kts` و`README.md`، وتوليدُ
 `index.html` من `CHANGELOG.md`، والبناء، والإيداع، والدفع **إلى `main` مباشرةً**
 مهما كان الفرع، والوسم، وإنشاء إصدار GitHub ورفع الحزمة إليه.
+
+**وحزمةُ `libre` وحدها تُرفع.** رزمةُ `play` تُبنى وتُنسخ إلى `dist/` **ولا
+تُرفع**: `.aab` لا تُثبَّت بضغطةٍ على هاتف، وترفعها بيدك إلى Play Console.
 
 ```bash
 ./release.sh --dry-run                 # يعرض ما سيفعله بلا أن يفعل
@@ -111,6 +140,18 @@ ui/
   screens/             CameraScreen · TripsScreen · SettingsScreen · MediaScreen · PipScreen
   components/          RouteMap · GaugeStyles · RouteSketch
 ```
+
+**وشجرتان فوق `main`:**
+
+```
+app/src/libre/   UpdateChecker · UpdateSurface (الأجساد) · إذن التثبيت · 33 نصًّا
+app/src/play/    UpdateSurface (الأسماء بلا أجساد) — ولا شيء غيره
+```
+
+`ui/update/UpdateSurface.kt` هو **الحاجز**: أربعةُ أسماءٍ تُعرَّف في الشجرتين
+(`UPDATE_SECTION_IDS` · `UpdateBanner` · `UpdateAutoCheck` · `updateSection`)،
+فلا سطرَ شرطيًّا في `MainActivity` ولا في `SettingsScreen`. ومن زاد اسمًا في
+إحداهما زاده في الأخرى، وإلّا سقط بناءُ نكهةٍ لا يبنيها.
 
 ### الخرائط: أربعة مصادر ومحرّكان
 

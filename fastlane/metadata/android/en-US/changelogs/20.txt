@@ -1,0 +1,6 @@
+First stable release.
+
+• Two distribution flavours with identical features: the store flavour carries no self-updater — Play updates it.
+• targetSdk 36 (Android 16).
+• Trips and media screens now say "reading…" instead of staying blank.
+• Everything before this is in CHANGELOG.md in the repository.
