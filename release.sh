@@ -23,6 +23,7 @@
 #    --yes           لا تسأل تأكيدًا (للتشغيل الآليّ)
 #    --no-push       ابنِ واعتمد محلّيًّا بلا دفع
 #    --no-release    ادفع بلا إنشاء إصدارٍ على GitHub
+#    --play          ارفع رزمة .aab إلى المسار الداخليّ في غوغل بلاي بعد النشر
 #    --dry-run       تجربةٌ جافّة
 #    --help          هذه الرسالة
 #
@@ -56,6 +57,7 @@ step() { printf '\n%s\n' "${C_BOLD}▸ $*${C_RESET}"; }
 # ---------- الوسائط ----------
 ARG_CODE=""; ARG_NAME=""; ARG_TYPE=""; ARG_VARIANT=""; ARG_BRANCH=""
 ASSUME_YES=0; DO_PUSH=1; DO_RELEASE=1; DRY_RUN=0; REPACKAGE=0; REPLACE=0; PUSH_ONLY=0
+DO_PLAY=0
 REL_TYPE=""; VARIANT=""; TAG=""; TAG_MSG=""; DIST=""; PUB_BUILD=0
 TAG_EXISTS_LOCAL=0; TAG_EXISTS_REMOTE=0; ARTIFACTS=(); STORE_ARTIFACTS=()
 
@@ -72,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)  ASSUME_YES=1; shift ;;
     --no-push) DO_PUSH=0; DO_RELEASE=0; shift ;;
     --no-release) DO_RELEASE=0; shift ;;
+    --play)       DO_PLAY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --help|-h) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "خيار غير معروف: $1  (جرّب --help)" ;;
@@ -422,6 +425,37 @@ for a in json.load(sys.stdin):
   ok "الإصدار ${TAG} جاهز"
 }
 
+# ---------------------------------------------------------------------------
+#  الرفع إلى غوغل بلاي — **بعَلَمٍ صريح لا تلقائيًّا**
+# ---------------------------------------------------------------------------
+#
+# ولماذا لا يقع من نفسه مع كلّ إصدار؟ لأنّه فعلٌ خارج المستودع لا يُستردّ: رقمُ
+# إصدارٍ استُهلك على بلاي لا يُعاد استعماله أبدًا ولو حُذف الإصدار. فالافتراضُ
+# ألّا يقع، ومن أراده قاله.
+upload_to_play() {
+  local aab="${STORE_ARTIFACTS[0]:-}"
+  if [[ -z "$aab" || ! -f "$aab" ]]; then
+    warn "--play: لا رزمةَ .aab في ${DIST}/ — تُبنى بسمة release لا debug."
+    return 1
+  fi
+  if [[ ! -f "${GT_PLAY_JSON:-play-api.json}" ]]; then
+    warn "--play: لا ملفَّ حساب خدمةٍ (${GT_PLAY_JSON:-play-api.json})."
+    warn "        انظر docs/الرفع-إلى-غوغل-بلاي.md — ولم يُرفع شيء."
+    return 1
+  fi
+  if ! command -v bundle >/dev/null; then
+    warn "--play: لا bundler. ثبّته ثمّ:  bundle install"
+    return 1
+  fi
+  say "bundle exec fastlane play_internal aab:${aab}"
+  if run bundle exec fastlane play_internal "aab:${aab}"; then
+    ok "رُفعت إلى المسار الداخليّ في غوغل بلاي"
+  else
+    warn "فشل الرفع إلى بلاي. الإصدار على GitHub تمّ، والرزمة في ${DIST}/"
+    return 1
+  fi
+}
+
 # ---------- جذر المستودع ----------
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -n "$REPO_ROOT" ]] || die "لست داخل مستودع git."
@@ -761,11 +795,12 @@ cat <<EOF
   الإصدار      : من ${CUR_NAME} (${CUR_CODE}) إلى ${NEW_NAME} (${NEW_CODE})
   النوع        : $([[ "$REL_TYPE" == beta ]] && echo 'تجريبيّ — prerelease' || echo 'نهائيّ — latest')
   سمة البناء   : ${VARIANT}
-  النكهات      : $(detect_flavors; if (( ${#FLAVORS[@]} == 0 )); then printf 'لا نكهات'; else printf '%s ' "${FLAVORS[@]}"; printf '— %s تُحزَم .aab ولا تُرفع' "$STORE_FLAVOR"; fi)
+  النكهات      : $(detect_flavors; if (( ${#FLAVORS[@]} == 0 )); then printf 'لا نكهات'; else printf '%s ' "${FLAVORS[@]}"; printf '— %s تُحزَم .aab' "$STORE_FLAVOR"; fi)
   الوسم        : ${TAG}$( (( REPLACE )) && printf ' (استبدال)' )
   الفرع        : ${BRANCH} إلى origin/${TARGET_BRANCH} — دفعٌ مباشر
   الدفع        : $([[ $DO_PUSH == 1 ]] && echo 'نعم' || echo 'لا')
   إنشاء الإصدار: $([[ $DO_RELEASE == 1 ]] && echo 'نعم' || echo 'لا')
+  رفعٌ إلى بلاي : $([[ $DO_PLAY == 1 ]] && echo 'نعم — المسار الداخليّ' || echo 'لا')
 EOF
 if (( DRY_RUN )); then warn "تجربةٌ جافّة: لن يُكتب ولا يُدفع شيء."; fi
 confirm "أأمضي؟" || die "أُلغي."
@@ -930,6 +965,11 @@ fi
 
 step "إصدار GitHub"
 publish_release
+
+if (( DO_PLAY )); then
+  step "غوغل بلاي"
+  upload_to_play || true
+fi
 
 ok "تمّ."
 printf '\n%s\n' "${C_BOLD}${TAG}${C_RESET} — $([[ "$REL_TYPE" == beta ]] && echo 'تجريبيّ' || echo 'نهائيّ')"

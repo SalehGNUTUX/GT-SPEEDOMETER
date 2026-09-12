@@ -1,0 +1,115 @@
+# ============================================================================
+#  GT-SPEEDOMETER — مسارات الرفع إلى غوغل بلاي
+#
+#  الرزمةُ تُبنى بـ Gradle لا هنا: `release.sh` هو الذي يرفع الأرقام ويبني
+#  ويودع ويوسم، وهذه المسارات **ترفع ما بُني** لا غير. وفصلُهما مقصود — مسارٌ
+#  يبني ويرفع في خطوةٍ واحدة يُخفي أيَّ الاثنين فشل.
+#
+#      bundle exec fastlane play_internal          # الرزمة إلى المسار الداخليّ
+#      bundle exec fastlane play_metadata          # الوصف واللقطات وحدها
+#      bundle exec fastlane play_promote           # داخليّ ← مغلق ← إنتاج
+#      bundle exec fastlane play_internal aab:/مسار/آخر.aab
+# ============================================================================
+
+# **ولا تُولّد README.** fastlane يكتب `fastlane/README.md` من أوصاف المسارات بعد
+# كلّ تشغيل، فيطمس ملفَّنا العربيّ الذي يقول ماذا يُلتقط من اللقطات وما مقاساتها.
+# وقع هذا فعلًا عند أوّل تشغيل، واستُرجع الملفّ من git.
+skip_docs
+
+default_platform(:android)
+
+# **جذرُ المشروع، لا مجلّدُ العمل.** fastlane يشتغل من داخل `fastlane/`، فمسارٌ
+# نسبيٌّ كـ`dist/…` يشير إلى `fastlane/dist/…` ولا يجد شيئًا — فيقول «لا رزمةَ
+# للرفع» والرزمةُ موجودة. وقع هذا فعلًا عند أوّل تشغيل.
+ROOT = File.expand_path("..", __dir__)
+
+# مفتاحُ حساب الخدمة: من البيئة إن مُرِّر، وإلّا من جذر المشروع
+def play_key
+  ENV["GT_PLAY_JSON"] || File.join(ROOT, "play-api.json")
+end
+
+# رزمةُ أحدث إصدارٍ بُني، أو ما يُمرَّر صراحةً بـ`aab:`
+def resolve_aab(options)
+  given = options[:aab]
+  UI.user_error!("لا رزمةَ في #{given}") if given && !File.exist?(given)
+  return given if given
+
+  built = Dir[File.join(ROOT, "dist/*/GT-SPEEDOMETER-*-play-release.aab")]
+            .max_by { |f| File.mtime(f) }
+  built ||= File.join(ROOT, "app/build/outputs/bundle/playRelease/app-play-release.aab")
+  UI.user_error!(
+    "لا رزمةَ للرفع. ابنِها أوّلًا:  ./gradlew :app:bundlePlayRelease"
+  ) unless File.exist?(built)
+  built
+end
+
+# الحارس: مفتاحٌ غائبٌ يُقال صراحةً، ولا يُترك fastlane يسقط برسالةٍ إنجليزيّةٍ بعيدة
+def ensure_key!
+  key = play_key
+  return if File.exist?(key)
+  UI.user_error!(<<~MSG)
+    لا ملفَّ حساب خدمةٍ في: #{key}
+
+    أنشئه من Play Console ← الإعدادات ← وصول واجهة برمجة التطبيقات، وامنحه
+    صلاحيّة «إصدار التطبيقات»، ثمّ ضعه خارج المستودع ومرّر مساره:
+
+        GT_PLAY_JSON=/مسار/آمن/play-api.json bundle exec fastlane play_internal
+
+    والتفصيل في docs/الرفع-إلى-غوغل-بلاي.md
+  MSG
+end
+
+platform :android do
+
+  desc "رفعُ الرزمة إلى المسار الداخليّ (يصل المختبِرين في دقائق، بلا مراجعة)"
+  lane :play_internal do |options|
+    ensure_key!
+    aab = resolve_aab(options)
+    UI.message("الرزمة: #{aab}")
+    upload_to_play_store(
+      aab: aab,
+      track: options[:track] || "internal",
+      release_status: options[:status] || "completed",
+      # نصُّ «ما الجديد» من fastlane/metadata/android/<لغة>/changelogs/<رقم>.txt
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: false,
+      # **لا رفعَ لرزمةٍ أقدم ممّا في المتجر**: يسقط الرفع بدل أن يمرّ صامتًا
+      validate_only: options[:dry] == "true",
+    )
+  end
+
+  desc "أيُّ رزمةٍ سترتفع؟ — يُسأل قبل الرفع لا بعده"
+  lane :play_which do |options|
+    aab = resolve_aab(options)
+    UI.success("الرزمة: #{aab}")
+    UI.message("الحجم : #{(File.size(aab) / 1024.0 / 1024).round(1)} م.ب")
+    UI.message("المفتاح: #{play_key}#{File.exist?(play_key) ? "" : "  (غير موجود)"}")
+  end
+
+  desc "بيانات المتجر وحدها: الوصف والأيقونة والرسم المميّز واللقطات"
+  lane :play_metadata do
+    ensure_key!
+    upload_to_play_store(
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true,
+    )
+  end
+
+  desc "ترقيةُ ما في مسارٍ إلى ما بعده بلا رفعِ رزمةٍ جديدة"
+  lane :play_promote do |options|
+    ensure_key!
+    upload_to_play_store(
+      track: options[:from] || "internal",
+      track_promote_to: options[:to] || "alpha",
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: true,
+    )
+  end
+end

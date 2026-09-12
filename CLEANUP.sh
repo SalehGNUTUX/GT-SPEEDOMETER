@@ -241,7 +241,7 @@ fi
 # ===========================================================================
 head2 "أسرار التوقيع"
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  LEAKED="$(git ls-files | grep -E 'keystore[^/]*\.properties$|\.jks$|\.keystore$|^local\.properties$' | grep -v 'debug\.keystore' || true)"
+  LEAKED="$(git ls-files | grep -E 'keystore[^/]*\.properties$|\.jks$|\.keystore$|^local\.properties$|play-api\.json$|service-account.*\.json$' | grep -v 'debug\.keystore' || true)"
   if [[ -n "$LEAKED" ]]; then
     PROBLEMS=$((PROBLEMS + 1))
     bad "متتبَّعة في git — أخرِجها فورًا بـ git rm --cached:"
@@ -250,7 +250,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     ok "لا سرّ متتبَّعًا"
   fi
   # لا تقل «متجاهَل» عن ملفٍّ أثبتنا للتوّ أنّه متتبَّع
-  for f in keystore.properties keystore-full.properties *.jks; do
+  for f in keystore.properties keystore-full.properties play-api.json *.jks; do
     [[ -e "$f" ]] || continue
     git ls-files --error-unmatch "$f" >/dev/null 2>&1 && continue
     printf '%s\n' "      ${C_DIM}موجودٌ محلّيًّا ومتجاهَل — احتفظ بنسخةٍ خارج الجهاز: $f${C_RESET}"
@@ -280,7 +280,7 @@ fi
 # ===========================================================================
 NOTES=0
 head2 "جذر المشروع"
-KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties keystore-full.properties local.properties dist docs .gradle .kotlin __pycache__ .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html PRIVACY.md TESTING.md fastlane "
+KNOWN_ROOT=" app art gradle gradlew gradlew.bat build.gradle.kts settings.gradle.kts gradle.properties README.md CHANGELOG.md CLAUDE.md ROADMAP.md LICENSE .gitignore .git scripts release.sh CLEANUP.sh signing-fingerprints.txt keystore.properties keystore-full.properties local.properties dist docs .gradle .kotlin __pycache__ .idea build .claude .github osmand-api NOTICE-OsmAnd-API.md build.py index.html PRIVACY.md TESTING.md fastlane Gemfile Gemfile.lock vendor .bundle play-api.json "
 STRAY=()
 while IFS= read -r n; do
   case "$n" in *.jks|*.keystore) continue ;; esac

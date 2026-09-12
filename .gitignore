@@ -22,3 +22,14 @@ keystore-full.properties
 
 # حزم الإصدار المبنيّة محلّيًّا
 dist/
+
+# مفتاحُ النشر إلى غوغل بلاي: حساب خدمةٍ يأذن بالرفع باسمك. **لا يدخل المستودع.**
+play-api.json
+*-service-account.json
+
+# fastlane: الحزم المثبَّتة محلّيًّا وتقاريرُ التشغيل. و`Gemfile.lock` يُودَع عمدًا.
+vendor/
+.bundle/
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
