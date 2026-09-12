@@ -1,5 +1,6 @@
 package net.gnutux.speedometer.ui.update
 
+import android.content.Context
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -29,8 +30,14 @@ import net.gnutux.speedometer.ui.SpeedoViewModel
  * القاعدة التاسعة في `CLAUDE.md`.
  */
 
-/** لا قسمَ تحديثٍ في ترتيب الإعدادات */
-internal val UPDATE_SECTION_IDS: List<String> = emptyList()
+/**
+ * لا قسمَ تحديثٍ في ترتيب الإعدادات.
+ *
+ * ودالّةٌ تأخذ سياقًا ولا تستعمله: النكهةُ الحرّة تقرأ به شهادةَ الحزمة الجارية
+ * (فحزمةُ F-Droid لا يحدّثها ما نجلبه)، وهذه لا تحتاج إلى سؤال — **والأسماء
+ * تتطابق أو سقط بناءُ إحدى النكهتين**.
+ */
+internal fun updateSectionIds(context: Context): List<String> = emptyList()
 
 /** لا شريطَ خبر */
 @Composable
@@ -42,6 +49,7 @@ internal fun UpdateAutoCheck(settings: AppSettings) = Unit
 
 /** لا بطاقاتٍ في شاشة الإعدادات */
 internal fun LazyListScope.updateSection(
+    context: Context,
     settings: AppSettings,
     openId: String,
     onToggle: (String) -> Unit,

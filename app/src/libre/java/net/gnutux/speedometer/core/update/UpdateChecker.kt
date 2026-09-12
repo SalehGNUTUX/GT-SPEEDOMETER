@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -22,6 +23,7 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
@@ -624,6 +626,89 @@ class UpdateChecker private constructor(context: Context) {
     private data class Asset(val name: String, val url: String, val size: Long)
 
     companion object {
+
+        /**
+         * بصمةُ شهادة التوقيع (SHA-256) التي نوقّع بها حزم جيت‌هاب.
+         *
+         * هي عينُ ما في `signing-fingerprints.txt` تحت `libreRelease`، ويقولها:
+         *
+         *     keytool -list -v -keystore gt-speedometer-release.jks -alias gt-speedometer
+         *
+         * **ومكتوبةٌ نصًّا لا مقروءةٌ من موضعٍ يُبدَّل مع الحزمة**: مقارنةُ الحزمة
+         * بنفسها لا تُثبت شيئًا.
+         */
+        private const val OUR_CERT_SHA256 =
+            "b9db56070c073eb8ff1ea16ff12d6e55e6617e7561b08661b937c25d064c0c1a"
+
+        /** جوابٌ لا يتبدّل ما دامت العمليّة حيّة: الشهادة تُقرأ مرّةً */
+        @Volatile
+        private var selfUpdatable: Boolean? = null
+
+        /**
+         * أنُحدِّث أنفسنا في هذه النسخة؟
+         *
+         * ## المسألة
+         * **التوقيع هو الهويّة عند أندرويد**: لا يعرف «نفس التطبيق» بالاسم بل بزوج
+         * (المعرّف، الشهادة). وF-Droid يبني مصدرنا **ويوقّعه بمفتاحه هو**، فحزمتُه
+         * ليست حزمتنا في عين النظام: لو جلبنا لصاحبها حزمتَنا لَرفض النظامُ
+         * تثبيتها بـ`INSTALL_FAILED_UPDATE_INCOMPATIBLE`، ورأى رسالةً لا يفهمها
+         * عن تحديثٍ لا يتمّ أبدًا.
+         *
+         * ## ولماذا هنا لا في نكهةٍ ثالثة
+         * لأنّها **مسألةُ توقيعٍ لا مسألةُ تحزيم**: F-Droid لا يمنع شيئًا ممّا في
+         * هذه النكهة — لا المحدِّثَ ولا إذنَ التثبيت — فشرطُه الحرّيّةُ وحدها.
+         * فالنسخة الحرّة واحدةٌ تخدم التنزيل المباشر وF-Droid معًا، **وتتصرّف كلُّ
+         * نسخةٍ بحسب من وقّعها**. (ونكهة المتجر شيءٌ آخر: هناك يجب أن تخرج الشيفرة
+         * من الحزمة كلِّها، لأنّ مراجعة بلاي تفحص ما فيها لا ما يعمل منها.)
+         *
+         * ## والشهادة لا اسم المثبِّت
+         * `getInstallerPackageName` يقول «من ثبّت» لا «من يستطيع أن يحدّث»: مديرُ
+         * ملفّاتٍ ثبّت حزمةَ F-Droid يُبقيها غير قابلةٍ للتحديث منّا، والشهادةُ
+         * وحدها تحسم.
+         *
+         * ## وحزمةُ التنقيح مستثناة
+         * توقيعُها مفتاحُ التطوير، ويختلف من جهازٍ إلى جهاز، فلو حُكم عليه بالبصمة
+         * لَاختفت واجهةُ التحديث عن كلّ من يطوّر التطبيق.
+         */
+        fun selfUpdateSupported(context: Context): Boolean =
+            selfUpdatable ?: synchronized(this) {
+                selfUpdatable ?: computeSelfUpdatable(context).also { selfUpdatable = it }
+            }
+
+        private fun computeSelfUpdatable(context: Context): Boolean {
+            val app = context.applicationContext
+            if (app.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) return true
+            return runCatching { signingFingerprints(app) }
+                .getOrDefault(emptyList())
+                .any { it == OUR_CERT_SHA256 }
+        }
+
+        /** بصماتُ شهادات الحزمة الجارية؛ أكثر من واحدةٍ إن وُقّعت بأكثر من مفتاح */
+        private fun signingFingerprints(app: Context): List<String> {
+            val pm = app.packageManager
+            val certs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val info = pm.getPackageInfo(app.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                val signing = info.signingInfo ?: return emptyList()
+                // `apkContentsSigners` هي الشهادةُ العاملة الآن؛ وسجلُّ التبديل
+                // (`signingCertificateHistory`) يخصّ من بدّل مفتاحه ولم نبدّل
+                if (signing.hasMultipleSigners()) signing.apkContentsSigners
+                else signing.signingCertificateHistory
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(app.packageName, PackageManager.GET_SIGNATURES).signatures
+            } ?: return emptyList()
+            return certs.map { fingerprintOf(it.toByteArray()) }
+        }
+
+        /**
+         * بصمةُ شهادةٍ نصًّا: ستّ عشرة ثنائيّةً بحروفٍ صغيرة بلا فواصل.
+         *
+         * **و`%02x` لا `toHexString`**: الثانيةُ تُسقط الصفر البادئ فتصير البايت
+         * ‎0x0b‎ حرفًا واحدًا، فتنزاح البصمةُ كلُّها ولا تطابق شيئًا أبدًا.
+         */
+        internal fun fingerprintOf(cert: ByteArray): String =
+            MessageDigest.getInstance("SHA-256").digest(cert)
+                .joinToString("") { "%02x".format(it) }
 
         private const val RELEASES_URL =
             "https://api.github.com/repos/SalehGNUTUX/GT-SPEEDOMETER/releases?per_page=10"

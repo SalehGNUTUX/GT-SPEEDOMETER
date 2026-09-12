@@ -112,7 +112,7 @@ import net.gnutux.speedometer.ui.theme.TextPrimary
 import net.gnutux.speedometer.ui.theme.TextSecondary
 import net.gnutux.speedometer.ui.theme.TrackDim
 import net.gnutux.speedometer.ui.theme.Warn
-import net.gnutux.speedometer.ui.update.UPDATE_SECTION_IDS
+import net.gnutux.speedometer.ui.update.updateSectionIds
 import net.gnutux.speedometer.ui.update.UpdateAutoCheck
 import net.gnutux.speedometer.ui.update.updateSection
 import java.io.File
@@ -264,8 +264,13 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
     //
     // والفهرس هو ترتيب القسم في [SECTION_ORDER] لأنّ المفتوح واحدٌ لا أكثر: كلّ ما
     // قبله مطويّ، والمطويّ لا يُصدر إلّا رأسه، ولا شيء في القائمة يسبق أوّل رأس.
+    //
+    // والترتيبُ يُسأل عنه ولا يُفترض: قسمُ التحديث يسقط منه في نكهة المتجر، ويسقط
+    // كذلك في نسخةٍ حرّةٍ وقّعها غيرُنا (حزمة F-Droid) — وعنصرٌ زائدٌ في القائمة
+    // يُزلق كلَّ ما بعده.
+    val sectionOrder = remember(context) { sectionOrder(context) }
     LaunchedEffect(openSection) {
-        val index = SECTION_ORDER.indexOf(openSection)
+        val index = sectionOrder.indexOf(openSection)
         if (index >= 0) runCatching { listState.animateScrollToItem(index) }
     }
 
@@ -1062,7 +1067,12 @@ fun SettingsScreen(vm: SpeedoViewModel, onClose: () -> Unit, modifier: Modifier 
             // قبل «عن التطبيق» لا بعده: ذاك سطرُ نسخةٍ يُقرأ، وهذا فعلٌ يُعمل. وفي
             // نكهة `play` لا يُصدر شيئًا، فيتلاصق «الأجهزة الضعيفة» و«عن التطبيق»
             // بلا فراغٍ يدلّ على قسمٍ محجوب.
-            updateSection(settings = s, openId = openSection, onToggle = toggleSection)
+            updateSection(
+                context = context,
+                settings = s,
+                openId = openSection,
+                onToggle = toggleSection,
+            )
 
             // ===== عن التطبيق =====
             settingsSection(
@@ -1312,8 +1322,11 @@ private const val SECTION_ABOUT = "about"
  *
  * يُستعمل للتمرير إلى القسم المفتوح، ويجب أن يبقى مطابقًا لترتيب النداءات في
  * [SettingsScreen]: فهرس الرأس هو موضعُه هنا ما دام المفتوح واحدًا لا أكثر.
+ *
+ * **ودالّةٌ تأخذ سياقًا لا ثابتٌ يُقرأ مرّة**: قسمُ التحديث قد يُصدَر وقد لا
+ * يُصدَر، والحكمُ في ذلك لشجرة النكهة ولشهادة الحزمة الجارية معًا.
  */
-private val SECTION_ORDER = listOf(
+private fun sectionOrder(context: Context): List<String> = listOf(
     SECTION_APPEARANCE,
     SECTION_GAUGE,
     SECTION_DRIVING,
@@ -1326,10 +1339,7 @@ private val SECTION_ORDER = listOf(
     SECTION_CAMERA,
     SECTION_DUAL,
     SECTION_LOWEND,
-) + UPDATE_SECTION_IDS + listOf(
-    // قسم التحديث من شجرة النكهة: في `libre` قسمٌ واحد، وفي `play` لا شيء. وترتيبُ
-    // هذه القائمة هو الذي يُمرَّر إليه القسمُ المفتوح، فعنصرٌ زائدٌ فيها يُزلق كلَّ
-    // ما بعده.
+) + updateSectionIds(context) + listOf(
     SECTION_ABOUT,
 )
 

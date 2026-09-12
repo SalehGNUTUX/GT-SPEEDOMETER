@@ -1,5 +1,6 @@
 package net.gnutux.speedometer.ui.update
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,10 +65,16 @@ import java.util.Locale
  *
  * | | `libre` (هنا) | `play` |
  * |---|---|---|
- * | [UPDATE_SECTION_IDS] | قسمٌ واحد | فارغة |
+ * | [updateSectionIds] | قسمٌ واحد | فارغة |
  * | [UpdateBanner] | شريطُ الخبر بحالاته الثلاث | لا يرسم شيئًا |
  * | [UpdateAutoCheck] | يبدأ الفحص الدوريّ | لا يفعل شيئًا |
  * | [updateSection] | بطاقتا القسم | لا تُصدر عنصرًا |
+ *
+ * **والأربعةُ هنا مشروطةٌ بـ[UpdateChecker.selfUpdateSupported]**: النسخة الحرّة
+ * واحدةٌ تخدم التنزيل المباشر وF-Droid معًا، وحزمةُ F-Droid يوقّعها F-Droid — فلا
+ * يُحدِّثها ما نجلبه نحن. فتُخفى الواجهة عند كلّ توقيعٍ ليس توقيعَنا، ويبقى
+ * التحديث لمن يملكه. (وذلك بوّابةُ تشغيلٍ تكفي بين مسارين حرَّين؛ أمّا المتجر
+ * فتخرج الشيفرة من حزمته كلِّها لأنّ مراجعته تفحص ما فيها لا ما يعمل منها.)
  *
  * **ولماذا شجرتا مصدرٍ لا رايةٌ في `BuildConfig`؟** لأنّ الرايةَ تُطفئ الواجهة
  * وتُبقي الشيفرة: يبقى `UpdateChecker` في الحزمة المرفوعة إلى بلاي، ومعه إذنُ
@@ -86,11 +93,15 @@ internal const val SECTION_UPDATES = "updates"
 /**
  * ما يُضيفه هذا الملفّ إلى ترتيب أقسام الإعدادات.
  *
- * يدخل في `SECTION_ORDER` قبل «عن التطبيق»، وذلك الترتيبُ هو الذي يُمرَّر إليه
+ * يدخل في ترتيب الأقسام قبل «عن التطبيق»، وذلك الترتيبُ هو الذي يُمرَّر إليه
  * القسمُ المفتوح — فلو بقي القسم في القائمة ولم يُصدَر لَمرَّر التمريرُ عنصرًا
  * زائدًا فانزلق كلُّ ما بعده.
+ *
+ * **ودالّةٌ لا ثابت**: البوّابة تُقرأ من شهادة الحزمة الجارية، فالقسم يسقط من
+ * الترتيب في النسخة التي وقّعها غيرُنا كما يسقط من الشاشة.
  */
-internal val UPDATE_SECTION_IDS: List<String> = listOf(SECTION_UPDATES)
+internal fun updateSectionIds(context: Context): List<String> =
+    if (UpdateChecker.selfUpdateSupported(context)) listOf(SECTION_UPDATES) else emptyList()
 
 /**
  * شريطُ خبرِ التحديث فوق التبويبات.
@@ -111,6 +122,8 @@ internal val UPDATE_SECTION_IDS: List<String> = listOf(SECTION_UPDATES)
 @Composable
 internal fun UpdateBanner(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    // من وقّعها هو الذي يحدّثها؛ ولا نُنشئ المحدِّث أصلًا حين لا يكون ذلك نحن
+    if (!UpdateChecker.selfUpdateSupported(context)) return
     val updates = remember(context) { UpdateChecker.of(context) }
     val state by updates.state.collectAsStateWithLifecycle()
     val notify by vm.settings.updateNotify.collectAsStateWithLifecycle()
@@ -199,6 +212,8 @@ internal fun UpdateBanner(vm: SpeedoViewModel, modifier: Modifier = Modifier) {
 @Composable
 internal fun UpdateAutoCheck(settings: AppSettings) {
     val context = LocalContext.current
+    // ولا فحصَ صامتًا ولا إشعارَ في نسخةٍ لا نملك تحديثها: خبرٌ لا يُعمل به إزعاج
+    if (!UpdateChecker.selfUpdateSupported(context)) return
     // نسخةٌ واحدة بعمر العمليّة كالمُنزِّل، فطيُّ القسم لا يقطع تنزيلًا جاريًا
     val updates = remember(context) { UpdateChecker.of(context) }
     LaunchedEffect(Unit) { updates.maybeCheckDue(settings) }
@@ -211,10 +226,13 @@ internal fun UpdateAutoCheck(settings: AppSettings) {
  * فلا تُجمَع لأجله مجارٍ لا يقرؤها أحد.
  */
 internal fun LazyListScope.updateSection(
+    context: Context,
     settings: AppSettings,
     openId: String,
     onToggle: (String) -> Unit,
 ) {
+    // الشرطُ نفسه الذي أسقط القسم من [updateSectionIds]، وإلّا بقي رأسٌ بلا ترتيب
+    if (!UpdateChecker.selfUpdateSupported(context)) return
     settingsSection(
         id = SECTION_UPDATES,
         openId = openId,
