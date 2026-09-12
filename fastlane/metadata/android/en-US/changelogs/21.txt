@@ -1,0 +1,8 @@
+Whoever signed this build is the one who updates it.
+
+• The self-updater now reads the running package's certificate and hides itself
+  if it is not ours: an F-Droid build is signed by F-Droid and cannot be updated
+  by what we fetch, and a failure message nobody understands is worse than an
+  absent feature.
+• Settings sections no longer shift position when one is hidden.
+• 60 unit tests, up from 57.
